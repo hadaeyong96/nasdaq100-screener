@@ -4,6 +4,9 @@
 outputs/telegram_YYYY-MM-DD.txt에 저장만 한다. 에러로 멈추지 않는다.
 4096자를 넘으면 나눠 보내고, 실패하면 3번 재시도한다. 같은 기준일 중복 발송은
 store.db의 notifications 테이블로 막는다(성공적으로 다 보낸 뒤에만 기록한다).
+
+데이터 지연 모드(P3.2 2번)에는 `send_delay_notice`로 알림 한 통만 보내고
+(보고서 첨부 없음), 일반 브리핑(`send_briefing`)은 부르지 않는다.
 """
 
 from __future__ import annotations
@@ -122,6 +125,48 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
             db.record_notified(conn, as_of_str, datetime.now().isoformat(timespec="seconds"))
         else:
             print("[telegram] 일부 발송에 실패해 발송 기록을 남기지 않습니다 (다음 실행에서 재시도 가능).")
+    finally:
+        conn.close()
+    return out_path
+
+
+def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> Path:
+    """데이터 지연 모드(P3.2 2번) 알림 한 통만 보낸다. 보고서는 첨부하지 않는다.
+
+    입력: summary(engine 결과 — mode, expected_date, actual_date 문자열 포함), cfg,
+         force_no_send(--no-send 플래그)
+    출력: 저장한 txt 파일 경로
+    """
+    expected = summary.get("expected_date") or "알수없음"
+    actual = summary.get("actual_date") or "알수없음"
+    text = f"데이터 지연: 기대 기준일 {expected}, 실제 {actual}. 오늘은 매매 신호 없음\n"
+
+    out_dir = ROOT / "outputs"
+    out_dir.mkdir(exist_ok=True)
+    out_path = out_dir / f"telegram_{actual}_delay.txt"
+    out_path.write_text(text, encoding="utf-8")
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+
+    if force_no_send:
+        return out_path
+    if not token or not chat_id:
+        print("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다.")
+        return out_path
+
+    mode = summary.get("mode", "live")
+    conn = db.connect(db.db_path_for_mode(mode))
+    try:
+        dedup_key = f"{actual}:delay"
+        if db.has_notified(conn, dedup_key):
+            print(f"[telegram] {actual} 지연 알림을 이미 보낸 기록이 있어 다시 보내지 않습니다.")
+            return out_path
+
+        if _send_text(token, chat_id, text):
+            db.record_notified(conn, dedup_key, datetime.now().isoformat(timespec="seconds"))
+        else:
+            print("[telegram] 지연 알림 발송에 실패했습니다 (다음 실행에서 재시도 가능).")
     finally:
         conn.close()
     return out_path

@@ -13,6 +13,9 @@
 - meta로 채운 close는 다음 실행에서 실제 일봉 종가가 들어오면 그 값으로 덮어쓴다
   (P2 P1 마무리 1번). 마지막 봉이 아닌 곳에 close 구멍이 남으면 보간하지 않고
   `data_gap_dates`로 표시한다 (P2 P1 마무리 2번).
+- close를 못 구한 봉은 meta → 캐시(예전에 meta로 채워 둔 값) → 예비 출처(60분봉
+  마지막 봉 종가) 순으로 채워본다 (P3.2 1번). 이 순서를 지키지 않으면(캐시 확인
+  전에 봉을 버리면) 캐시에 있던 값이 있어도 기준일이 뒤로 가는 회귀가 생긴다.
 """
 
 from __future__ import annotations
@@ -36,6 +39,8 @@ load_dotenv(ROOT / ".env")
 import pandas as pd  # noqa: E402
 import yfinance as yf  # noqa: E402
 
+from data.market_calendar import latest_closed_trading_day  # noqa: E402
+
 DATA_DIR = Path(__file__).resolve().parent
 CACHE_DIR = DATA_DIR / "cache"
 
@@ -49,10 +54,12 @@ _PRICE_COLUMNS = ["open", "high", "low", "close", "volume"]
 _CORE_PRICE_COLUMNS = ["open", "high", "low", "close"]  # volume은 별도 취급 (P1.1 1번)
 
 # close 출처 표시 (P1.2 2번). "yahoo" = yfinance가 준 값 그대로,
-# "meta" = chart API의 meta.regularMarketPrice로 채운 값.
+# "meta" = chart API의 meta.regularMarketPrice로 채운 값,
+# "fallback_60m" = 예비 출처(60분봉 마지막 봉 종가)로 채운 값 (P3.2 1번).
 _CLOSE_SOURCE_COLUMN = "close_source"
 CLOSE_SOURCE_YAHOO = "yahoo"
 CLOSE_SOURCE_META = "meta"
+CLOSE_SOURCE_FALLBACK = "fallback_60m"
 
 CHART_API_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 _CHART_API_HEADERS = {
@@ -99,15 +106,10 @@ def _latest_confirmed_trading_date(now_et: datetime) -> date:
     """이 시각 기준으로 확정됐을 것으로 기대하는 가장 최근 거래일을 구한다.
 
     입력: 미국 동부 시각 datetime
-    출력: date. 주말은 건너뛰지만 미국 공휴일 캘린더는 반영하지 않는다
-         (P4에서 처리 예정 — P1.1 6번).
+    출력: date. NYSE 거래일 달력(주말·공휴일·조기 폐장 반영, P3.2 2번)으로
+         가장 최근에 마감된 거래일을 구한다.
     """
-    d = now_et.date()
-    if now_et.hour < MARKET_CLOSE_HOUR:
-        d -= timedelta(days=1)
-    while d.weekday() >= 5:  # 토(5) · 일(6)
-        d -= timedelta(days=1)
-    return d
+    return latest_closed_trading_day(now_et)
 
 
 def _period_for(history_days: int) -> str:
@@ -184,17 +186,26 @@ def _fill_last_close_from_meta(
 
 
 def _clean_raw(
-    raw: pd.DataFrame, now_et: datetime, meta_provider=None
+    raw: pd.DataFrame, now_et: datetime, meta_provider=None, cache_df: pd.DataFrame | None = None,
+    fallback_provider=None,
 ) -> pd.DataFrame:
     """yfinance raw OHLCV를 정리한다.
 
     입력: yfinance Ticker.history(auto_adjust=False) 반환 DataFrame (tz-aware 인덱스),
          now_et(미국 동부 현재 시각),
          meta_provider(인자 없는 호출 가능 객체. close 보완이 필요할 때만 불러
-                       ChartMeta 또는 None을 받는다. 없으면 보완하지 않는다)
+                       ChartMeta 또는 None을 받는다. 없으면 보완하지 않는다),
+         cache_df(예전에 캐시해 둔 DataFrame. close 보완용 — 없으면 None),
+         fallback_provider(date -> float|None 호출 가능 객체. meta·캐시로도 못
+                            채운 close에 예비 출처를 쓴다 — 없으면 시도하지 않는다)
     출력: DataFrame(open, high, low, close, volume, close_source), 날짜 오름차순, 확정 봉만.
          out.attrs["warnings"]에 실패는 아니지만 확인이 필요한 메시지를,
-         out.attrs["close_filled_from_meta"]에 close 보완 여부를 담는다.
+         out.attrs["close_filled_from_meta"]에 close 보완(meta 또는 캐시) 여부를 담는다.
+
+    close 보완 순서(P3.2 1번, 중요): meta → 캐시 → 예비 출처. 마지막 봉이 아직
+    확정 안 된 값으로 보고 버려지는 "확정되지 않은 마지막 봉 제거" 단계보다
+    반드시 먼저 시도해야 한다 — 그 단계 뒤에 시도하면 이미 버려진 봉이라
+    캐시에 값이 있어도 되살릴 수 없다(P3.1 실행에서 실제로 난 회귀 원인).
     """
     out = raw.rename(columns=_RAW_TO_LOWER)[_PRICE_COLUMNS].copy()
     out.index = out.index.tz_convert(US_EASTERN)
@@ -204,16 +215,34 @@ def _clean_raw(
     if len(out) and now_et.hour < MARKET_CLOSE_HOUR and out.index[-1].date() == now_et.date():
         out = out.iloc[:-1]  # 미국장이 아직 안 끝난 당일 봉 제거
 
+    # cache_df·find_mid_series_gaps 등 나머지 로직이 모두 이 tz-naive 정규화된
+    # 인덱스를 기준으로 하므로, close 보완 단계 전에 먼저 맞춰 둔다.
+    out.index = out.index.tz_localize(None).normalize()
+    out.index.name = "date"
+
     warnings: list[str] = []
 
     # 야후가 최근 거래일의 close만 비워둔 채 내려주는 경우(P1.2 진단 결과)를
-    # chart API meta의 정규장 종가로 채운다. 보완에 실패하면 채우지 않고,
-    # 아래 "확정되지 않은 마지막 봉 제거"에서 그 봉이 버려진다.
+    # chart API meta의 정규장 종가로 채운다.
     filled = False
     meta_time_used: str | None = None
     if _needs_close_fill(out) and meta_provider is not None:
         out, filled, fill_msgs, meta_time_used = _fill_last_close_from_meta(out, meta_provider())
         warnings.extend(fill_msgs)
+
+    # meta로 못 채웠으면 캐시(예전에 meta로 채워 둔 값)로, 그래도 못 채웠으면
+    # 예비 출처(60분봉)로 채워본다. 셋 다 실패한 채 아래 "확정되지 않은 마지막
+    # 봉 제거"에 걸리면 그 봉이 버려진다(다음 실행에서 다시 시도).
+    cache_restored = 0
+    if cache_df is not None:
+        out, cache_restored = _restore_close_from_cache(out, cache_df)
+        if cache_restored:
+            warnings.append(f"close 비어 있는 봉 {cache_restored}개를 캐시의 meta 보완값으로 되살림")
+
+    fallback_restored = 0
+    if fallback_provider is not None:
+        out, fallback_restored, fb_msgs = _restore_close_from_fallback(out, fallback_provider)
+        warnings.extend(fb_msgs)
 
     # 마감 직후(또는 야후 데이터 파이프라인 지연)에는 종가 등 일부 값이 NaN인 채로
     # 내려오는 경우가 있다. open/high/low/close 중 하나라도 NaN이면 확정되지 않은
@@ -228,11 +257,11 @@ def _clean_raw(
             last_date = out.index[-1].date().isoformat()
             warnings.append(f"{last_date} 거래량이 NaN 또는 0 (봉은 유지, 확인 필요)")
 
-    out.index = out.index.tz_localize(None).normalize()
-    out.index.name = "date"
     out.attrs["warnings"] = warnings
-    out.attrs["close_filled_from_meta"] = filled
+    out.attrs["close_filled_from_meta"] = bool(filled or cache_restored or fallback_restored)
     out.attrs["close_meta_time"] = meta_time_used
+    out.attrs["close_cache_restored"] = cache_restored
+    out.attrs["close_fallback_restored"] = fallback_restored
     return out
 
 
@@ -261,6 +290,62 @@ def _fetch_chart_meta(ticker: str, timeout: float = 20.0) -> ChartMeta:
         datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(US_EASTERN) if ts else None
     )
     return ChartMeta(price=price, time_et=time_et)
+
+
+def _fetch_intraday_last_close(ticker: str, target_date: date) -> float | None:
+    """그 날짜의 60분봉 마지막 봉 종가를 예비 종가 출처로 가져온다 (P3.2 1번).
+
+    meta도 캐시도 못 쓸 때만 부른다. Stooq 일봉 CSV는 이 환경에서 봇 차단(JS
+    챌린지, HTTP 200으로 위장한 JS 페이지)에 막혀 직접 확인 결과 쓸 수 없었다
+    (완료 보고에 기록) — 그래서 야후 60분봉만 쓴다.
+
+    입력: yfinance 형식 ticker, target_date(그날 종가가 필요한 날짜)
+    출력: 그날 마지막 60분봉의 종가, 없으면 None
+    예외: 네트워크·응답 형식 오류는 그대로 올린다 (호출부에서 경고로 모은다)
+    """
+    raw = yf.Ticker(ticker).history(period="7d", interval="60m", auto_adjust=False)
+    if raw.empty:
+        return None
+    idx = raw.index.tz_convert(US_EASTERN)
+    day_bars = raw.loc[idx.date == target_date]
+    if day_bars.empty:
+        return None
+    return float(day_bars.iloc[-1]["Close"])
+
+
+def _restore_close_from_fallback(df: pd.DataFrame, fallback_provider) -> tuple[pd.DataFrame, int, list[str]]:
+    """meta·캐시로도 못 채운 close를 예비 출처로 채운다 (P3.2 1번, 순수 함수).
+
+    입력: DataFrame(..., low, high, close, close_source), fallback_provider
+         (date -> float 또는 None을 돌려주는 호출 가능 객체. 네트워크 호출은
+         호출부가 감싸 예외를 경고로 모은다)
+    출력: (채운 DataFrame, 채운 봉 수, 경고 메시지 목록). 그날 저가~고가 범위 밖
+         값은 채우지 않고 경고만 남긴다.
+    """
+    missing = df.index[df["close"].isna()]
+    if not len(missing):
+        return df, 0, []
+
+    out = df.copy()
+    filled = 0
+    warnings: list[str] = []
+    for d in missing:
+        low, high = out.loc[d, "low"], out.loc[d, "high"]
+        if pd.isna(low) or pd.isna(high):
+            continue
+        price = fallback_provider(d.date())
+        if price is None:
+            continue
+        if not (float(low) <= price <= float(high)):
+            warnings.append(
+                f"{d.date()} 예비 종가(60분봉) {price}이(가) 그날 저가~고가({low}~{high}) 범위를 벗어나 버림"
+            )
+            continue
+        out.loc[d, "close"] = price
+        out.loc[d, _CLOSE_SOURCE_COLUMN] = CLOSE_SOURCE_FALLBACK
+        warnings.append(f"{d.date()} close를 예비 출처(60분봉 마지막 봉)로 채움({price})")
+        filled += 1
+    return out, filled, warnings
 
 
 def _restore_close_from_cache(fresh: pd.DataFrame, cached: pd.DataFrame | None) -> tuple[pd.DataFrame, int]:
@@ -398,8 +483,8 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
     if raw.empty:
         raise ValueError("가격 데이터 없음")
 
-    # close 보완이 필요할 때만 chart API를 한 번 더 부른다. 네트워크 실패는
-    # 조용히 넘기지 않고 경고로 모은다 (보완은 못 하고 그 봉은 버려진다).
+    # close 보완이 필요할 때만 chart API·60분봉을 추가로 부른다. 네트워크 실패는
+    # 조용히 넘기지 않고 경고로 모은다 (그 출처는 못 쓰고 다음 출처로 넘어간다).
     meta_errors: list[str] = []
 
     def _meta_provider() -> ChartMeta | None:
@@ -409,14 +494,25 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
             meta_errors.append(f"chart API meta 조회 실패: {exc}")
             return None
 
-    cleaned = _clean_raw(raw, now_et, meta_provider=_meta_provider)
-    cleaned, restored = _restore_close_from_cache(cleaned, cached)
+    fallback_errors: list[str] = []
+
+    def _fallback_provider(target_date: date) -> float | None:
+        try:
+            return _fetch_intraday_last_close(ticker, target_date)
+        except Exception as exc:
+            fallback_errors.append(f"{target_date} 예비 종가(60분봉) 조회 실패: {exc}")
+            return None
+
+    # close 보완 순서: meta(당일 실시간) -> 캐시(예전 meta 보완값) -> 예비 출처(60분봉).
+    # 캐시 확인은 "확정되지 않은 마지막 봉 제거"보다 먼저 해야 한다 — 그래야
+    # 캐시에 값이 있는데도 봉이 통째로 버려져 기준일이 뒤로 가는 일이 없다.
+    cleaned = _clean_raw(
+        raw, now_et, meta_provider=_meta_provider, cache_df=cached, fallback_provider=_fallback_provider
+    )
     if cleaned.empty:
         raise ValueError("확정된 가격 데이터 없음 (전부 NaN)")
 
-    warnings = cleaned.attrs.get("warnings", []) + meta_errors
-    if restored:
-        warnings.append(f"중간에 비어 있던 close {restored}개를 캐시의 meta 보완값으로 되살림")
+    warnings = cleaned.attrs.get("warnings", []) + meta_errors + fallback_errors
 
     still_missing = cleaned.index[cleaned["close"].isna()]
     if len(still_missing):
@@ -447,9 +543,6 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
         )
 
     cleaned.attrs["warnings"] = warnings
-    cleaned.attrs["close_filled_from_meta"] = bool(
-        cleaned.attrs.get("close_filled_from_meta") or restored
-    )
     _save_cache(ticker, cleaned)
     return cleaned
 

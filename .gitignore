@@ -4,6 +4,9 @@
 credentials*.json
 token*.json
 service_account*.json
+*key*.txt
+*token*.txt
+*secret*
 
 # 데이터베이스
 *.db

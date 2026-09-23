@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from data.prices import (
+    CLOSE_SOURCE_FALLBACK,
     CLOSE_SOURCE_META,
     CLOSE_SOURCE_YAHOO,
     MARKET_CLOSE_HOUR,
@@ -303,3 +304,82 @@ def test_find_mid_series_gaps_empty_when_no_hole():
         ["2026-09-18", "2026-09-21"],
     )
     assert find_mid_series_gaps(df) == []
+
+
+# ── P3.2 1번: 마지막 봉이 캐시 확인 전에 버려지는 회귀 재현·수정 확인 ─────────
+
+
+def test_regression_stale_last_bar_restored_from_cache_before_being_dropped():
+    """P3.1 실행에서 기준일이 9/22 -> 9/21로 뒤로 간 회귀의 재현 테스트.
+
+    장중(9/23) 재실행 상황: 9/22 close는 야후가 여전히 비워 둔 채 내려주고,
+    meta는 이제 9/23(오늘) 값을 가리켜 9/22 보완에 쓸 수 없다. 이때 캐시에
+    9/22의 meta 보완값이 있으면, 그 값으로 되살아나야지 9/22 봉 자체가
+    통째로 버려져 기준일이 9/21로 후퇴해서는 안 된다.
+    """
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2026-09-21"), pd.Timestamp("2026-09-22"), pd.Timestamp("2026-09-23")], name="Date"
+    ).tz_localize(US_EASTERN)
+    raw = pd.DataFrame(
+        [
+            {"Open": 222.9, "High": 228.5, "Low": 221.5, "Close": 227.3, "Volume": 1},
+            {"Open": 226.91, "High": 229.98, "Low": 226.50, "Close": np.nan, "Volume": 1},  # 여전히 비어 있음
+            {"Open": 230.0, "High": 231.0, "Low": 229.0, "Close": 230.5, "Volume": 1},  # 오늘(장중) 미확정 봉
+        ],
+        index=index,
+    )
+    now_et_intraday = datetime(2026, 9, 23, 10, 0, tzinfo=US_EASTERN)  # 9/23 장중
+    # meta는 이제 9/23 실시간 가격을 가리켜 9/22 보완에는 못 쓴다 (날짜 불일치로 거절됨)
+    meta = ChartMeta(price=231.0, time_et=now_et_intraday)
+
+    out = _clean_raw(raw, now_et_intraday, meta_provider=lambda: meta, cache_df=CACHED)
+
+    assert out.index[-1] == pd.Timestamp("2026-09-22")  # 9/21로 후퇴하지 않는다 (수정 전에는 실패했다)
+    assert out.loc[pd.Timestamp("2026-09-22"), "close"] == pytest.approx(228.87)
+    assert out.loc[pd.Timestamp("2026-09-22"), "close_source"] == CLOSE_SOURCE_META
+
+
+# ── P3.2 1번: 예비 종가 출처(60분봉) ────────────────────────────────────────
+
+
+def test_fills_close_from_fallback_when_meta_and_cache_both_fail():
+    """meta도 캐시도 못 채우면 예비 출처(fallback_provider)로 채운다."""
+    calls: list = []
+
+    def fallback(d):
+        calls.append(d)
+        return 228.87
+
+    out = _clean_raw(make_raw(MISSING_CLOSE_ROW), NOW_ET, meta_provider=lambda: None, fallback_provider=fallback)
+
+    assert out.index[-1] == LAST_DATE
+    assert out.iloc[-1]["close"] == pytest.approx(228.87)
+    assert out.iloc[-1]["close_source"] == CLOSE_SOURCE_FALLBACK
+    assert out.attrs["close_filled_from_meta"] is True
+    assert calls == [LAST_DATE.date()]
+
+
+def test_fallback_out_of_range_is_not_used():
+    """예비 출처 값이 그날 저가~고가 범위 밖이면 쓰지 않고 봉을 버린다."""
+    out = _clean_raw(
+        make_raw(MISSING_CLOSE_ROW), NOW_ET, meta_provider=lambda: None, fallback_provider=lambda d: 999.0
+    )
+    assert out.index[-1] == pd.Timestamp("2026-09-21")
+
+
+def test_cache_checked_before_fallback_source():
+    """캐시로 채울 수 있으면 예비 출처는 부르지 않는다 (우선순위: meta > 캐시 > 예비)."""
+    calls: list = []
+
+    def fallback(d):
+        calls.append(d)
+        return 999.0
+
+    out = _clean_raw(
+        make_raw(MISSING_CLOSE_ROW), NOW_ET, meta_provider=lambda: None, cache_df=CACHED, fallback_provider=fallback
+    )
+
+    assert out.index[-1] == LAST_DATE
+    assert out.iloc[-1]["close"] == pytest.approx(228.87)
+    assert out.iloc[-1]["close_source"] == CLOSE_SOURCE_META
+    assert calls == []  # 캐시로 채워졌으니 예비 출처는 부르지 않는다

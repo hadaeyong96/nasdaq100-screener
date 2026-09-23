@@ -121,6 +121,25 @@ def test_buy_row_without_stop_leaves_data_stop_empty(tmp_path, cfg):
     assert "미확정" in html
 
 
+def test_stale_summary_shows_red_banner_and_empty_buy_tab(tmp_path, cfg):
+    """P3.2 2번: 데이터 지연 모드는 배너가 뜨고 매수 탭은 비어 있어야 한다."""
+    summary = _empty_summary()
+    summary["stale"] = True
+    summary["expected_date"] = "2026-09-23"
+    summary["actual_date"] = "2026-09-22"
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "데이터 지연" in html
+    assert "2026-09-23" in html and "2026-09-22" in html
+    assert summary["buy_count"] == 0
+
+
+def test_non_stale_summary_has_no_banner(tmp_path, cfg):
+    path = report_html.render_report(_empty_summary(), cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert 'class="stale-banner"' not in html
+
+
 def test_filtered_reason_label_mapping():
     from engine.daily import _label_filter_reason
 

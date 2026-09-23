@@ -90,10 +90,18 @@ td.note{white-space:normal;min-width:200px;color:var(--sub)}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .two table{min-width:0}
 footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var(--line);padding-top:10px}
+.stale-banner{background:var(--sell);color:#fff;font-weight:700;font-size:14px;
+  border-radius:8px;padding:10px 14px;margin-bottom:16px}
 </style>
 </head>
 <body>
 <div class="wrap">
+
+{% if stale %}
+<div class="stale-banner">
+  데이터 지연: 기대 기준일 {{ expected_date_str }}, 실제 {{ actual_date_str }}. 오늘은 매매 신호 없음
+</div>
+{% endif %}
 
 <header>
   <div>

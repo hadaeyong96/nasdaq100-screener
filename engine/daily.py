@@ -16,13 +16,20 @@ live 모드는 보유를 오직 data/fills.csv의 실제 체결 기록으로만 
 없음). paper 모드는 추천대로 체결됐다고 가정하는 모의 운용이고, DB를
 data/paper_state.db로 완전히 분리한다.
 
-두 모드 모두 "오늘"부터 시작한다. 각 DB는 이 모드로 처음 실행한 날짜를
-`meta` 테이블에 `start_date`로 저장해 두고, 매 실행마다 상태를 항상
-init_state에서부터 start_date~오늘까지 다시 계산한다(`simulate_since`).
-그래야 사용자가 체결 기록을 며칠 늦게 넣어도(fills.csv에 지난 날짜로 한 줄
-추가) 다음 실행에서 그 날짜부터 다시 계산돼 올바른 단계·손절가로 반영된다.
+두 모드 모두 "오늘"부터 시작한다. 각 DB는 마지막으로 처리를 끝낸 기준일을
+`meta` 테이블에 `last_processed_date`로 저장해 두고, 매 실행마다 상태를
+init_state에서부터 그 다음 거래일~오늘(이번 기준일)까지 순서대로 다시
+계산한다(`simulate_since`, P3.2 3번). 그래야
+- 사용자가 체결 기록을 며칠 늦게 넣어도(fills.csv에 지난 날짜로 한 줄 추가)
+  다음 실행에서 그 날짜부터 다시 계산돼 올바른 단계·손절가로 반영되고,
+- 스크립트를 며칠 걸러 실행해도 건너뛴 거래일의 이벤트가 누락되지 않는다.
 DB에 저장된 상태를 이어받아 증분으로만 갱신하면 이미 지나간 날짜의 체결
-기록이 반영될 기회가 없어져 이 성질이 깨진다.
+기록이 반영될 기회가 없어져 이 성질이 깨진다. 이번 기준일이
+last_processed_date 이하이면(같은 날 재실행 등) 아무것도 하지 않는다.
+
+이번 기준일이 실행 시각 기준 가장 최근에 마감된 거래일(NYSE 캘린더,
+data/market_calendar.py)보다 오래됐으면 "데이터 지연 모드"로 전환해 상태
+전이·주문대기 생성·이벤트 기록을 하지 않고 지연 알림만 보낸다(P3.2 2번).
 
 --replay(레거시, P2)는 이 규칙과 무관하게 예전 그대로 남겨 둔다: state.db가
 비어 있을 때만 replay.lookback_days거래일을 가상 체결로 되돌려 처리한다.
@@ -53,7 +60,8 @@ from core import state as st  # noqa: E402
 from core.indicators import compute_indicators  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
 from data.fills import fills_for, load_fills  # noqa: E402
-from data.prices import fetch_universe_prices  # noqa: E402
+from data.market_calendar import latest_closed_trading_day  # noqa: E402
+from data.prices import US_EASTERN, fetch_universe_prices  # noqa: E402
 from data.universe import get_universe  # noqa: E402
 from notify import briefing, report_html, telegram  # noqa: E402
 from store import db  # noqa: E402
@@ -110,10 +118,12 @@ def _label_filter_reason(reason: str) -> str:
 
 
 def _dates_since_start(df: pd.DataFrame, start_date) -> list:
-    """이 종목에 대해 start_date(포함)부터 오늘까지 처리할 날짜 목록을 정한다.
+    """이 종목에 대해 start_date(포함, last_processed_date 다음 거래일)부터 오늘까지
+    처리할 날짜 목록을 정한다 (P3.2 3번 — 건너뛴 거래일이 있으면 모두 포함된다).
 
     종목이 start_date 이후 상장했으면(신규 상장) 그 종목의 첫 거래일부터 쓴다.
-    start_date가 df 범위보다 미래면(데이터 지연 등) 마지막 날짜 하나만 쓴다.
+    start_date가 df 범위보다 미래면(그 종목만 데이터가 하루 뒤처지는 등) 마지막
+    날짜 하나만 쓴다.
     """
     mask = df.index >= pd.Timestamp(start_date)
     dates = list(df.index[mask])
@@ -421,6 +431,48 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
     return base
 
 
+def _empty_run_summary(
+    mode: str,
+    as_of_date,
+    warnings: list[str],
+    *,
+    stale: bool = False,
+    expected_date=None,
+    actual_date=None,
+    skipped: bool = False,
+) -> dict:
+    """상태 전이 없이 끝내는 실행(P3.2 2·3번: 데이터 지연 모드 / 이미 처리된 기준일)의
+    요약을 만든다. 나머지 항목은 모두 "신호 없음"으로 채운다."""
+    return {
+        "mode": mode,
+        "mode_label": _MODE_LABEL[mode],
+        "as_of": pd.Timestamp(as_of_date) if as_of_date is not None else None,
+        "stale": stale,
+        "skipped": skipped,
+        "expected_date": expected_date.isoformat() if expected_date else None,
+        "actual_date": actual_date.isoformat() if actual_date else None,
+        "replay_needed": False,
+        "buy_groups": {"b1": [], "b2": [], "b3": [], "b9": []},
+        "buy_count": 0,
+        "filtered_rows": [],
+        "sell_rows": [],
+        "warn_rows": [],
+        "data_status_rows": [],
+        "pending_order_rows": [],
+        "unfilled_rows": [],
+        "hold_rows": [],
+        "watch_rows": [],
+        "stage_counts": {},
+        "held_tickers_count": 0,
+        "max_concurrent": 0,
+        "warnings": warnings,
+        "data_gap_tickers": [],
+        "earnings_unknown_count": 0,
+        "all_events": [],
+        "funnel": {},
+    }
+
+
 def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
     """엔진을 한 번 실행한다. 결과 요약 dict를 반환한다 (완료 보고·보고서·텔레그램용)."""
     print(f"[모드: {_MODE_LABEL[mode]} ({mode})]")
@@ -435,6 +487,30 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
 
     print("지표를 계산하는 중...")
     indicator_map = {t: compute_indicators(df, cfg) for t, df in price_result.prices.items()}
+
+    # ── 데이터 지연 모드 (P3.2 2번): 이번 기준일이 실행 시각 기준 가장 최근에 마감된
+    # 거래일(NYSE 캘린더)보다 오래됐으면 상태 전이·주문대기·이벤트 기록을 하지 않고
+    # 지연 알림만 보낸다. --replay(백테스트 전용 경로)에는 적용하지 않는다.
+    actual_as_of_ts = max((df.index[-1] for df in indicator_map.values()), default=None)
+    if not do_replay and actual_as_of_ts is not None:
+        now_et = datetime.now(US_EASTERN)
+        expected_date = latest_closed_trading_day(now_et)
+        actual_date = actual_as_of_ts.date()
+        if actual_date < expected_date:
+            print(
+                f"[daily] *** 데이터 지연: 기대 기준일 {expected_date.isoformat()}, "
+                f"실제 {actual_date.isoformat()} — 오늘은 매매 신호 없음 ***"
+            )
+            summary = _empty_run_summary(
+                mode,
+                actual_date,
+                [f"데이터 지연: 기대 기준일 {expected_date.isoformat()}, 실제 {actual_date.isoformat()}. 오늘은 매매 신호 없음"],
+                stale=True,
+                expected_date=expected_date,
+                actual_date=actual_date,
+            )
+            summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
+            return summary
 
     print("실적 발표일을 확인하는 중...")
     earnings_map = get_earnings_dates(list(indicator_map.keys()))
@@ -466,23 +542,36 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         )
         events_to_persist = sim["all_events"]
     else:
-        # ── P3 기본 경로: 이 모드로 처음 실행한 날짜(start_date)부터 오늘까지 매번 다시 계산한다 ──
-        start_date_str = db.get_meta(conn, "start_date")
-        if start_date_str is None:
-            as_of_today = max(df.index[-1] for df in indicator_map.values())
-            start_date_str = str(as_of_today.date())
-            if not dry_run:
-                db.set_meta(conn, "start_date", start_date_str)
-        start_date = pd.Timestamp(start_date_str)
+        # ── P3 기본 경로: last_processed_date 다음 거래일부터 이번 기준일까지 모든
+        # 거래일을 순서대로 다시 계산한다(P3.2 3번, "처리 날짜 누락 방지"). 이번
+        # 기준일이 last_processed_date 이하이면(같은 날 재실행 등) 아무것도 하지 않는다.
+        last_processed_str = db.get_meta(conn, "last_processed_date")
+        actual_date = actual_as_of_ts.date()
+        if last_processed_str is not None and actual_date <= pd.Timestamp(last_processed_str).date():
+            conn.close()
+            reason = (
+                f"기준일 {actual_date.isoformat()}은 이미 처리됨"
+                f"(last_processed_date={last_processed_str}) — 이번 실행은 아무것도 하지 않습니다."
+            )
+            print(f"[daily] {reason}")
+            return _empty_run_summary(mode, actual_date, [reason], skipped=True)
+
+        next_start = (
+            pd.Timestamp(last_processed_str) + pd.Timedelta(days=1)
+            if last_processed_str is not None
+            else pd.Timestamp(actual_date)  # 이 모드로 처음 실행 — 오늘부터 시작(과거로 replay하지 않는다)
+        )
 
         states = {t: st.init_state(t, name_map.get(t, "")) for t in indicator_map}
-        per_ticker_dates = {t: _dates_since_start(df, start_date) for t, df in indicator_map.items()}
+        per_ticker_dates = {t: _dates_since_start(df, next_start) for t, df in indicator_map.items()}
         sim = simulate_since(
             indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker, fills_df,
             virtual_fill=(mode == "paper"), max_concurrent=max_concurrent,
         )
         replay_needed = False
-        events_to_persist = sim["today_events"]  # 매 실행마다 전체 이력을 다시 넣지 않는다 (중복 방지)
+        events_to_persist = sim["all_events"]  # 건너뛴 거래일이 있어도 모두 기록한다 (누락 방지, P3.2 3번)
+        if not dry_run:
+            db.set_meta(conn, "last_processed_date", str(actual_date))
 
     states = sim["states"]
     today_events = sim["today_events"]
@@ -804,6 +893,10 @@ def main() -> None:
     mode = resolve_mode(cfg, args.mode)
     summary = run(cfg, mode, do_replay=args.replay, dry_run=args.dry_run)
 
+    if summary.get("skipped"):  # P3.2 3번: 이번 기준일이 이미 처리됨 — 아무것도 하지 않는다
+        print(f"\n[daily] {summary['warnings'][0]}")
+        return
+
     as_of = summary["as_of"]
     print(f"\n기준일: {as_of.date().isoformat() if as_of is not None else '알수없음'} / 모드: {summary['mode_label']}")
     print(f"단계별 종목 수: {summary['stage_counts']} (보유 {summary['held_tickers_count']} / 한도 {summary['max_concurrent']})")
@@ -812,8 +905,11 @@ def main() -> None:
     print(f"보고서: {summary['report_path']}")
 
     if not args.dry_run:
-        text = briefing.build_briefing_text(summary, cfg)
-        sent_path = telegram.send_briefing(text, summary, cfg, force_no_send=args.no_send)
+        if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 알림 한 통만 보낸다(보고서 첨부 없음)
+            sent_path = telegram.send_delay_notice(summary, cfg, force_no_send=args.no_send)
+        else:
+            text = briefing.build_briefing_text(summary, cfg)
+            sent_path = telegram.send_briefing(text, summary, cfg, force_no_send=args.no_send)
         print(f"텔레그램 글: {sent_path}")
 
 

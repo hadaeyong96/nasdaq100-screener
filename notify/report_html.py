@@ -150,6 +150,9 @@ def build_context(summary: dict, cfg: dict) -> dict:
     unfilled_names = " · ".join(r["종목명"] for r in summary.get("unfilled_rows", []))
 
     return {
+        "stale": bool(summary.get("stale")),
+        "expected_date_str": summary.get("expected_date") or "",
+        "actual_date_str": summary.get("actual_date") or "",
         "mode_label": summary.get("mode_label", "실전"),
         "as_of_str": as_of_str,
         "order_date_str": order_date,
