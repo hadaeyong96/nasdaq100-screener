@@ -1,0 +1,127 @@
+"""텔레그램 발송 (P3, 4번).
+
+토큰(.env의 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)이 없으면 보내지 않고
+outputs/telegram_YYYY-MM-DD.txt에 저장만 한다. 에러로 멈추지 않는다.
+4096자를 넘으면 나눠 보내고, 실패하면 3번 재시도한다. 같은 기준일 중복 발송은
+store.db의 notifications 테이블로 막는다(성공적으로 다 보낸 뒤에만 기록한다).
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from datetime import datetime
+from pathlib import Path
+
+import requests
+from dotenv import load_dotenv
+
+from store import db
+
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env")
+
+TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
+MAX_LEN = 4096
+MAX_RETRIES = 3
+
+
+def split_message(text: str, limit: int = MAX_LEN) -> list[str]:
+    """긴 글을 limit자 이하 여러 통으로 나눈다. 줄 단위로 자르고, 한 줄이 limit보다
+    길면 그 줄만 강제로 잘게 나눈다 (순수 함수, 네트워크 없음 — 테스트 가능)."""
+    if len(text) <= limit:
+        return [text]
+
+    parts: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            parts.append(current)
+            current = ""
+        while len(line) > limit:
+            parts.append(line[:limit])
+            line = line[limit:]
+        current = line
+    if current:
+        parts.append(current)
+    return parts
+
+
+def _request_with_retry(request_fn, description: str) -> bool:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = request_fn()
+            resp.raise_for_status()
+            return True
+        except Exception as exc:
+            print(f"[telegram] {description} 실패(시도 {attempt}/{MAX_RETRIES}): {exc}")
+            if attempt < MAX_RETRIES:
+                time.sleep(1.5 * attempt)
+    return False
+
+
+def _send_text(token: str, chat_id: str, text: str) -> bool:
+    url = TELEGRAM_API.format(token=token, method="sendMessage")
+    return _request_with_retry(
+        lambda: requests.post(url, data={"chat_id": chat_id, "text": text}, timeout=20),
+        "sendMessage",
+    )
+
+
+def _send_document(token: str, chat_id: str, path: Path) -> bool:
+    url = TELEGRAM_API.format(token=token, method="sendDocument")
+
+    def _do():
+        with open(path, "rb") as f:
+            return requests.post(url, data={"chat_id": chat_id}, files={"document": (path.name, f)}, timeout=60)
+
+    return _request_with_retry(_do, "sendDocument")
+
+
+def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = False) -> Path:
+    """브리핑을 보낸다(토큰 있으면). 항상 outputs/telegram_YYYY-MM-DD.txt에 본문을 남긴다.
+
+    입력: text(본문, notify.briefing.build_briefing_text 결과), summary(engine의 결과 —
+         as_of, mode, report_path 포함), cfg, force_no_send(--no-send 플래그)
+    출력: 저장한 txt 파일 경로
+    """
+    as_of = summary.get("as_of")
+    as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
+    out_dir = ROOT / "outputs"
+    out_dir.mkdir(exist_ok=True)
+    out_path = out_dir / f"telegram_{as_of_str}.txt"
+    out_path.write_text(text, encoding="utf-8")
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+
+    if force_no_send:
+        return out_path
+    if not token or not chat_id:
+        print("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다.")
+        return out_path
+
+    mode = summary.get("mode", "live")
+    conn = db.connect(db.db_path_for_mode(mode))
+    try:
+        if db.has_notified(conn, as_of_str):
+            print(f"[telegram] {as_of_str} 기준 이미 발송한 기록이 있어 다시 보내지 않습니다.")
+            return out_path
+
+        ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
+        report_path = summary.get("report_path")
+        if report_path and Path(report_path).exists():
+            time.sleep(1)
+            ok = _send_document(token, chat_id, Path(report_path)) and ok
+
+        if ok:
+            db.record_notified(conn, as_of_str, datetime.now().isoformat(timespec="seconds"))
+        else:
+            print("[telegram] 일부 발송에 실패해 발송 기록을 남기지 않습니다 (다음 실행에서 재시도 가능).")
+    finally:
+        conn.close()
+    return out_path

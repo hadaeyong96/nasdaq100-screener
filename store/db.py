@@ -1,6 +1,8 @@
 """8장 저장소(SQLite): 종목별 상태, 이벤트 기록, 실행 로그.
 
-파일: data/state.db (.gitignore의 *.db로 이미 제외한다).
+파일: data/state.db (live 모드), data/paper_state.db (paper 모드). 둘 다
+.gitignore의 *.db로 이미 제외한다. 두 모드는 절대 같은 DB 파일을 쓰지 않는다
+(P3 — 운용 모드 정리).
 """
 
 from __future__ import annotations
@@ -11,6 +13,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "state.db"
+PAPER_DB_PATH = ROOT / "data" / "paper_state.db"
+
+
+def db_path_for_mode(mode: str) -> Path:
+    """운용 모드에 맞는 DB 파일 경로. paper는 별도 파일로 완전히 분리한다."""
+    return PAPER_DB_PATH if mode == "paper" else DB_PATH
 
 _POSITION_FIELDS = [
     "ticker",
@@ -91,6 +99,52 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             meta_time TEXT
         )
         """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            as_of_date TEXT PRIMARY KEY,
+            sent_at TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
+    """운용 시작일 등 이 DB 하나에 딸린 작은 키-값을 읽는다."""
+    cur = conn.execute("SELECT value FROM meta WHERE key = ?", (key,))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    conn.commit()
+
+
+def has_notified(conn: sqlite3.Connection, as_of_date: str) -> bool:
+    """같은 기준일 텔레그램 발송 기록이 이미 있는지 본다 (중복 발송 방지)."""
+    cur = conn.execute("SELECT 1 FROM notifications WHERE as_of_date = ?", (as_of_date,))
+    return cur.fetchone() is not None
+
+
+def record_notified(conn: sqlite3.Connection, as_of_date: str, sent_at: str) -> None:
+    conn.execute(
+        "INSERT INTO notifications (as_of_date, sent_at) VALUES (?, ?) "
+        "ON CONFLICT(as_of_date) DO UPDATE SET sent_at=excluded.sent_at",
+        (as_of_date, sent_at),
     )
     conn.commit()
 

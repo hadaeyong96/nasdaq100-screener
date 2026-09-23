@@ -7,3 +7,4 @@ lxml
 pyarrow
 pytest
 python-dotenv
+jinja2 # HTML 보고서 템플릿 (notify/report_html.py, P3)
