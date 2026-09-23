@@ -16,6 +16,17 @@
 - close를 못 구한 봉은 meta → 캐시(예전에 meta로 채워 둔 값) → 예비 출처(60분봉
   마지막 봉 종가) 순으로 채워본다 (P3.2 1번). 이 순서를 지키지 않으면(캐시 확인
   전에 봉을 버리면) 캐시에 있던 값이 있어도 기준일이 뒤로 가는 회귀가 생긴다.
+- 행이 통째로 사라지는 문제(P3.3): "확정되지 않은 마지막 봉 제거" 단계(마지막
+  봉의 open/high/low/close 중 하나라도 NaN이면 그 봉을 지운다)를 통과한 뒤
+  `_save_cache`가 정리된 DataFrame을 파일 전체를 덮어쓰는 방식으로 저장한다.
+  두 단계가 겹치면: 야후가 어떤 날 하루만 close를 비워 내려주고(또는 그날 자체를
+  응답에서 빠뜨리고) meta·예비 출처도 실패하면, 그 봉이 트림으로 지워진 채
+  캐시 전체가 그대로 덮어써져 예전엔 확정돼 있던 봉이 영구히 사라진다(9/22
+  CSX·ODFL·PEP 사례의 원인). `_restore_missing_rows_from_cache`가 트림 직후
+  캐시에 남아 있던 확정 봉(close가 NaN이 아니었던 날짜)을 되살려 이 경로를 막는다.
+- 그래도 캐시에 없던 날짜(새 구멍)는 `find_mid_series_gaps`가 NYSE 거래일 달력
+  기준으로 찾아내고(NaN 행 + 아예 없는 행 모두), `recover_gap_days`가 그 날짜만
+  다시 받아 채운다(일봉 재조회 → 60분봉 집계 → 실패 시 data_gap, P3.3 2번).
 """
 
 from __future__ import annotations
@@ -39,6 +50,7 @@ load_dotenv(ROOT / ".env")
 import pandas as pd  # noqa: E402
 import yfinance as yf  # noqa: E402
 
+from data import market_calendar  # noqa: E402
 from data.market_calendar import latest_closed_trading_day  # noqa: E402
 
 DATA_DIR = Path(__file__).resolve().parent
@@ -60,6 +72,10 @@ _CLOSE_SOURCE_COLUMN = "close_source"
 CLOSE_SOURCE_YAHOO = "yahoo"
 CLOSE_SOURCE_META = "meta"
 CLOSE_SOURCE_FALLBACK = "fallback_60m"
+# "hourly" = 누락 거래일 복구(P3.3)에서 60분봉을 집계해 하루치 봉 전체(시가·고가·
+# 저가·거래량까지)를 새로 만든 값. close만 채우는 CLOSE_SOURCE_FALLBACK과 달리
+# 행 자체가 캐시에 아예 없던 경우에 쓴다.
+CLOSE_SOURCE_HOURLY = "hourly"
 
 CHART_API_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
 _CHART_API_HEADERS = {
@@ -251,6 +267,13 @@ def _clean_raw(
     while len(out) and out.iloc[-1][_CORE_PRICE_COLUMNS].isna().any():
         out = out.iloc[:-1]
 
+    # 트림으로 지워졌거나 이번 응답 자체에 없던 날짜 중, 예전 캐시에 확정 봉으로
+    # 남아 있던 날짜는 되살린다 — 새로 받은 데이터가 비어 있다는 이유로 이미
+    # 확정된 과거 봉이 사라지지 않게 막는다 (P3.3 2번).
+    out, rows_restored = _restore_missing_rows_from_cache(out, cache_df)
+    if rows_restored:
+        warnings.append(f"이전에 확정됐던 행 {rows_restored}개가 이번 응답에는 없어 캐시에서 되살림")
+
     if len(out):
         last_volume = out.iloc[-1]["volume"]
         if pd.isna(last_volume) or last_volume == 0:
@@ -349,11 +372,15 @@ def _restore_close_from_fallback(df: pd.DataFrame, fallback_provider) -> tuple[p
 
 
 def _restore_close_from_cache(fresh: pd.DataFrame, cached: pd.DataFrame | None) -> tuple[pd.DataFrame, int]:
-    """새로 받은 데이터 중간에 빈 close를, 예전에 meta로 채워 캐시해 둔 값으로 되살린다.
+    """새로 받은 데이터 중간에 빈 close를, 예전에 캐시해 둔 확정 값으로 되살린다.
 
     meta.regularMarketPrice는 "가장 최근" 정규장 값 하나뿐이라, 야후가 close를
     비워둔 날이 더 이상 마지막 봉이 아니게 되면 그 날은 다시 채울 수 없다. 같은
     조건(그날 저가~고가 범위)을 다시 확인한 뒤 캐시에 있던 값을 쓴다.
+
+    캐시에 close가 있는 날짜(출처가 meta든 yahoo든 hourly든)는 모두 "확정된 과거
+    봉"이라 되살리기 후보다(P3.3 2번 — 새로 받은 응답이 비어 있다는 이유로 이미
+    확정된 값을 잃지 않게 한다). 출처를 meta로만 좁히지 않는다.
 
     입력: 새로 정리한 DataFrame, 캐시 DataFrame(없으면 None)
     출력: (되살린 DataFrame, 되살린 봉 수)
@@ -362,7 +389,7 @@ def _restore_close_from_cache(fresh: pd.DataFrame, cached: pd.DataFrame | None) 
         return fresh, 0
 
     missing = fresh.index[fresh["close"].isna()]
-    donors = cached[cached[_CLOSE_SOURCE_COLUMN] == CLOSE_SOURCE_META]
+    donors = cached[cached["close"].notna()]
     dates = missing.intersection(donors.index)
     if not len(dates):
         return fresh, 0
@@ -375,24 +402,201 @@ def _restore_close_from_cache(fresh: pd.DataFrame, cached: pd.DataFrame | None) 
         if pd.isna(low) or pd.isna(high) or not (float(low) <= price <= float(high)):
             continue
         out.loc[d, "close"] = price
-        out.loc[d, _CLOSE_SOURCE_COLUMN] = CLOSE_SOURCE_META
+        out.loc[d, _CLOSE_SOURCE_COLUMN] = donors.loc[d, _CLOSE_SOURCE_COLUMN]
         restored += 1
     return out, restored
 
 
+def _restore_missing_rows_from_cache(fresh: pd.DataFrame, cached: pd.DataFrame | None) -> tuple[pd.DataFrame, int]:
+    """새 응답에 아예 없는 날짜를, 예전 캐시에 확정 봉으로 남아 있던 값으로 되살린다.
+
+    "확정되지 않은 마지막 봉 제거" 단계에서 트림된 날짜나, 이번 야후 응답 자체가
+    건너뛴 날짜가 대상이다. 캐시에 close가 있던(=확정됐던) 날짜인데 새 데이터의
+    인덱스에 통째로 없으면, open/high/low/close/volume/close_source를 캐시 값
+    그대로 되살린다 (P3.3 2번 — 9/22 CSX·ODFL·PEP 소실 재발 방지).
+
+    입력: fresh(트림까지 끝난 정리 중인 DataFrame), cached(예전 캐시, 없으면 None)
+    출력: (되살린 DataFrame, 되살린 행 수)
+    """
+    if cached is None or cached.empty or _CLOSE_SOURCE_COLUMN not in cached.columns:
+        return fresh, 0
+
+    confirmed = cached[cached["close"].notna()]
+    missing_dates = confirmed.index.difference(fresh.index)
+    if not len(missing_dates):
+        return fresh, 0
+
+    cols = [c for c in _PRICE_COLUMNS if c in fresh.columns] + [_CLOSE_SOURCE_COLUMN]
+    restored_rows = confirmed.loc[missing_dates, cols]
+    out = pd.concat([fresh, restored_rows]).sort_index()
+    return out, len(missing_dates)
+
+
 def find_mid_series_gaps(df: pd.DataFrame) -> list:
-    """마지막 봉이 아닌 곳에 close가 NaN인 날짜를 찾는다 (P2 P1 마무리 2번).
+    """마지막 봉이 아닌 곳에서 close가 NaN이거나 거래일 자체가 인덱스에 아예 없는
+    날짜를 찾는다 (P2 P1 마무리 2번, P3.3 1번 — 통째로 사라진 행도 구멍으로 잡는다).
 
-    중간에 close 구멍이 있으면 조용히 보간하거나 채우지 않고, 그 날짜를 그대로
-    보고한다 — 호출부가 data_gap 표시와 신호 판정 제외에 쓴다.
+    NaN 행은 기존처럼 df 안에서 바로 찾고, 통째로 없는 행은 df가 가진 기간(첫
+    날짜~마지막 날짜) 안의 NYSE 거래일 달력(data/market_calendar.py)과 df 인덱스의
+    차집합으로 찾는다. 상장 전 기간은 df 자체에 없으므로 자동으로 탐지 범위 밖이다.
+    중간에 구멍이 있으면 조용히 보간하거나 채우지 않고, 그 날짜를 그대로 보고한다
+    — 호출부가 data_gap 표시와 신호 판정 제외, 복구(recover_gap_days)에 쓴다.
 
-    입력: DataFrame(..., close)
+    입력: DataFrame(..., close), 날짜 오름차순 인덱스
     출력: 구멍이 있는 날짜(index 값) 목록, 오름차순. 없으면 빈 리스트.
     """
     if len(df) < 2:
         return []
     mid = df.iloc[:-1]
-    return list(mid.index[mid["close"].isna()])
+    nan_gaps = set(mid.index[mid["close"].isna()])
+
+    last_date = df.index[-1]
+    expected = market_calendar.trading_days_between(df.index[0].date(), last_date.date())
+    missing_rows = {d for d in expected if d < last_date} - set(df.index)
+
+    return sorted(nan_gaps | missing_rows)
+
+
+def recover_gap_days(
+    df: pd.DataFrame, gap_dates: list, daily_provider, hourly_provider
+) -> tuple[pd.DataFrame, list, list, list]:
+    """find_mid_series_gaps가 찾은 구멍 날짜를 하루씩 다시 받아 채운다 (순수 함수, P3.3 2번).
+
+    우선순위: 일봉 재조회 종가(daily_provider) → 60분봉 집계(hourly_provider, 시가·
+    고가·저가·거래량도 60분봉에서 새로 만든다) → 실패. 두 출처 모두 그날
+    저가~고가 범위를 벗어나는 값은 쓰지 않고 실패로 취급한다.
+
+    입력: df(open,high,low,close,volume,close_source), gap_dates(find_mid_series_gaps
+         결과), daily_provider(date -> {open,high,low,close,volume} 또는 None. 예외를
+         던지면 실패로 보고 다음 출처로 넘어간다), hourly_provider(위와 같은 시그니처)
+    출력: (복구된 df, 복구한 날짜 목록, 끝내 복구 못 한 날짜 목록, 경고 메시지 목록)
+    """
+    out = df.copy()
+    recovered: list = []
+    unresolved: list = []
+    warnings: list[str] = []
+
+    for d in gap_dates:
+        target = d.date() if hasattr(d, "date") else d
+        values, source = None, None
+
+        try:
+            values = daily_provider(target)
+            source = CLOSE_SOURCE_YAHOO
+        except Exception as exc:
+            warnings.append(f"{target} 누락 거래일 일봉 재조회 실패: {exc}")
+
+        if values is None:
+            try:
+                values = hourly_provider(target)
+                source = CLOSE_SOURCE_HOURLY
+            except Exception as exc:
+                warnings.append(f"{target} 누락 거래일 60분봉 조회 실패: {exc}")
+
+        if values is None:
+            unresolved.append(d)
+            warnings.append(f"{target} 누락 거래일 복구 실패 (일봉·60분봉 모두 실패) - data_gap 처리")
+            continue
+
+        low, high, close = values.get("low"), values.get("high"), values.get("close")
+        if low is None or high is None or close is None or not (float(low) <= float(close) <= float(high)):
+            unresolved.append(d)
+            warnings.append(f"{target} 복구값이 그날 저가~고가 범위를 벗어나 버림 - data_gap 처리")
+            continue
+
+        for col in ("open", "high", "low", "close", "volume"):
+            out.loc[d, col] = values[col]
+        out.loc[d, _CLOSE_SOURCE_COLUMN] = source
+        recovered.append(d)
+        warnings.append(f"{target} 누락 거래일 복구함 (close_source={source})")
+
+    out = out.sort_index()
+    return out, recovered, unresolved, warnings
+
+
+def _fetch_daily_bar(ticker: str, target_date: date) -> dict | None:
+    """그 날짜 하루치 일봉을 다시 받는다 (누락 거래일 복구 1순위, P3.3 2번).
+
+    입력: yfinance 형식 ticker, target_date
+    출력: {open,high,low,close,volume} 또는 None(그 날짜 봉이 없거나 close가 비어 있음)
+    예외: 네트워크·응답 형식 오류는 그대로 올린다 (호출부가 경고로 모으고 다음
+         출처로 넘어간다)
+    """
+    raw = yf.Ticker(ticker).history(
+        start=target_date, end=target_date + timedelta(days=1), auto_adjust=False
+    )
+    if raw.empty:
+        return None
+    row = raw.iloc[0]
+    close = row.get("Close")
+    if close is None or pd.isna(close):
+        return None
+    return {
+        "open": float(row["Open"]),
+        "high": float(row["High"]),
+        "low": float(row["Low"]),
+        "close": float(close),
+        "volume": float(row.get("Volume") or 0),
+    }
+
+
+def _fetch_hourly_bar(ticker: str, target_date: date) -> dict | None:
+    """그 날짜의 60분봉을 모아 하루치 봉으로 집계한다 (누락 거래일 복구 2순위, P3.3 2번).
+
+    시가=그날 첫 60분봉의 시가, 고가·저가=그날 60분봉 중 최댓값·최솟값, 종가=그날
+    마지막 60분봉의 종가, 거래량=그날 60분봉 거래량 합.
+
+    입력: yfinance 형식 ticker, target_date
+    출력: {open,high,low,close,volume} 또는 None(그날 60분봉이 없음)
+    예외: 네트워크·응답 형식 오류는 그대로 올린다 (호출부에서 경고로 모은다)
+    """
+    raw = yf.Ticker(ticker).history(
+        start=target_date, end=target_date + timedelta(days=1), interval="60m", auto_adjust=False
+    )
+    if raw.empty:
+        return None
+    idx = raw.index.tz_convert(US_EASTERN)
+    day_bars = raw.loc[idx.date == target_date]
+    if day_bars.empty:
+        return None
+    return {
+        "open": float(day_bars.iloc[0]["Open"]),
+        "high": float(day_bars["High"].max()),
+        "low": float(day_bars["Low"].min()),
+        "close": float(day_bars.iloc[-1]["Close"]),
+        "volume": float(day_bars["Volume"].sum()),
+    }
+
+
+def _daily_bar_provider(ticker: str):
+    return lambda target_date: _fetch_daily_bar(ticker, target_date)
+
+
+def _hourly_bar_provider(ticker: str):
+    return lambda target_date: _fetch_hourly_bar(ticker, target_date)
+
+
+def _expand_with_next_trading_day(index: pd.DatetimeIndex, gap_dates: list) -> list:
+    """끝내 복구 못 한 구멍 날짜 바로 다음 날짜도 data_gap에 넣는다 (P3.3 3번).
+
+    core.state.check_a1 등은 df.iloc[idx-1]로 "전날"을 찾는다. 구멍이 그대로
+    남으면 구멍 다음 날짜의 "전날"이 실제 직전 거래일이 아니라 그 전전날이
+    되어 신호가 잘못될 수 있다(9/22가 빈 채로 9/21→9/23을 비교해 A1이 9/23으로
+    밀린 사례). 구멍 날짜 자체는 이미 data_gap이라 그날 판정에서 빠지지만,
+    "전날"이 어긋나는 것은 구멍의 다음 거래일이므로 그 날짜도 함께 넣어야
+    core.state가 그 어긋난 비교로 신호를 내지 않는다(신호 없음 + data_gap 경고).
+
+    입력: DataFrame 인덱스(오름차순), gap_dates(끝내 복구 못 한 날짜 목록)
+    출력: gap_dates + 그 다음 실제 존재하는 날짜, 오름차순, 중복 없음
+    """
+    if not len(gap_dates):
+        return list(gap_dates)
+    expanded = set(gap_dates)
+    for d in gap_dates:
+        later = index[index > d]
+        if len(later):
+            expanded.add(later[0])
+    return sorted(expanded)
 
 
 def has_meta_close(df: pd.DataFrame) -> bool:
@@ -468,14 +672,23 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
         cached.attrs.setdefault("close_filled_from_meta", False)
         cached.attrs.setdefault("close_meta_time", None)  # 이번 실행에서 새로 채우지 않았다
         # parquet은 DataFrame.attrs를 보존하지 않으므로 캐시를 그대로 돌려줄 때도
-        # data_gap 여부는 매번 다시 계산한다.
+        # data_gap 여부는 매번 다시 계산한다. 이전 실행에서 남은 구멍도 여기서
+        # 다시 복구를 시도한다(P3.3 1·2번).
         gap_dates = find_mid_series_gaps(cached)
         if gap_dates:
-            dates_str = ", ".join(d.date().isoformat() for d in gap_dates)
-            cached.attrs["warnings"].append(
-                f"[data_gap] 중간에 close가 비어 있는 봉 {len(gap_dates)}개 ({dates_str}) - "
-                "보간하지 않음, 해당 날짜는 신호 판정에서 제외해야 함"
+            cached, recovered_dates, unresolved_dates, recovery_warnings = recover_gap_days(
+                cached, gap_dates, _daily_bar_provider(ticker), _hourly_bar_provider(ticker)
             )
+            cached.attrs["warnings"].extend(recovery_warnings)
+            if recovered_dates:
+                _save_cache(ticker, cached)
+            if unresolved_dates:
+                dates_str = ", ".join(str(d.date()) for d in unresolved_dates)
+                cached.attrs["warnings"].append(
+                    f"[data_gap] 끝내 복구 못 한 거래일 {len(unresolved_dates)}개 ({dates_str}) - "
+                    "신호 판정에서 제외해야 함"
+                )
+            gap_dates = _expand_with_next_trading_day(cached.index, unresolved_dates)
         cached.attrs["data_gap_dates"] = gap_dates
         return cached
 
@@ -519,15 +732,22 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
         dates = ", ".join(d.date().isoformat() for d in still_missing[-5:])
         warnings.append(f"close가 비어 있는 봉 {len(still_missing)}개가 남아 있음 (최근: {dates})")
 
-    # 마지막 봉이 아닌 곳의 close 구멍은 조용히 채우지 않고 크게 경고한다
-    # (P2 P1 마무리 2번). 신호 판정은 engine에서 이 날짜를 제외한다.
+    # 마지막 봉이 아닌 곳의 구멍(NaN close, 또는 행 자체가 없음)은 그 날짜만 다시
+    # 받아 복구를 시도한다 (P3.3 1·2번). 끝내 복구 못 한 날짜만 data_gap으로
+    # 남기고 조용히 보간하지 않는다. 신호 판정은 engine에서 이 날짜를 제외한다.
     gap_dates = find_mid_series_gaps(cleaned)
     if gap_dates:
-        dates_str = ", ".join(d.date().isoformat() for d in gap_dates)
-        warnings.append(
-            f"[data_gap] 중간에 close가 비어 있는 봉 {len(gap_dates)}개 ({dates_str}) - "
-            "보간하지 않음, 해당 날짜는 신호 판정에서 제외해야 함"
+        cleaned, recovered_dates, unresolved_dates, recovery_warnings = recover_gap_days(
+            cleaned, gap_dates, _daily_bar_provider(ticker), _hourly_bar_provider(ticker)
         )
+        warnings.extend(recovery_warnings)
+        if unresolved_dates:
+            dates_str = ", ".join(str(d.date()) for d in unresolved_dates)
+            warnings.append(
+                f"[data_gap] 끝내 복구 못 한 거래일 {len(unresolved_dates)}개 ({dates_str}) - "
+                "신호 판정에서 제외해야 함"
+            )
+        gap_dates = _expand_with_next_trading_day(cleaned.index, unresolved_dates)
     cleaned.attrs["data_gap_dates"] = gap_dates
 
     if len(cleaned) < history_days:

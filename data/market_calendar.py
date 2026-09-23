@@ -19,6 +19,17 @@ _NYSE = mcal.get_calendar("NYSE")
 _LOOKBACK_DAYS = 15
 
 
+def trading_days_between(start: date, end: date) -> pd.DatetimeIndex:
+    """start~end(둘 다 포함) 구간의 NYSE 거래일 목록 (P3.3 1번, 누락 거래일 탐지용).
+
+    입력: date, date (start <= end)
+    출력: DatetimeIndex(정규화, tz-naive), 오름차순. data/prices.py의 캐시 인덱스와
+         같은 형식이라 곧바로 차집합 비교에 쓸 수 있다.
+    """
+    schedule = _NYSE.schedule(start_date=start, end_date=end)
+    return pd.DatetimeIndex(schedule.index).tz_localize(None).normalize()
+
+
 def latest_closed_trading_day(now_et: datetime) -> date:
     """실행 시각(미국 동부) 기준 가장 최근에 정규장이 마감된 거래일을 구한다.
 
