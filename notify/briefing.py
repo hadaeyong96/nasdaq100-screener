@@ -40,6 +40,12 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
         lines.append("매수 없음")
         lines.append("")
 
+    pending_rows = summary.get("pending_order_rows", [])
+    if pending_rows:
+        names = " · ".join(r["종목명"] for r in pending_rows)
+        lines.append(f"주문 후 체결 기록 필요: {names}")
+        lines.append("")
+
     sell_rows = summary.get("sell_rows", [])
     if sell_rows:
         lines.append("━━━ 매도·손절 ━━━")

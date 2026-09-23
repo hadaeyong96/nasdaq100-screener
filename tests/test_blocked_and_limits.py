@@ -36,6 +36,9 @@ def test_blocked_a2_keeps_scouting_then_succeeds_on_later_cross(cfg):
     for date in df.index:
         events, state = st.process_day(df, date, state, cfg, earnings_date=earnings_date)
         all_events.append((date, events))
+        for e in events:
+            if e["kind"] == "A1":  # A1이 실제 체결됐다고 가정 — 다음 날 정찰로 전이해야 A2를 판정할 수 있다
+                state = st.apply_fill(state, {"unit": "1", "side": "buy", "price": 101.0, "qty": 55}, cfg)
 
     kinds_by_day = [[e["kind"] for e in evs] for _, evs in all_events]
     assert kinds_by_day[1] == ["A1"]
@@ -45,7 +48,7 @@ def test_blocked_a2_keeps_scouting_then_succeeds_on_later_cross(cfg):
     assert any("실적" in r for r in all_events[5][1][0]["reasons"])
     assert kinds_by_day[6] == []  # 그냥 지나가는 날
     assert kinds_by_day[7] == ["A2"]  # 유효기간(10거래일) 안에서 다시 성공
-    assert state["state"] == "확인"
+    assert state["state"] == "주문대기"  # 체결 확인은 다음 거래일에 이뤄진다
 
 
 def test_blocked_a2_does_not_advance_state_or_units(cfg):
@@ -62,6 +65,9 @@ def test_blocked_a2_does_not_advance_state_or_units(cfg):
     state = st.init_state("TEST")
     for date in df.index:
         events, state = st.process_day(df, date, state, cfg, earnings_date=earnings_date)
+        for e in events:
+            if e["kind"] == "A1":  # A1이 실제 체결됐다고 가정 — 다음 날 정찰로 전이해야 A2를 판정할 수 있다
+                state = st.apply_fill(state, {"unit": "1", "side": "buy", "price": 101.0, "qty": 55}, cfg)
 
     assert state["state"] == "정찰"  # 확인으로 넘어가지 않았다
     assert "2" not in state["units"]  # 묶음 2는 생기지 않았다(가상 체결 없음)
@@ -181,4 +187,4 @@ def test_new_entry_allowed_true_after_slot_frees_up_still_works(cfg):
     events, new_state = st.process_day(df, df.index[-1], state, cfg, new_entry_allowed=True)
 
     assert [e["kind"] for e in events] == ["A1"]
-    assert new_state["state"] == "정찰"
+    assert new_state["state"] == "주문대기"  # 체결 확인은 다음 거래일에 이뤄진다

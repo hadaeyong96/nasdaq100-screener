@@ -1,6 +1,7 @@
 """P3: live/paper 운용 모드 정리 테스트. 네트워크 없이 합성 DataFrame으로 돈다.
 
-- live 모드: 체결 기록이 없으면 보유 0(가상 체결 없음).
+- live 모드: 신호 당일은 `주문대기`, 체결 기록이 없으면 다음 거래일에 "미체결"을
+  한 번 표시하고 신호 이전 상태로 되돌린다(보유 아님, 재진입 대기 미적용) — P3.1 보완 1번.
 - live 모드: 체결 기록을 며칠 늦게 넣어도, 처음부터 다시 계산하면 그 날짜부터
   올바르게 반영된다(core.state.process_day는 결정적이라 같은 입력이면 언제
   다시 계산해도 같은 결과가 나온다).
@@ -13,7 +14,7 @@ from __future__ import annotations
 import pandas as pd
 
 from core import state as st
-from engine.daily import _compute_funnel, _unfilled_rows, simulate_since
+from engine.daily import _compute_funnel, _pending_order_rows, _unfilled_rows_from_events, simulate_since
 from store import db
 from tests.test_state import cfg, make_df  # noqa: F401 (cfg는 pytest fixture로 재사용)
 
@@ -45,9 +46,10 @@ def test_live_mode_without_fills_has_no_holdings(cfg):
     )
 
     final_state = result["states"]["TEST"]
-    assert final_state["state"] == "정찰"  # A1 신호는 발생했다
-    assert final_state["units"].get("1", 0) == 0  # 그러나 체결 기록이 없어 보유는 0
+    assert final_state["state"] == "대기"  # 체결 기록이 없어 다음 거래일에 신호 전 상태로 되돌아간다
+    assert final_state["units"].get("1", 0) == 0  # 보유는 0
     assert any(e["kind"] == "A1" for e in result["all_events"])
+    assert any(e["kind"] == "UNFILLED" for e in result["all_events"])  # 미체결 알림이 한 번 남는다
     assert not any(e["kind"] == "VIRTUAL_FILL" for e in result["all_events"])  # 가상 체결 없음
 
 
@@ -140,26 +142,86 @@ def test_notification_dedup_by_as_of_date(tmp_path):
     assert db.has_notified(conn, "2026-09-24") is False
 
 
-def test_unfilled_rows_flags_pending_stage_in_live_mode_only():
+def test_pending_order_rows_lists_today_signals_in_live_mode_only():
     state = st.init_state("NVDA", "엔비디아")
-    state["state"] = "정찰"
-    state["units"] = {"1": 0}  # 신호는 났지만 체결 기록이 없다
+    state["state"] = "주문대기"
+    state["pending"] = {"kind": "A1"}
     states = {"NVDA": state}
     name_map = {"NVDA": "엔비디아"}
 
-    live_rows = _unfilled_rows(states, name_map, "live")
+    live_rows = _pending_order_rows(states, name_map, "live")
+    assert len(live_rows) == 1
+    assert live_rows[0]["티커"] == "NVDA"
+
+    assert _pending_order_rows(states, name_map, "paper") == []
+
+
+def test_unfilled_rows_from_events_flags_today_unfilled_in_live_mode_only():
+    today_events = [{"kind": "UNFILLED", "ticker": "NVDA", "stage": "A1", "unit": "1", "date": pd.Timestamp("2026-09-23")}]
+    name_map = {"NVDA": "엔비디아"}
+
+    live_rows = _unfilled_rows_from_events(today_events, name_map, "live")
     assert len(live_rows) == 1
     assert live_rows[0]["티커"] == "NVDA"
     assert live_rows[0]["내용"] == "미체결 (기록 없음)"
 
-    assert _unfilled_rows(states, name_map, "paper") == []  # paper는 항상 즉시 체결
+    assert _unfilled_rows_from_events(today_events, name_map, "paper") == []  # paper는 항상 즉시 체결
 
 
-def test_unfilled_rows_ignores_filled_stage():
-    state = st.init_state("NVDA")
-    state["state"] = "정찰"
-    state["units"] = {"1": 55}  # 이미 체결됨
-    assert _unfilled_rows({"NVDA": state}, {}, "live") == []
+def test_unfilled_rows_from_events_ignores_other_kinds():
+    today_events = [{"kind": "A1", "ticker": "NVDA", "unit": "1", "date": pd.Timestamp("2026-09-23")}]
+    assert _unfilled_rows_from_events(today_events, {}, "live") == []
+
+
+def test_live_mode_unfilled_shows_pending_day_then_unfilled_day_then_late_fill_is_retroactive(cfg):
+    """P3.1 보완 1번 전체 시나리오: 신호 당일 주문대기 -> 다음 날 기록 없음(미체결, 대기로 복귀)
+    -> 사흘 뒤 신호일 날짜로 체결 기록을 입력하면 처음부터 다시 계산해 소급 반영된다."""
+    rows = [
+        {"close": 100, "rsi": 20},  # day-1
+        {"close": 100, "rsi": 32, "swing_low": 94},  # day0: A1 신호
+        {"close": 100, "rsi": 40},  # day1: 다음 거래일(체결 기록 확인)
+        {"close": 100, "rsi": 40},  # day2
+        {"close": 100, "rsi": 40},  # day3 (오늘, "사흘 뒤")
+    ]
+    df = make_df(rows)
+    indicator_map = {"TEST": df}
+    per_ticker_dates = {"TEST": list(df.index)}
+    gap_dates_by_ticker = {"TEST": set()}
+    earnings_map = {"TEST": None}
+    a1_date = df.index[1]
+    empty_fills = pd.DataFrame(columns=["date", "ticker", "unit", "side", "price", "qty"])
+
+    # day0(신호 당일)만 처리 -> 주문대기
+    day0_dates = {"TEST": [df.index[1]]}
+    result_day0 = simulate_since(
+        indicator_map, day0_dates, {"TEST": st.init_state("TEST")}, cfg, earnings_map, gap_dates_by_ticker,
+        empty_fills, virtual_fill=False, max_concurrent=8,
+    )
+    assert result_day0["states"]["TEST"]["state"] == "주문대기"
+
+    # day0~day1(다음 거래일)까지, 체결 기록 없음 -> 미체결로 확정, 대기로 복귀
+    day1_dates = {"TEST": list(df.index[1:3])}
+    result_day1 = simulate_since(
+        indicator_map, day1_dates, {"TEST": st.init_state("TEST")}, cfg, earnings_map, gap_dates_by_ticker,
+        empty_fills, virtual_fill=False, max_concurrent=8,
+    )
+    assert result_day1["states"]["TEST"]["state"] == "대기"
+    assert any(e["kind"] == "UNFILLED" for e in result_day1["today_events"])
+
+    # 사흘 뒤(day3, "오늘"): 신호일(day0) 날짜로 체결 기록을 늦게 입력 -> 처음부터 다시 계산
+    late_fills = pd.DataFrame(
+        [{"date": a1_date, "ticker": "TEST", "unit": "1", "side": "buy", "price": 101.0, "qty": 55}]
+    )
+    result_day3 = simulate_since(
+        indicator_map, per_ticker_dates, {"TEST": st.init_state("TEST")}, cfg, earnings_map, gap_dates_by_ticker,
+        late_fills, virtual_fill=False, max_concurrent=8,
+    )
+    final_state = result_day3["states"]["TEST"]
+    assert final_state["state"] == "정찰"
+    assert final_state["units"]["1"] == 55
+    assert final_state["entries"]["1"] == 101.0
+    assert final_state["a1_date"] == a1_date  # 진입일은 신호일 기준
+    assert not any(e["kind"] == "UNFILLED" for e in result_day3["today_events"])  # 소급 반영되어 오늘은 미체결이 아니다
 
 
 def test_compute_funnel_counts_stages():

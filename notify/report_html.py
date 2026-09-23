@@ -145,6 +145,10 @@ def build_context(summary: dict, cfg: dict) -> dict:
         for r in summary.get("hold_rows", [])
     ]
 
+    # 체결 기록 안내 (P3.1 보완 2번): 신호 당일엔 "주문 후 체결 기록 필요"만, 미체결 확정은 다음 날에만.
+    pending_names = " · ".join(r["종목명"] for r in summary.get("pending_order_rows", []))
+    unfilled_names = " · ".join(r["종목명"] for r in summary.get("unfilled_rows", []))
+
     return {
         "mode_label": summary.get("mode_label", "실전"),
         "as_of_str": as_of_str,
@@ -167,6 +171,8 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "filtered_rows": summary.get("filtered_rows", []),
         "warn_rows": summary.get("warn_rows", []),
         "data_status_rows": summary.get("data_status_rows", []),
+        "pending_names": pending_names,
+        "unfilled_names": unfilled_names,
         "fills_path": str(FILLS_CSV_PATH),
         "ichimoku_shift": cfg["indicators"]["ichimoku_shift"],
         "max_position_pct": risk_cfg["max_position_pct"],

@@ -15,6 +15,13 @@ P2.1 보완: 매매 금지 구간(core/filters.py의 ban_reasons)에 걸리면 *
 뒤 `process_day(..., new_entry_allowed=...)`로 허용 여부를 넘겨준다. 종목당
 투입 25% 한도는 수량 계산(core/sizing.py)에서 처리하므로 상태 전이를 막지
 않는다.
+
+P3.1 보완: 매수 신호(A1·A2·A3·B)가 나면 곧바로 원래 단계(정찰·확인·확정·
+추세보유)로 넘어가지 않고, 먼저 `주문대기`로 둔다 (그 차수의 units·entries
+자리만 만들고 값은 비워 둔다). 다음 실행에서 그 자리에 체결 기록(수량>0)이
+반영돼 있으면 원래 단계로 전이하고(진입일은 신호일 그대로), 반영돼 있지
+않으면 "UNFILLED" 이벤트를 한 번 내고 신호 이전 상태로 되돌린다(보유 아님,
+재진입 대기 미적용). 이미 보유 중인 다른 차수는 건드리지 않는다.
 """
 
 from __future__ import annotations
@@ -26,11 +33,14 @@ import pandas as pd
 from core import filters
 from core import signals as sig
 
-STATES = ("대기", "정찰", "확인", "확정", "추세보유", "청산중")
+STATES = ("대기", "주문대기", "정찰", "확인", "확정", "추세보유", "청산중")
 
 # A형 묶음 라벨(1:2:6). B형은 전체를 "9"로 간주해 같은 순서(1→2→6)로 나눠 판다.
 _UNIT_1, _UNIT_2, _UNIT_6, _UNIT_B = "1", "2", "6", "9"
 _B_WEIGHTS = {"1": 1, "2": 2, "6": 6}  # B형 잔량을 9분의 1/2/6 비율로 나눠 팔 때 쓴다
+
+# 매수 신호 종류 -> 체결 확인 후 실제로 전이할 단계 (P3.1 "주문대기" 보완)
+_PENDING_TARGET_STATE = {"A1": "정찰", "A2": "확인", "A3": "확정", "B": "추세보유"}
 
 
 def init_state(ticker: str, name_kr: str = "") -> dict:
@@ -50,6 +60,8 @@ def init_state(ticker: str, name_kr: str = "") -> dict:
         "b_entry_date": None,
         "b_total_qty": None,
         "grade": None,
+        # P3.1: 신호는 났지만 체결 확인 전인 차수 하나의 정보 (없으면 None).
+        "pending": None,
     }
 
 
@@ -144,6 +156,80 @@ def preview_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict, earnings_d
     return {"kind": kind, "unit": unit, "price": float(row["close"]), "score": score}
 
 
+def _resolve_pending(new_state: dict, date, events: list) -> None:
+    """`주문대기` 중인 차수를 오늘 체결 기록 여부로 확정한다 (P3.1 보완 1번).
+
+    체결(units[unit] > 0)됐으면 신호 당시 계산해 둔 target_state로 전이한다
+    (진입일은 이미 신호일로 설정돼 있어 그대로 유지된다). 체결 기록이 없으면
+    "UNFILLED" 이벤트를 한 번 내고, 신호가 나기 전 상태·손절가·진입일·등급으로
+    되돌린다(보유 아님 — 재진입 대기는 적용하지 않는다). 다른 차수의 보유는
+    건드리지 않는다. 판정은 신호 당일이 아니라 그다음 거래일부터 한다 — 같은
+    날 두 번 실행해도(중복 알림 방지) 곧바로 되돌리지 않는다.
+    """
+    if new_state.get("state") != "주문대기":
+        return
+    pending = new_state.get("pending")
+    if not pending:
+        return
+    if pd.Timestamp(date) <= pd.Timestamp(pending["date"]):
+        return
+    unit = pending["unit"]
+
+    if new_state["units"].get(unit, 0) > 0:
+        new_state["state"] = pending["target_state"]
+        new_state["pending"] = None
+        return
+
+    key = f"UNFILLED:{pd.Timestamp(date).date()}"
+    if not _sent(new_state, key):
+        events.append({"date": date, "kind": "UNFILLED", "stage": pending["kind"], "unit": unit})
+        _mark_sent(new_state, key)
+
+    new_state["state"] = pending["prev_state"]
+    new_state["stop"] = pending["prev_stop"]
+    new_state["grade"] = pending["prev_grade"]
+    new_state["a1_date"] = pending["prev_a1_date"]
+    new_state["b_entry_date"] = pending["prev_b_entry_date"]
+    new_state["units"].pop(unit, None)
+    new_state["entries"].pop(unit, None)
+    new_state["pending"] = None
+
+
+def _snapshot(new_state: dict) -> dict:
+    """되돌릴 때 쓸, 신호 전 state·stop·a1_date·b_entry_date·grade 스냅샷."""
+    return {
+        "state": new_state["state"],
+        "stop": new_state.get("stop"),
+        "a1_date": new_state.get("a1_date"),
+        "b_entry_date": new_state.get("b_entry_date"),
+        "grade": new_state.get("grade"),
+    }
+
+
+def _start_pending(new_state: dict, prev: dict, kind: str, unit: str, date, price: float, score: int, grade_letter: str | None) -> None:
+    """진입 신호가 확정되면 실제 단계 대신 `주문대기`로 둔다 (P3.1 보완 1번).
+
+    호출 시점에는 stop·a1_date·b_entry_date·grade가 이미 신호 확정 값으로
+    설정돼 있어야 한다(target_state로 전이할 때 그대로 쓴다). prev(_snapshot
+    결과)는 다음 실행에 체결 기록이 없을 때 그대로 복원하는 데 쓴다.
+    """
+    new_state["pending"] = {
+        "kind": kind,
+        "unit": unit,
+        "date": date,
+        "price": price,
+        "score": score,
+        "grade": grade_letter,
+        "target_state": _PENDING_TARGET_STATE[kind],
+        "prev_state": prev["state"],
+        "prev_stop": prev["stop"],
+        "prev_a1_date": prev["a1_date"],
+        "prev_b_entry_date": prev["b_entry_date"],
+        "prev_grade": prev["grade"],
+    }
+    new_state["state"] = "주문대기"
+
+
 def _liquidate_all(state: dict, date, reason: str, events: list, cooldown_days: int) -> None:
     """전량 매도(손절·E3)로 대기 상태로 되돌린다."""
     for unit, qty in _held_units(state).items():
@@ -216,6 +302,9 @@ def process_day(
     idx = df.index.get_loc(date)
     prev_row = df.iloc[idx - 1] if idx > 0 else None
     cooldown_days = cfg["assumptions"]["reentry_cooldown_days"]
+
+    # ⓪ 주문대기 확정 (전날 이전 신호의 체결 여부를 오늘 먼저 판정한다)
+    _resolve_pending(new_state, date, events)
 
     # ① 손절 (최우선 — 발생하면 나머지 신호는 모두 무시)
     if new_state["state"] != "대기" and sig.check_stop(row["close"], new_state.get("stop")):
@@ -306,8 +395,8 @@ def process_day(
                 elif not new_entry_allowed:
                     _record_blocked(new_state, date, kind, unit, ["동시 보유 종목 수 한도 초과"], "limit", score, events)
                 else:
+                    prev = _snapshot(new_state)
                     events.append({"date": date, "kind": kind, "unit": unit, "price": float(row["close"]), "score": score})
-                    new_state["state"] = "정찰" if kind == "A1" else "추세보유"
                     new_state["entries"][unit] = None  # engine이 지정가·수량을 채운다
                     new_state["units"].setdefault(unit, 0)
                     if not pd.isna(row.get("swing_low")):  # 진입일 기준 swing_low (6장)
@@ -316,6 +405,7 @@ def process_day(
                         new_state["a1_date"] = date
                     else:
                         new_state["b_entry_date"] = date
+                    _start_pending(new_state, prev, kind, unit, date, float(row["close"]), score, None)
                     _mark_sent(new_state, key)
 
     elif st == "정찰":
@@ -330,13 +420,14 @@ def process_day(
                     # 정찰 상태를 유지한다 — A1 유효기간 안에 다음 골든크로스가 오면 다시 판정.
                     _record_blocked(new_state, date, "A2", _UNIT_2, reasons, "ban", score, events)
                 else:
+                    prev = _snapshot(new_state)
                     events.append(
                         {"date": date, "kind": "A2", "unit": _UNIT_2, "price": float(row["close"]), "score": score, "grade": grade_letter}
                     )
-                    new_state["state"] = "확인"
                     new_state["entries"][_UNIT_2] = None
                     new_state["units"].setdefault(_UNIT_2, 0)
                     new_state["grade"] = grade_letter
+                    _start_pending(new_state, prev, "A2", _UNIT_2, date, float(row["close"]), score, grade_letter)
                     _mark_sent(new_state, key)
 
     elif st == "확인":
@@ -350,15 +441,16 @@ def process_day(
                     # 확인 상태를 유지한다 — 다음 날 다시 판정한다.
                     _record_blocked(new_state, date, "A3", _UNIT_6, reasons, "ban", score, events)
                 else:
+                    prev = _snapshot(new_state)
                     events.append(
                         {"date": date, "kind": "A3", "unit": _UNIT_6, "price": float(row["close"]), "score": score, "grade": grade_letter}
                     )
-                    new_state["state"] = "확정"
                     new_state["entries"][_UNIT_6] = None
                     new_state["units"].setdefault(_UNIT_6, 0)
                     # A3 확정 시 손절선을 max(A1 기준 swing_low, 오늘 구름 하단)으로 올린다 (6장).
                     if not pd.isna(row.get("cloud_bot")) and new_state.get("stop") is not None:
                         new_state["stop"] = max(new_state["stop"], float(row["cloud_bot"]))
+                    _start_pending(new_state, prev, "A3", _UNIT_6, date, float(row["close"]), score, grade_letter)
                     _mark_sent(new_state, key)
 
     new_state["updated_at"] = date

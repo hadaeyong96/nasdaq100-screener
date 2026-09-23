@@ -284,7 +284,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   </tbody></table></div>
 
   <div class="pf" style="margin-top:16px">
-    <h2>데이터 상태 <small>지연·구멍, 실적일 확인불가, 체결 기록 오류, 미체결</small></h2>
+    <h2>데이터 상태 <small>지연·구멍, 실적일 확인불가, 체결 기록 오류</small></h2>
     <div class="sheet"><table>
     <thead><tr><th class="nosort">종목</th><th class="nosort">내용</th></tr></thead>
     <tbody>
@@ -349,7 +349,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   {% endif %}
   </tbody>
   </table></div>
-  <div class="todo"><b>체결 기록 필요</b> · 오늘 주문할 종목은 체결 후 아래 파일에 한 줄씩 기록하세요. 기록이 없으면 다음 보고서에 "미체결 (기록 없음)"으로 표시됩니다.<br>
+  <div class="todo">
+{% if unfilled_names %}<b>미체결 (기록 없음)</b>: {{ unfilled_names }}<br>{% endif %}
+{% if pending_names %}<b>주문 후 체결 기록 필요</b>: {{ pending_names }}<br>{% endif %}
+오늘 주문할 종목은 체결 후 아래 파일에 한 줄씩 기록하세요.<br>
 <code style="font-size:12px">{{ fills_path }}</code> · 형식: 날짜, 종목, 차수, 매수매도, 체결가, 수량 (예: {{ as_of_str }}, PEP, 1차, 매수, 131.80, 34)</div>
 </div>
 

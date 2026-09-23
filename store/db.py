@@ -33,8 +33,9 @@ _POSITION_FIELDS = [
     "updated_at",
     "b_entry_date",
     "b_total_qty",
+    "pending",
 ]
-_JSON_FIELDS = {"units", "entries", "sent_alerts"}
+_JSON_FIELDS = {"units", "entries", "sent_alerts", "pending"}
 _DATE_FIELDS = {"a1_date", "cooldown_until", "updated_at", "b_entry_date"}
 
 
@@ -61,10 +62,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             sent_alerts TEXT,
             updated_at TEXT,
             b_entry_date TEXT,
-            b_total_qty INTEGER
+            b_total_qty INTEGER,
+            pending TEXT
         )
         """
     )
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
+    if "pending" not in existing_columns:  # 기존 DB(P3.1 이전) 마이그레이션
+        conn.execute("ALTER TABLE positions ADD COLUMN pending TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS events (
@@ -154,7 +159,8 @@ def _serialize(state: dict) -> dict:
     for field in _POSITION_FIELDS:
         value = state.get(field)
         if field in _JSON_FIELDS:
-            row[field] = json.dumps(value if value is not None else ({} if field != "sent_alerts" else []))
+            default = [] if field == "sent_alerts" else ({} if field != "pending" else None)
+            row[field] = json.dumps(value if value is not None else default, default=str)
         elif field in _DATE_FIELDS:
             row[field] = None if value is None else str(value)
         else:

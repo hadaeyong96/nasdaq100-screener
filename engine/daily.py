@@ -73,14 +73,12 @@ _SELL_REASON = {
 _SELL_RANGE_LABEL = {
     "STOP": "전량",
     "E3": "전량",
-    "A1_EXPIRE": "전량",
+    "A1_EXPIRE": "1차분 (전량)",
     "E1": "1차분 매도(11%)",
     "E2": "2차분 매도(22%)",
 }
 _STAGE_LABEL = {"A1": "1차 · RSI 30 탈출", "A2": "2차 · 골든크로스", "A3": "3차 · 구름 돌파", "B": "추세 재진입"}
 _STAGE_TO_BUCKET = {"A1": "b1", "A2": "b2", "A3": "b3", "B": "b9"}
-_STATE_TO_KIND = {"정찰": "A1", "확인": "A2", "확정": "A3", "추세보유": "B"}
-_STAGE_UNIT = {"정찰": "1", "확인": "2", "확정": "6", "추세보유": "9"}
 _MODE_LABEL = {"live": "실전", "paper": "모의"}
 
 # 표기 규칙: "휩소" 대신 "잦은 교차 (횡보)". E1·E2·E3는 "모멘텀 약화·추세 약화·구조 붕괴"와 함께 표기.
@@ -265,26 +263,48 @@ def simulate_since(
     }
 
 
-def _unfilled_rows(states: dict, name_map, mode: str) -> list[dict]:
-    """live 모드에서 신호는 났지만 체결 기록이 없는 종목을 찾는다 (보유로 잡지 않는다).
+def _pending_order_rows(states: dict, name_map, mode: str) -> list[dict]:
+    """live 모드에서 오늘 매수 신호가 나 체결 확인을 기다리는(`주문대기`) 종목 (P3.1 보완 2번).
 
-    process_day는 새 단계에 들어갈 때 그 묶음을 units[unit]=0으로 자리만 만들어 두고
-    (entries[unit]=None), engine이 체결 기록으로 채워야 한다. 기록이 전혀 없으면
-    그 자리가 그대로 0으로 남는다 — 이 상태를 "미체결 (기록 없음)"으로 본다.
+    신호 당일 하루만 이 목록에 남는다 — 다음 실행에서 core.state._resolve_pending이
+    체결 기록 여부로 원래 단계 또는 미체결(_unfilled_rows_from_events)로 정리한다.
     """
     if mode != "live":
         return []
     rows = []
     for ticker, state_ in states.items():
-        stage = state_["state"]
-        unit = _STAGE_UNIT.get(stage)
-        if unit is None or state_["units"].get(unit, 0) > 0:
+        pending = state_.get("pending")
+        if state_["state"] != "주문대기" or not pending:
             continue
         rows.append(
             {
                 "티커": ticker,
                 "종목명": name_map.get(ticker, "") or ticker,
-                "단계": _STAGE_LABEL.get(_STATE_TO_KIND.get(stage, ""), stage),
+                "단계": _STAGE_LABEL.get(pending["kind"], pending["kind"]),
+            }
+        )
+    return rows
+
+
+def _unfilled_rows_from_events(today_events: list[dict], name_map, mode: str) -> list[dict]:
+    """live 모드에서 오늘 "미체결(기록 없음)"로 확정된 종목 (P3.1 보완 1·2번).
+
+    core.state._resolve_pending은 주문대기로 둔 다음 거래일에 체결 기록이 없으면
+    "UNFILLED" 이벤트를 한 번만 낸다 — 그러므로 이 목록도 그 다음 날 보고서에만
+    나타난다(신호 당일에는 나타나지 않는다).
+    """
+    if mode != "live":
+        return []
+    rows = []
+    for event in today_events:
+        if event["kind"] != "UNFILLED":
+            continue
+        ticker = event["ticker"]
+        rows.append(
+            {
+                "티커": ticker,
+                "종목명": name_map.get(ticker, "") or ticker,
+                "단계": _STAGE_LABEL.get(event["stage"], event["stage"]),
                 "내용": "미체결 (기록 없음)",
             }
         )
@@ -573,7 +593,9 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         if avg_entry is not None and sig.target_reached(avg_entry, row.get("close"), state_.get("stop")):
             warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "목표 도달 (손익비 2배, 매도 아님)"})
 
-    unfilled_rows = _unfilled_rows(positions, name_map, mode)
+    # 신호 당일(오늘)은 "주문 후 체결 기록 필요" 안내만, 미체결 확정은 다음 날에만 (P3.1 보완 2번).
+    pending_order_rows = _pending_order_rows(positions, name_map, mode)
+    unfilled_rows = _unfilled_rows_from_events(today_events, name_map, mode)
 
     data_status_rows = []
     for ticker in data_gap_tickers:
@@ -584,7 +606,6 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         data_status_rows.append({"티커": "", "종목명": "", "내용": f"실적일 확인불가 종목 {earnings_unknown_count}개"})
     for line in fills_errors:
         data_status_rows.append({"티커": "", "종목명": "", "내용": line})
-    data_status_rows.extend(unfilled_rows)
 
     # ── 보유 현황 / 내 보유 종목 (같은 데이터) ──────────────────────────────
     today_signal_by_ticker: dict[str, str] = {}
@@ -688,6 +709,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         "sell_rows": sell_rows,
         "warn_rows": warn_rows,
         "data_status_rows": data_status_rows,
+        "pending_order_rows": pending_order_rows,
         "unfilled_rows": unfilled_rows,
         "hold_rows": hold_rows,
         "watch_rows": watch_rows,

@@ -82,11 +82,14 @@ def test_a2_still_valid_on_10th_trading_day(cfg):
     for date in df.index[:-1]:
         evs, state = st.process_day(df, date, state, cfg)
         events.extend(evs)
+        for e in evs:
+            if e["kind"] == "A1":  # A1이 실제 체결됐다고 가정 — 체결 기록이 있어야 다음 날 정찰로 전이한다
+                state = st.apply_fill(state, {"unit": "1", "side": "buy", "price": 101.0, "qty": 55}, cfg)
     evs, state = st.process_day(df, df.index[-1], state, cfg)
 
     kinds = [e["kind"] for e in evs]
     assert kinds == ["A2"]
-    assert state["state"] == "확인"
+    assert state["state"] == "주문대기"  # 체결 확인은 다음 거래일에 이뤄진다
 
 
 def test_a1_expires_on_11th_trading_day():
@@ -219,7 +222,7 @@ def test_a1_allowed_after_cooldown_passes(cfg):
     events, new_state = st.process_day(df, df.index[-1], state, cfg)
 
     assert [e["kind"] for e in events] == ["A1"]
-    assert new_state["state"] == "정찰"
+    assert new_state["state"] == "주문대기"  # 체결 기록이 아직 없어 신호 당일은 주문대기
 
 
 # ── 중복 알림 방지: 같은 날 두 번 실행해도 이벤트는 한 번만 ─────────────────
@@ -255,10 +258,72 @@ def test_no_lookahead_process_day_matches_on_truncated_data(cfg):
         for date in frame.index:
             evs, state = st.process_day(frame, date, state, cfg)
             all_events.append((date, [e["kind"] for e in evs]))
+            for e in evs:
+                if e["kind"] in ("A1", "A2", "A3", "B"):  # 실제 체결됐다고 가정하고 바로 반영한다
+                    state = st.apply_fill(state, {"unit": e["unit"], "side": "buy", "price": e["price"], "qty": 1}, cfg)
         return all_events, state
 
     full_events, full_state = replay(df)
     truncated_events, truncated_state = replay(df.iloc[:4])  # t=3(A2일)까지만
 
     assert full_events[:4] == truncated_events
-    assert truncated_state["state"] == "확인"
+    assert truncated_state["state"] == "주문대기"  # A2가 방금 확정됐고, 확인 전이는 다음 거래일에 일어난다
+
+
+# ── P3.1 보완 1번: 매수 신호 -> 주문대기 -> 체결 확인/미체결 되돌림 ──────────
+
+
+def test_a1_signal_day_state_is_pending_order(cfg):
+    """매수 신호가 난 당일에는 원래 단계(정찰)가 아니라 주문대기로 둔다."""
+    state = st.init_state("TEST")
+    df = make_df([{"close": 50.0, "rsi": 20.0}, {"close": 51.0, "rsi": 32.0, "swing_low": 48.0}], start="2026-02-02")
+
+    events, new_state = st.process_day(df, df.index[-1], state, cfg)
+
+    assert [e["kind"] for e in events] == ["A1"]
+    assert new_state["state"] == "주문대기"
+    assert new_state["units"].get("1", 0) == 0  # 아직 보유 아님
+    assert new_state["pending"]["kind"] == "A1"
+
+
+def test_pending_order_confirmed_next_day_with_fill(cfg):
+    """다음 거래일에 체결 기록이 있으면 원래 단계(정찰)로 전이하고, 진입일은 신호일 그대로다."""
+    state = st.init_state("TEST")
+    rows = [{"close": 50.0, "rsi": 20.0}, {"close": 51.0, "rsi": 32.0, "swing_low": 48.0}, {"close": 52.0, "rsi": 40.0}]
+    df = make_df(rows, start="2026-02-02")
+    signal_date = df.index[1]
+
+    _, state = st.process_day(df, df.index[0], state, cfg)
+    _, state = st.process_day(df, df.index[1], state, cfg)  # A1 발생, 주문대기
+    state = st.apply_fill(state, {"unit": "1", "side": "buy", "price": 51.5, "qty": 40}, cfg)
+
+    events, state = st.process_day(df, df.index[2], state, cfg)  # 다음 거래일: 체결 기록 확인
+
+    assert events == []  # 체결 확인 자체는 알림이 아니다(조용히 전이)
+    assert state["state"] == "정찰"
+    assert state["units"]["1"] == 40
+    assert state["a1_date"] == signal_date  # 진입일은 신호일 기준
+    assert state["pending"] is None
+
+
+def test_pending_order_unfilled_next_day_reverts_without_cooldown(cfg):
+    """다음 거래일까지 체결 기록이 없으면 미체결을 한 번 표시하고 신호 전 상태로 되돌린다."""
+    state = st.init_state("TEST")
+    rows = [{"close": 50.0, "rsi": 20.0}, {"close": 51.0, "rsi": 32.0, "swing_low": 48.0}, {"close": 52.0, "rsi": 40.0}]
+    df = make_df(rows, start="2026-02-02")
+
+    _, state = st.process_day(df, df.index[0], state, cfg)
+    _, state = st.process_day(df, df.index[1], state, cfg)  # A1 발생, 주문대기
+
+    events, state = st.process_day(df, df.index[2], state, cfg)  # 다음 거래일: 체결 기록 없음
+
+    assert [e["kind"] for e in events] == ["UNFILLED"]
+    assert events[0]["stage"] == "A1"
+    assert state["state"] == "대기"  # 보유 아님, 신호 전 상태로 복귀
+    assert state["units"].get("1", 0) == 0
+    assert state["a1_date"] is None
+    assert state["cooldown_until"] is None  # 재진입 대기 적용 안 함
+    assert state["pending"] is None
+
+    events_again, _ = st.process_day(df, df.index[2], state, cfg)  # 같은 날 다시 실행해도 알림은 한 번만
+    assert events_again == []
