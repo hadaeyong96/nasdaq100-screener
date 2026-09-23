@@ -1,0 +1,21 @@
+# 보안: 텔레그램/구글 인증 정보
+.env
+*.env
+credentials*.json
+token*.json
+service_account*.json
+
+# 데이터베이스
+*.db
+
+# 캐시·산출물
+data/cache/
+outputs/
+
+# 파이썬
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/

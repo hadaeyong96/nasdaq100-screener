@@ -1,0 +1,8 @@
+pandas
+numpy
+yfinance
+pyyaml
+lxml
+pyarrow
+pytest
+python-dotenv

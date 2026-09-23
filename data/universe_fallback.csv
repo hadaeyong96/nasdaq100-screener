@@ -1,0 +1,103 @@
+# source: wikipedia (https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies), fetched: 2026-09-23
+ticker,name
+AAPL,Apple Inc.
+ABNB,Airbnb
+ADBE,Adobe Inc.
+ADI,Analog Devices
+ADP,Automatic Data Processing
+ADSK,Autodesk
+AEP,American Electric Power
+ALAB,Astera Labs
+ALNY,Alnylam Pharmaceuticals
+AMAT,Applied Materials
+AMD,Advanced Micro Devices
+AMGN,Amgen
+AMZN,Amazon
+APP,AppLovin
+ARM,Arm Holdings
+ASML,ASML Holding
+AVGO,Broadcom
+AXON,Axon Enterprise
+BKNG,Booking Holdings
+BKR,Baker Hughes
+CCEP,Coca-Cola Europacific Partners
+CDNS,Cadence Design Systems
+CEG,Constellation Energy
+CMCSA,Comcast
+COST,Costco
+CPRT,Copart
+CRWD,CrowdStrike
+CRWV,CoreWeave
+CSCO,Cisco
+CSX,CSX Corporation
+CTAS,Cintas
+DASH,DoorDash
+DDOG,Datadog
+DXCM,DexCom
+EXC,Exelon
+FANG,Diamondback Energy
+FAST,Fastenal
+FER,Ferrovial
+FTNT,Fortinet
+GEHC,GE HealthCare
+GILD,Gilead Sciences
+GOOG,Alphabet Inc. (Class C)
+GOOGL,Alphabet Inc. (Class A)
+HON,Honeywell Technologies
+HONA,Honeywell Aerospace
+IDXX,Idexx Laboratories
+INTC,Intel
+INTU,Intuit
+ISRG,Intuitive Surgical
+KDP,Keurig Dr Pepper
+KLAC,KLA Corporation
+LIN,Linde plc
+LITE,Lumentum
+LRCX,Lam Research
+MAR,Marriott International
+MCHP,Microchip Technology
+MDLZ,Mondelez International
+MELI,Mercado Libre
+META,Meta Platforms
+MNST,Monster Beverage
+MPWR,Monolithic Power Systems
+MRVL,Marvell Technology
+MSFT,Microsoft
+MSTR,MicroStrategy
+MU,Micron Technology
+NBIS,Nebius Group
+NFLX,"Netflix, Inc."
+NVDA,Nvidia
+NXPI,NXP Semiconductors
+ODFL,Old Dominion Freight Line
+ORLY,O'Reilly Automotive
+PANW,Palo Alto Networks
+PAYX,Paychex
+PCAR,Paccar
+PDD,PDD Holdings
+PEP,PepsiCo
+PLTR,Palantir Technologies
+PYPL,PayPal
+QCOM,Qualcomm
+REGN,Regeneron Pharmaceuticals
+RKLB,Rocket Lab
+ROP,Roper Technologies
+ROST,Ross Stores
+SBUX,Starbucks
+SHOP,Shopify
+SNDK,Sandisk
+SNPS,Synopsys
+SPCX,SpaceX
+STX,Seagate Technology
+TER,Teradyne
+TMUS,T-Mobile US
+TRI,Thomson Reuters
+TSLA,"Tesla, Inc."
+TTWO,Take-Two Interactive
+TXN,Texas Instruments
+VRTX,Vertex Pharmaceuticals
+WBD,Warner Bros. Discovery
+WDAY,"Workday, Inc."
+WDC,Western Digital
+WMT,Walmart
+XEL,Xcel Energy

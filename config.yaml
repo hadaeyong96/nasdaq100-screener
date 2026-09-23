@@ -1,0 +1,79 @@
+# config.yaml — 나스닥 100 MACD 스크리너 설정·가정값
+#
+# docs/strategy_v3.md 3장(지표 설정), 9장(지표 계산식), 12장(가정값)을 그대로 옮긴다.
+# core/의 함수는 이 파일의 값만 읽고, 지표 상수를 코드에 하드코딩하지 않는다.
+
+# ── 지표 설정 (3장, 9장) ──────────────────────────────────────────────
+indicators:
+  macd:
+    fast: 12
+    slow: 26
+    signal: 9
+
+  rsi:
+    period: 14 # Wilder 평활 (alpha = 1/period)
+
+  ichimoku:
+    tenkan: 9 # 전환선
+    kijun: 26 # 기준선
+    senkou_b: 52 # 선행스팬 B
+
+  # [가정] 일목 이동 칸수 D. 기본 26, 트레이딩뷰는 26일 이동을 실제로 25칸으로
+  # 그리므로 차트 대조 후 25로 바뀔 수 있다 (12장, 9장 "구현 주의점").
+  ichimoku_shift: &ichimoku_shift 26
+
+  volume_ma:
+    period: 20 # 20일 평균 거래량 대비 배수
+
+  swing_low:
+    # [가정] 스윙 저점(손절 기준) 기간. 검증 범위: 5 / 10 / 20거래일 (12장).
+    period: &swing_low_period 10
+
+  bollinger:
+    period: 20
+    std_mult: 2
+    percentile_period: 120 # 밴드폭 백분위 계산 기간
+
+# ── 데이터 수집 (7장, 데이터·지표 규칙) ───────────────────────────────
+data:
+  history_days: 300 # 종목당 최소 수집 거래일 (전략 문서 권장치)
+  # TODO(P4·스케줄): 미국 공휴일 캘린더 반영. 지금은 주말만 건너뛰고 "확정 거래일"을
+  # 추정한다(data/prices.py `_latest_confirmed_trading_date`). 공휴일 다음 날에는
+  # 캐시 신선도 판정이 실제보다 하루 보수적으로(재요청 쪽으로) 동작할 수 있다.
+
+# ── 12장 가정값 10개 (대본에 수치가 없어 임시로 정한 값, 백테스트로 확정) ──
+assumptions:
+  # 1. A1(RSI 30 탈출) 후 A2(MACD 골든크로스)가 나와야 하는 유효기간.
+  #    검증 범위: 5 / 10 / 15거래일.
+  a1_to_a2_expiry_days: 10
+
+  # 2. S등급(신뢰 높음) 정규화 MACD 하한. 검증 범위: -0.3 ~ -1.0%.
+  s_grade_macd_norm_min_pct: -0.5
+
+  # 3. B등급(신뢰 낮음) 정규화 MACD 상한. 검증 범위: -1.5 ~ -3.0%.
+  b_grade_macd_norm_max_pct: -2.0
+
+  # 4. A3 진입 방식: 돌파형(breakout) 또는 되돌림형(pullback).
+  #    백테스트 후 확정 (미결정, 문서 4장).
+  a3_entry_mode: breakout
+
+  # 5. 당일 시가 갭 필터. 검증 범위: 3 / 4 / 6%.
+  gap_filter_pct: 4.0
+
+  # 6. 스윙 저점 기간 (indicators.swing_low.period와 동일 값).
+  #    검증 범위: 5 / 10 / 20거래일.
+  swing_low_period: *swing_low_period
+
+  # 7. B형(추세 재진입) 위험 예산, 계좌 대비. 검증 범위: 0.5 / 1 / 2%.
+  b_type_risk_budget_pct: 1.0
+
+  # 8. 휩소 필터: 최근 20거래일 MACD 교차 횟수가 이 값 이상이면 제외.
+  #    검증 범위: 3 / 4 / 5회.
+  whipsaw_max_crosses_20d: 4
+
+  # 9. 청산(대기 복귀) 후 재진입 대기 기간. 검증 범위: 0 / 5 / 10거래일.
+  reentry_cooldown_days: 5
+
+  # 10. 일목 이동 칸수 D (indicators.ichimoku_shift와 동일 값).
+  #     검증 범위: 25 / 26, 트레이딩뷰 대조 후 확정.
+  ichimoku_shift: *ichimoku_shift
