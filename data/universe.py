@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -38,8 +39,48 @@ _BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# Invesco는 Accept 헤더가 없는 요청을 406으로 막는다. 브라우저가 파일 내려받기를
+# 시작할 때 보내는 헤더를 그대로 흉내 내 한 번 더 시도한다 (P1.2 3번).
+_INVESCO_RETRY_HEADERS = {
+    **_BROWSER_HEADERS,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Referer": (
+        "https://www.invesco.com/us/financial-products/etfs/product-detail"
+        "?audienceType=Investor&ticker=QQQ"
+    ),
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+}
+
 # 나스닥 100은 복수 주식군(알파벳 GOOGL/GOOG 등) 때문에 100~102종목이 정상 범위다.
 EXPECTED_COUNT_RANGE = (90, 110)
+
+# nasdaq_official의 종목명 뒤에 붙는 증권 종류·주식군 꼬리 (P1.2 3번).
+# 예: "Apple Inc. Common Stock" -> "Apple Inc.",
+#     "Alphabet Inc. Class A Common Stock" -> "Alphabet Inc.",
+#     "PDD Holdings Inc. American Depositary Shares" -> "PDD Holdings Inc."
+_NAME_TAIL_RE = re.compile(
+    r"[\s,]*(?:"
+    r"\([^()]*\)"  # (DE), (Ireland) 같은 꼬리 괄호
+    r"|(?:Class|Series)\s+[A-Z]\b"
+    # 여러 단어짜리 꼬리는 통째로 먼저 맞춰야 "American"처럼 앞부분이 남지 않는다
+    r"|American\s+Depositary\s+Shares?"
+    r"|New\s+York\s+Registry\s+Shares?"
+    r"|Subordinate\s+Voting\s+Shares?"
+    r"|Capital\s+Stock"
+    r"|Common\s+Stock"
+    r"|Common\s+Shares?"
+    r"|Ordinary\s+Shares?"
+    r"|Depositary\s+Shares?"
+    r"|Registry\s+Shares?"
+    r"|Shares?"
+    r")\s*$",
+    re.IGNORECASE,
+)
 
 
 def _to_yfinance_ticker(ticker: str) -> str:
@@ -47,14 +88,44 @@ def _to_yfinance_ticker(ticker: str) -> str:
     return ticker.strip().upper().replace(".", "-")
 
 
+def shorten_company_name(name: str) -> str:
+    """종목명 뒤의 증권 종류·주식군 꼬리를 떼어 짧게 만든다.
+
+    입력: 원본 종목명 (예: "Alphabet Inc. Class A Common Stock")
+    출력: 꼬리를 뗀 이름 (예: "Alphabet Inc."). 전부 떨어져 빈 문자열이 되면
+         원본을 그대로 돌려준다.
+    """
+    short = str(name).strip()
+    for _ in range(5):  # "Common Stock Class A"처럼 꼬리가 겹쳐 붙는 경우까지만
+        stripped = _NAME_TAIL_RE.sub("", short).strip()
+        if stripped == short:
+            break
+        short = stripped
+    return short if short else str(name).strip()
+
+
 def _fetch_invesco_qqq() -> pd.DataFrame:
     """Invesco QQQ ETF의 실제 보유 종목 CSV를 받는다 (나스닥 100을 그대로 추종).
+
+    406(Not Acceptable)으로 막히는 경우가 있어, 실패하면 브라우저와 같은
+    User-Agent·Accept 헤더로 한 번 더 시도한다 (P1.2 3번). 그래도 실패하면
+    예외를 올려 다음 출처로 넘어간다.
 
     입력: 없음 (네트워크)
     출력: DataFrame(ticker, name)
     """
-    resp = requests.get(INVESCO_QQQ_HOLDINGS_URL, headers=_BROWSER_HEADERS, timeout=20)
-    resp.raise_for_status()
+    resp = None
+    last_error: Exception | None = None
+    for headers in (_BROWSER_HEADERS, _INVESCO_RETRY_HEADERS):
+        try:
+            resp = requests.get(INVESCO_QQQ_HOLDINGS_URL, headers=headers, timeout=20)
+            resp.raise_for_status()
+            break
+        except Exception as exc:
+            last_error = exc
+            resp = None
+    if resp is None:
+        raise ValueError(f"Invesco 응답 실패 (브라우저 헤더 재시도 포함): {last_error}")
 
     df = pd.read_csv(io.StringIO(resp.text))
     df.columns = [str(c).strip().lower() for c in df.columns]
@@ -74,6 +145,9 @@ def _fetch_invesco_qqq() -> pd.DataFrame:
 def _fetch_nasdaq_official() -> pd.DataFrame:
     """Nasdaq 공식 API에서 나스닥 100 구성 종목을 받는다.
 
+    종목명 뒤의 " Common Stock", " Class A Common Stock" 같은 꼬리는 떼어
+    짧게 표시한다 (P1.2 3번).
+
     입력: 없음 (네트워크)
     출력: DataFrame(ticker, name)
     """
@@ -84,7 +158,8 @@ def _fetch_nasdaq_official() -> pd.DataFrame:
     rows = payload["data"]["data"]["rows"]
 
     df = pd.DataFrame(rows)
-    out = df.rename(columns={"symbol": "ticker", "companyName": "name"})[["ticker", "name"]]
+    out = df.rename(columns={"symbol": "ticker", "companyName": "name"})[["ticker", "name"]].copy()
+    out["name"] = out["name"].map(shorten_company_name)
     if len(out) < 50:
         raise ValueError("Nasdaq API 응답에서 충분한 종목을 찾지 못함")
     return out.reset_index(drop=True)

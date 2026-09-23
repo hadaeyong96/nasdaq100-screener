@@ -1,6 +1,7 @@
 pandas
 numpy
 yfinance
+requests # 야후 chart API 직접 호출(close 보완)·구성 종목 출처 조회
 pyyaml
 lxml
 pyarrow

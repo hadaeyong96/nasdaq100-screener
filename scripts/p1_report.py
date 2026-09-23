@@ -169,6 +169,9 @@ def main() -> None:
     print("일봉 시세를 받는 중... (캐시가 있으면 재사용)")
     price_result = fetch_universe_prices(universe["ticker"].tolist(), cfg)
     print(f"  성공 {len(price_result.prices)}종목 / 실패 {len(price_result.failed)}종목")
+    print(f"  close 보완(chart API meta) 종목: {len(price_result.close_filled)}종목")
+    if price_result.close_filled:
+        print("  close 보완 티커:", ", ".join(sorted(price_result.close_filled)))
     if price_result.failed:
         print("  실패 티커:", ", ".join(sorted(price_result.failed)))
     if price_result.warnings:
@@ -206,7 +209,7 @@ def main() -> None:
     (OUTPUT_DIR / "parity_check.md").write_text(parity_md, encoding="utf-8")
 
     print(f"\n구성 종목 출처: {universe_source} ({len(universe)}종목)")
-    print(f"기준일: {as_of_str}")
+    print(f"기준일: {as_of_str} / close 보완 종목 수: {len(price_result.close_filled)}")
     print("\n[RSI 하위 10]")
     print(rsi_bottom10.to_string(index=False))
     if not insufficient_history.empty:

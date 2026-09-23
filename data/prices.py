@@ -8,6 +8,8 @@
 - 상장 기간이 짧은 종목(최근 IPO 등)은 실패로 처리하지 않는다. 확보한 거래일이
   history_days보다 적어도 그대로 반환하고, core.indicators의 bars/
   insufficient_history로 부족 여부를 표시한다 (P1.1 3번).
+- 야후가 가장 최근 거래일의 close만 비워둔 채 내려주는 경우가 있다. 정규장이
+  끝난 것이 확인되면 chart API의 `meta.regularMarketPrice`로 채운다 (P1.2 2번).
 """
 
 from __future__ import annotations
@@ -15,10 +17,11 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import requests
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,19 +45,49 @@ _RAW_TO_LOWER = {"Open": "open", "High": "high", "Low": "low", "Close": "close",
 _PRICE_COLUMNS = ["open", "high", "low", "close", "volume"]
 _CORE_PRICE_COLUMNS = ["open", "high", "low", "close"]  # volume은 별도 취급 (P1.1 1번)
 
+# close 출처 표시 (P1.2 2번). "yahoo" = yfinance가 준 값 그대로,
+# "meta" = chart API의 meta.regularMarketPrice로 채운 값.
+_CLOSE_SOURCE_COLUMN = "close_source"
+CLOSE_SOURCE_YAHOO = "yahoo"
+CLOSE_SOURCE_META = "meta"
+
+CHART_API_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+_CHART_API_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+@dataclass
+class ChartMeta:
+    """야후 chart API 응답의 meta 중 close 보완에 필요한 값만 담는다.
+
+    price: meta.regularMarketPrice (해당 종목의 최근 정규장 가격)
+    time_et: meta.regularMarketTime을 미국 동부 시각으로 바꾼 값
+    """
+
+    price: float | None = None
+    time_et: datetime | None = None
+
 
 @dataclass
 class PriceFetchResult:
     """여러 종목 시세 수집 결과.
 
-    prices: {ticker: DataFrame(open, high, low, close, volume, ...)}
+    prices: {ticker: DataFrame(open, high, low, close, volume, close_source, ...)}
     failed: {ticker: 실패 사유 문자열}
     warnings: {ticker: [경고 문자열, ...]} — 실패는 아니지만 확인이 필요한 경우
+    close_filled: close를 meta로 채운 티커 목록 (P1.2 2번)
     """
 
     prices: dict = field(default_factory=dict)
     failed: dict = field(default_factory=dict)
     warnings: dict = field(default_factory=dict)
+    close_filled: list = field(default_factory=list)
 
 
 def _latest_confirmed_trading_date(now_et: datetime) -> date:
@@ -78,19 +111,93 @@ def _period_for(history_days: int) -> str:
     return f"{years}y"
 
 
-def _clean_raw(raw: pd.DataFrame, now_et: datetime) -> pd.DataFrame:
+def _needs_close_fill(df: pd.DataFrame) -> bool:
+    """마지막 봉이 "close만 비어 있는" 상태인지 본다 (close 보완 대상 여부).
+
+    입력: DataFrame(open, high, low, close, volume)
+    출력: bool. close만 NaN이고 open/high/low가 모두 있으면 True.
+    """
+    if not len(df):
+        return False
+    last = df.iloc[-1]
+    return bool(pd.isna(last["close"]) and last[["open", "high", "low"]].notna().all())
+
+
+def _fill_last_close_from_meta(
+    df: pd.DataFrame, meta: ChartMeta | None
+) -> tuple[pd.DataFrame, bool, list[str]]:
+    """마지막 봉의 빈 close를 chart API meta의 정규장 가격으로 채운다 (순수 함수).
+
+    아래를 모두 만족할 때만 채운다 (P1.2 2번):
+      1) 마지막 봉의 close만 NaN이고 open/high/low는 값이 있다
+      2) meta.regularMarketTime이 그 봉과 같은 날짜이고, 정규장 마감(16:00 ET) 이후다
+      3) meta.regularMarketPrice가 같은 날 low~high 범위 안이다
+    하나라도 어긋나면 채우지 않는다. 채우지 않은 봉은 이후 "확정되지 않은 마지막 봉"
+    제거 단계에서 버려진다.
+
+    입력: DataFrame(open, high, low, close, volume, close_source), ChartMeta 또는 None
+    출력: (보완된 DataFrame, 채웠는지 여부, 경고 메시지 목록)
+    """
+    if not _needs_close_fill(df):
+        return df, False, []
+
+    last_date = df.index[-1].date()
+    date_str = last_date.isoformat()
+
+    if meta is None or meta.price is None or meta.time_et is None:
+        return df, False, [f"{date_str} close 비어 있음 - chart API meta를 쓸 수 없어 이 봉을 버림"]
+
+    regular_close_et = datetime.combine(last_date, dtime(MARKET_CLOSE_HOUR, 0), tzinfo=US_EASTERN)
+    if meta.time_et.date() != last_date or meta.time_et < regular_close_et:
+        return df, False, [
+            f"{date_str} close 비어 있음 - meta.regularMarketTime"
+            f"({meta.time_et.isoformat()})이 이 날 정규장 마감 이후가 아니라 이 봉을 버림"
+        ]
+
+    low = float(df.iloc[-1]["low"])
+    high = float(df.iloc[-1]["high"])
+    price = float(meta.price)
+    if not (low <= price <= high):
+        return df, False, [
+            f"{date_str} close 보완값 {price}이(가) 그날 저가~고가({low}~{high}) 범위를 벗어나 이 봉을 버림"
+        ]
+
+    out = df.copy()
+    out.iloc[-1, out.columns.get_loc("close")] = price
+    out.iloc[-1, out.columns.get_loc(_CLOSE_SOURCE_COLUMN)] = CLOSE_SOURCE_META
+    return out, True, [f"{date_str} close를 chart API meta.regularMarketPrice({price})로 채움"]
+
+
+def _clean_raw(
+    raw: pd.DataFrame, now_et: datetime, meta_provider=None
+) -> pd.DataFrame:
     """yfinance raw OHLCV를 정리한다.
 
-    입력: yfinance Ticker.history(auto_adjust=False) 반환 DataFrame (tz-aware 인덱스)
-    출력: DataFrame(open, high, low, close, volume), 날짜 오름차순, 확정 봉만.
-         out.attrs["warnings"]에 실패는 아니지만 확인이 필요한 메시지를 담는다.
+    입력: yfinance Ticker.history(auto_adjust=False) 반환 DataFrame (tz-aware 인덱스),
+         now_et(미국 동부 현재 시각),
+         meta_provider(인자 없는 호출 가능 객체. close 보완이 필요할 때만 불러
+                       ChartMeta 또는 None을 받는다. 없으면 보완하지 않는다)
+    출력: DataFrame(open, high, low, close, volume, close_source), 날짜 오름차순, 확정 봉만.
+         out.attrs["warnings"]에 실패는 아니지만 확인이 필요한 메시지를,
+         out.attrs["close_filled_from_meta"]에 close 보완 여부를 담는다.
     """
     out = raw.rename(columns=_RAW_TO_LOWER)[_PRICE_COLUMNS].copy()
     out.index = out.index.tz_convert(US_EASTERN)
     out = out.sort_index()
+    out[_CLOSE_SOURCE_COLUMN] = CLOSE_SOURCE_YAHOO
 
     if len(out) and now_et.hour < MARKET_CLOSE_HOUR and out.index[-1].date() == now_et.date():
         out = out.iloc[:-1]  # 미국장이 아직 안 끝난 당일 봉 제거
+
+    warnings: list[str] = []
+
+    # 야후가 최근 거래일의 close만 비워둔 채 내려주는 경우(P1.2 진단 결과)를
+    # chart API meta의 정규장 종가로 채운다. 보완에 실패하면 채우지 않고,
+    # 아래 "확정되지 않은 마지막 봉 제거"에서 그 봉이 버려진다.
+    filled = False
+    if _needs_close_fill(out) and meta_provider is not None:
+        out, filled, fill_msgs = _fill_last_close_from_meta(out, meta_provider())
+        warnings.extend(fill_msgs)
 
     # 마감 직후(또는 야후 데이터 파이프라인 지연)에는 종가 등 일부 값이 NaN인 채로
     # 내려오는 경우가 있다. open/high/low/close 중 하나라도 NaN이면 확정되지 않은
@@ -99,7 +206,6 @@ def _clean_raw(raw: pd.DataFrame, now_et: datetime) -> pd.DataFrame:
     while len(out) and out.iloc[-1][_CORE_PRICE_COLUMNS].isna().any():
         out = out.iloc[:-1]
 
-    warnings: list[str] = []
     if len(out):
         last_volume = out.iloc[-1]["volume"]
         if pd.isna(last_volume) or last_volume == 0:
@@ -109,7 +215,78 @@ def _clean_raw(raw: pd.DataFrame, now_et: datetime) -> pd.DataFrame:
     out.index = out.index.tz_localize(None).normalize()
     out.index.name = "date"
     out.attrs["warnings"] = warnings
+    out.attrs["close_filled_from_meta"] = filled
     return out
+
+
+def _fetch_chart_meta(ticker: str, timeout: float = 20.0) -> ChartMeta:
+    """야후 chart API를 직접 호출해 meta의 정규장 가격·시각을 읽는다.
+
+    yfinance는 quote 배열의 close만 쓰기 때문에, 야후가 close를 비워둔 날에는
+    meta에 있는 정규장 종가를 가져올 수 없다. 그래서 직접 호출한다 (P1.2 2번).
+
+    입력: yfinance 형식 ticker
+    출력: ChartMeta(price, time_et)
+    예외: 네트워크·응답 형식 오류는 그대로 올린다 (호출부에서 경고로 모은다)
+    """
+    resp = requests.get(
+        CHART_API_URL.format(ticker=ticker),
+        params={"range": "5d", "interval": "1d"},
+        headers=_CHART_API_HEADERS,
+        timeout=timeout,
+    )
+    resp.raise_for_status()
+    meta = resp.json()["chart"]["result"][0]["meta"]
+
+    price = meta.get("regularMarketPrice")
+    ts = meta.get("regularMarketTime")
+    time_et = (
+        datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(US_EASTERN) if ts else None
+    )
+    return ChartMeta(price=price, time_et=time_et)
+
+
+def _restore_close_from_cache(fresh: pd.DataFrame, cached: pd.DataFrame | None) -> tuple[pd.DataFrame, int]:
+    """새로 받은 데이터 중간에 빈 close를, 예전에 meta로 채워 캐시해 둔 값으로 되살린다.
+
+    meta.regularMarketPrice는 "가장 최근" 정규장 값 하나뿐이라, 야후가 close를
+    비워둔 날이 더 이상 마지막 봉이 아니게 되면 그 날은 다시 채울 수 없다. 같은
+    조건(그날 저가~고가 범위)을 다시 확인한 뒤 캐시에 있던 값을 쓴다.
+
+    입력: 새로 정리한 DataFrame, 캐시 DataFrame(없으면 None)
+    출력: (되살린 DataFrame, 되살린 봉 수)
+    """
+    if cached is None or cached.empty or _CLOSE_SOURCE_COLUMN not in cached.columns:
+        return fresh, 0
+
+    missing = fresh.index[fresh["close"].isna()]
+    donors = cached[cached[_CLOSE_SOURCE_COLUMN] == CLOSE_SOURCE_META]
+    dates = missing.intersection(donors.index)
+    if not len(dates):
+        return fresh, 0
+
+    out = fresh.copy()
+    restored = 0
+    for d in dates:
+        price = float(donors.loc[d, "close"])
+        low, high = out.loc[d, "low"], out.loc[d, "high"]
+        if pd.isna(low) or pd.isna(high) or not (float(low) <= price <= float(high)):
+            continue
+        out.loc[d, "close"] = price
+        out.loc[d, _CLOSE_SOURCE_COLUMN] = CLOSE_SOURCE_META
+        restored += 1
+    return out, restored
+
+
+def has_meta_close(df: pd.DataFrame) -> bool:
+    """마지막 봉의 close가 meta 보완값인지 본다.
+
+    입력: DataFrame(..., close_source)
+    출력: bool. 캐시에서 그대로 읽어온 경우에도 데이터만 보고 판정할 수 있다.
+    """
+    if not len(df) or _CLOSE_SOURCE_COLUMN not in df.columns:
+        return False
+    return df.iloc[-1][_CLOSE_SOURCE_COLUMN] == CLOSE_SOURCE_META
 
 
 def _cache_path(ticker: str) -> Path:
@@ -124,6 +301,8 @@ def _load_cache(ticker: str) -> pd.DataFrame | None:
     try:
         df = pd.read_parquet(path)
         df.index = pd.to_datetime(df.index)
+        if _CLOSE_SOURCE_COLUMN not in df.columns:  # close_source 도입(P1.2) 이전 캐시
+            df[_CLOSE_SOURCE_COLUMN] = CLOSE_SOURCE_YAHOO
         return df
     except Exception:
         return None
@@ -163,17 +342,38 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
     cached = _load_cache(ticker)
     if _cache_is_fresh(cached, now_et):
         cached.attrs.setdefault("warnings", [])
+        cached.attrs.setdefault("close_filled_from_meta", False)
         return cached
 
     raw = yf.Ticker(ticker).history(period=_period_for(history_days), auto_adjust=False)
     if raw.empty:
         raise ValueError("가격 데이터 없음")
 
-    cleaned = _clean_raw(raw, now_et)
+    # close 보완이 필요할 때만 chart API를 한 번 더 부른다. 네트워크 실패는
+    # 조용히 넘기지 않고 경고로 모은다 (보완은 못 하고 그 봉은 버려진다).
+    meta_errors: list[str] = []
+
+    def _meta_provider() -> ChartMeta | None:
+        try:
+            return _fetch_chart_meta(ticker)
+        except Exception as exc:
+            meta_errors.append(f"chart API meta 조회 실패: {exc}")
+            return None
+
+    cleaned = _clean_raw(raw, now_et, meta_provider=_meta_provider)
+    cleaned, restored = _restore_close_from_cache(cleaned, cached)
     if cleaned.empty:
         raise ValueError("확정된 가격 데이터 없음 (전부 NaN)")
 
-    warnings = cleaned.attrs.get("warnings", [])
+    warnings = cleaned.attrs.get("warnings", []) + meta_errors
+    if restored:
+        warnings.append(f"중간에 비어 있던 close {restored}개를 캐시의 meta 보완값으로 되살림")
+
+    still_missing = cleaned.index[cleaned["close"].isna()]
+    if len(still_missing):
+        dates = ", ".join(d.date().isoformat() for d in still_missing[-5:])
+        warnings.append(f"close가 비어 있는 봉 {len(still_missing)}개가 남아 있음 (최근: {dates})")
+
     if len(cleaned) < history_days:
         warnings.append(
             f"거래일 {len(cleaned)}일 < history_days({history_days}) - 상장 기간이 짧은 종목일 수 있음"
@@ -187,6 +387,9 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
         )
 
     cleaned.attrs["warnings"] = warnings
+    cleaned.attrs["close_filled_from_meta"] = bool(
+        cleaned.attrs.get("close_filled_from_meta") or restored
+    )
     _save_cache(ticker, cleaned)
     return cleaned
 
@@ -195,7 +398,7 @@ def fetch_universe_prices(tickers: list[str], cfg: dict, sleep_sec: float = 0.3)
     """여러 종목의 확정 일봉을 받는다. 실패 종목은 모아서 반환하고 계속 진행한다.
 
     입력: yfinance 형식 ticker 목록, cfg(config.yaml 로드값)
-    출력: PriceFetchResult(prices, failed, warnings)
+    출력: PriceFetchResult(prices, failed, warnings, close_filled)
     """
     result = PriceFetchResult()
     now_et = datetime.now(US_EASTERN)
@@ -206,9 +409,15 @@ def fetch_universe_prices(tickers: list[str], cfg: dict, sleep_sec: float = 0.3)
             msgs = df.attrs.get("warnings") or []
             if msgs:
                 result.warnings[ticker] = msgs
+            if has_meta_close(df):  # 캐시 재사용 시에도 데이터만 보고 센다
+                result.close_filled.append(ticker)
         except Exception as exc:
             result.failed[ticker] = str(exc)
         time.sleep(sleep_sec)
+
+    print(f"[prices] close 보완(meta) 종목 수: {len(result.close_filled)}")
+    if result.close_filled:
+        print("[prices] close 보완 티커:", ", ".join(result.close_filled))
     return result
 
 
