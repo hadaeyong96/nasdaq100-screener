@@ -18,8 +18,10 @@ from data.prices import (
     MARKET_CLOSE_HOUR,
     US_EASTERN,
     ChartMeta,
+    _cache_is_fresh,
     _clean_raw,
     _restore_close_from_cache,
+    find_mid_series_gaps,
     has_meta_close,
 )
 
@@ -200,3 +202,81 @@ def test_restore_ignores_cache_without_close_source():
 
     assert restored == 0
     assert pd.isna(out.loc[pd.Timestamp("2026-09-22"), "close"])
+
+
+# ── P2 P1 마무리 1번: 일봉 종가가 meta 보완값보다 우선 ──────────────────────
+
+
+def test_cache_not_fresh_when_last_close_is_meta():
+    """마지막 봉이 meta 보완값이면, 날짜가 최신이어도 신선하다고 보지 않는다.
+
+    실제 일봉 종가가 그 사이 들어왔는지 다시 확인하기 위해 재요청을 유도한다.
+    """
+    latest_needed = LAST_DATE.date()
+    now_et = datetime.combine(latest_needed, dtime(20, 0), tzinfo=US_EASTERN)
+    assert not _cache_is_fresh(CACHED, now_et)  # CACHED의 마지막 행(09-22)은 close_source=meta
+
+
+def test_cache_fresh_when_last_close_is_yahoo():
+    """마지막 봉이 실제 일봉 값(yahoo)이면 그대로 신선하다."""
+    yahoo_cache = CACHED.copy()
+    yahoo_cache.loc[LAST_DATE, "close_source"] = CLOSE_SOURCE_YAHOO
+    now_et = datetime.combine(LAST_DATE.date(), dtime(20, 0), tzinfo=US_EASTERN)
+    assert _cache_is_fresh(yahoo_cache, now_et)
+
+
+def test_daily_bar_value_wins_over_stale_meta_when_refetched():
+    """재요청 결과 그 날짜에 실제 종가가 들어 있으면 그 값을 쓰고 출처가 yahoo가 된다."""
+    # 이전에 meta로 채웠던 날짜(09-22)가 이번 raw 응답에서는 실제 종가를 갖고 있고,
+    # 새 마지막 날짜(09-23)가 추가된 상황을 흉내 낸다.
+    index = pd.DatetimeIndex(
+        [pd.Timestamp("2026-09-21"), pd.Timestamp("2026-09-22"), pd.Timestamp("2026-09-23")], name="Date"
+    ).tz_localize(US_EASTERN)
+    raw = pd.DataFrame(
+        [
+            {"Open": 222.9, "High": 228.5, "Low": 221.5, "Close": 227.3, "Volume": 1},
+            {"Open": 226.91, "High": 229.98, "Low": 226.50, "Close": 228.87, "Volume": 1},  # 이제 실제 값이 채워짐
+            {"Open": 229.0, "High": 233.0, "Low": 228.0, "Close": 231.5, "Volume": 1},
+        ],
+        index=index,
+    )
+    now_et = datetime(2026, 9, 24, 7, 0, tzinfo=US_EASTERN)
+    cleaned = _clean_raw(raw, now_et, meta_provider=None)
+    out, restored = _restore_close_from_cache(cleaned, CACHED)
+
+    assert restored == 0  # 이미 실제 값이 있어 캐시에서 되살릴 필요가 없다
+    assert out.loc[pd.Timestamp("2026-09-22"), "close"] == pytest.approx(228.87)
+    assert out.loc[pd.Timestamp("2026-09-22"), "close_source"] == CLOSE_SOURCE_YAHOO
+
+
+# ── P2 P1 마무리 2번: 중간 close 구멍은 채우지 않고 data_gap으로 표시 ─────────
+
+
+def test_find_mid_series_gaps_detects_hole_not_at_last_row():
+    df = _frame(
+        [
+            {"close": 100.0},
+            {"close": np.nan},  # 중간 구멍
+            {"close": 102.0},
+        ],
+        ["2026-09-18", "2026-09-21", "2026-09-22"],
+    )
+    gaps = find_mid_series_gaps(df)
+    assert gaps == [pd.Timestamp("2026-09-21")]
+
+
+def test_find_mid_series_gaps_ignores_last_row_nan():
+    """마지막 봉의 NaN은 close 보완/제거 단계가 따로 처리하므로 구멍으로 세지 않는다."""
+    df = _frame(
+        [{"close": 100.0}, {"close": np.nan}],
+        ["2026-09-18", "2026-09-21"],
+    )
+    assert find_mid_series_gaps(df) == []
+
+
+def test_find_mid_series_gaps_empty_when_no_hole():
+    df = _frame(
+        [{"close": 100.0}, {"close": 101.0}],
+        ["2026-09-18", "2026-09-21"],
+    )
+    assert find_mid_series_gaps(df) == []

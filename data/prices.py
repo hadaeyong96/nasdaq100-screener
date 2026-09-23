@@ -10,6 +10,9 @@
   insufficient_history로 부족 여부를 표시한다 (P1.1 3번).
 - 야후가 가장 최근 거래일의 close만 비워둔 채 내려주는 경우가 있다. 정규장이
   끝난 것이 확인되면 chart API의 `meta.regularMarketPrice`로 채운다 (P1.2 2번).
+- meta로 채운 close는 다음 실행에서 실제 일봉 종가가 들어오면 그 값으로 덮어쓴다
+  (P2 P1 마무리 1번). 마지막 봉이 아닌 곳에 close 구멍이 남으면 보간하지 않고
+  `data_gap_dates`로 표시한다 (P2 P1 마무리 2번).
 """
 
 from __future__ import annotations
@@ -82,12 +85,14 @@ class PriceFetchResult:
     failed: {ticker: 실패 사유 문자열}
     warnings: {ticker: [경고 문자열, ...]} — 실패는 아니지만 확인이 필요한 경우
     close_filled: close를 meta로 채운 티커 목록 (P1.2 2번)
+    data_gap: {ticker: [구멍 날짜, ...]} — 마지막 봉이 아닌 곳에 close가 빈 종목 (P2 P1 마무리 2번)
     """
 
     prices: dict = field(default_factory=dict)
     failed: dict = field(default_factory=dict)
     warnings: dict = field(default_factory=dict)
     close_filled: list = field(default_factory=list)
+    data_gap: dict = field(default_factory=dict)
 
 
 def _latest_confirmed_trading_date(now_et: datetime) -> date:
@@ -278,6 +283,21 @@ def _restore_close_from_cache(fresh: pd.DataFrame, cached: pd.DataFrame | None) 
     return out, restored
 
 
+def find_mid_series_gaps(df: pd.DataFrame) -> list:
+    """마지막 봉이 아닌 곳에 close가 NaN인 날짜를 찾는다 (P2 P1 마무리 2번).
+
+    중간에 close 구멍이 있으면 조용히 보간하거나 채우지 않고, 그 날짜를 그대로
+    보고한다 — 호출부가 data_gap 표시와 신호 판정 제외에 쓴다.
+
+    입력: DataFrame(..., close)
+    출력: 구멍이 있는 날짜(index 값) 목록, 오름차순. 없으면 빈 리스트.
+    """
+    if len(df) < 2:
+        return []
+    mid = df.iloc[:-1]
+    return list(mid.index[mid["close"].isna()])
+
+
 def has_meta_close(df: pd.DataFrame) -> bool:
     """마지막 봉의 close가 meta 보완값인지 본다.
 
@@ -320,11 +340,17 @@ def _cache_is_fresh(cached: pd.DataFrame | None, now_et: datetime) -> bool:
     상장 기간이 짧은 종목(P1.1 3번)은 이미 상장일 이후 전 구간을 캐시에
     가지고 있어도 history_days에 못 미칠 수 있는데, 이 경우 매번 재요청해도
     더 받아올 데이터가 없기 때문이다.
+
+    마지막 봉의 close가 chart API meta 보완값(close_source="meta")이면 신선하다고
+    보지 않는다. 야후가 그 사이 실제 일봉 종가를 채워 넣었을 수 있어, 매번 다시
+    받아서 확인해야 한다 (P2 P1 마무리 1번 — 일봉 종가가 meta 보완값보다 우선).
     """
     if cached is None or cached.empty:
         return False
     latest_needed = _latest_confirmed_trading_date(now_et)
-    return cached.index[-1].date() >= latest_needed
+    if cached.index[-1].date() < latest_needed:
+        return False
+    return not has_meta_close(cached)
 
 
 def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.DataFrame:
@@ -343,6 +369,16 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
     if _cache_is_fresh(cached, now_et):
         cached.attrs.setdefault("warnings", [])
         cached.attrs.setdefault("close_filled_from_meta", False)
+        # parquet은 DataFrame.attrs를 보존하지 않으므로 캐시를 그대로 돌려줄 때도
+        # data_gap 여부는 매번 다시 계산한다.
+        gap_dates = find_mid_series_gaps(cached)
+        if gap_dates:
+            dates_str = ", ".join(d.date().isoformat() for d in gap_dates)
+            cached.attrs["warnings"].append(
+                f"[data_gap] 중간에 close가 비어 있는 봉 {len(gap_dates)}개 ({dates_str}) - "
+                "보간하지 않음, 해당 날짜는 신호 판정에서 제외해야 함"
+            )
+        cached.attrs["data_gap_dates"] = gap_dates
         return cached
 
     raw = yf.Ticker(ticker).history(period=_period_for(history_days), auto_adjust=False)
@@ -373,6 +409,17 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
     if len(still_missing):
         dates = ", ".join(d.date().isoformat() for d in still_missing[-5:])
         warnings.append(f"close가 비어 있는 봉 {len(still_missing)}개가 남아 있음 (최근: {dates})")
+
+    # 마지막 봉이 아닌 곳의 close 구멍은 조용히 채우지 않고 크게 경고한다
+    # (P2 P1 마무리 2번). 신호 판정은 engine에서 이 날짜를 제외한다.
+    gap_dates = find_mid_series_gaps(cleaned)
+    if gap_dates:
+        dates_str = ", ".join(d.date().isoformat() for d in gap_dates)
+        warnings.append(
+            f"[data_gap] 중간에 close가 비어 있는 봉 {len(gap_dates)}개 ({dates_str}) - "
+            "보간하지 않음, 해당 날짜는 신호 판정에서 제외해야 함"
+        )
+    cleaned.attrs["data_gap_dates"] = gap_dates
 
     if len(cleaned) < history_days:
         warnings.append(
@@ -411,6 +458,9 @@ def fetch_universe_prices(tickers: list[str], cfg: dict, sleep_sec: float = 0.3)
                 result.warnings[ticker] = msgs
             if has_meta_close(df):  # 캐시 재사용 시에도 데이터만 보고 센다
                 result.close_filled.append(ticker)
+            gap_dates = df.attrs.get("data_gap_dates") or []
+            if gap_dates:
+                result.data_gap[ticker] = [d.date().isoformat() for d in gap_dates]
         except Exception as exc:
             result.failed[ticker] = str(exc)
         time.sleep(sleep_sec)
@@ -418,6 +468,10 @@ def fetch_universe_prices(tickers: list[str], cfg: dict, sleep_sec: float = 0.3)
     print(f"[prices] close 보완(meta) 종목 수: {len(result.close_filled)}")
     if result.close_filled:
         print("[prices] close 보완 티커:", ", ".join(result.close_filled))
+    if result.data_gap:
+        print(f"[prices] *** 경고: data_gap 종목 {len(result.data_gap)}개 (중간 close 구멍, 보간하지 않음) ***")
+        for ticker, dates in result.data_gap.items():
+            print(f"  - {ticker}: {', '.join(dates)}")
     return result
 
 

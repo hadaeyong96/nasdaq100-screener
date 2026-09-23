@@ -2,15 +2,23 @@
 
 나스닥 100 종목의 일봉을 받아 MACD 중심 1:2:6 분할 전략 신호를 판정하고,
 텔레그램 일일 브리핑으로 보내는 스크리너. 전략 기준 문서는 `docs/strategy_v3.md`,
-작업 원칙은 `CLAUDE.md`를 따른다. 지금은 P1(데이터 수집 + 지표 계산) 단계까지
-구현돼 있다 — 신호·상태 전이·텔레그램 발송은 아직 없다.
+작업 원칙은 `CLAUDE.md`를 따른다. 지금은 P2(신호 판정 + 상태 전이 + 수량 계산)
+단계까지 구현돼 있다 — 텔레그램 발송·스케줄·구글 드라이브 연동은 아직 없다.
 
 ## 실행 방법
 
 ```bash
 pip install -r requirements.txt
-python scripts/p1_report.py
+python scripts/p1_report.py          # 지표 점검용 리포트
+python -m engine.daily --replay      # 첫 실행: 상태를 되돌려 만들고 오늘 신호 산출
+python -m engine.daily               # 이후 매일 실행
 ```
+
+- `python -m engine.daily`는 `data/state.db`(SQLite)에 종목별 상태를 저장하고,
+  `outputs/signals_YYYY-MM-DD.{md,csv}`에 오늘의 매수·매도·손절 신호와 경고를 남긴다.
+- 실제 체결가·수량은 `data/fills.csv`(커밋되지 않음, `data/fills.example.csv` 참고)에
+  적어 두면 다음 실행 때 추천값을 덮어쓴다.
+- `--dry-run`을 붙이면 DB에 쓰지 않고 결과만 확인할 수 있다.
 
 - `config.yaml`을 복사하지 않고 그대로 읽는다. 지표 설정·가정값은 이 파일에서 바꾼다.
 - 실행하면 나스닥 100 구성 종목의 일봉을 받아(`data/cache/*.parquet`에 캐시) 지표를

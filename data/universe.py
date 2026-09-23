@@ -1,12 +1,11 @@
 """나스닥 100 구성 종목 목록을 만든다.
 
-출처 우선순위 (P1.1 2번):
-    1) Invesco QQQ 보유 종목 CSV — 나스닥 100을 그대로 추종하는 ETF의 실제 보유 내역
-    2) Nasdaq 공식 나스닥 100 구성 종목 API
-    3) 위키백과 "List of NASDAQ-100 companies" 문서의 구성 종목 표
-    4) data/universe_fallback.csv — 위 세 곳이 모두 실패했을 때만 쓰는 로컬 스냅샷
+출처 우선순위 (P2 P1 마무리 3번 — Invesco 출처 제거):
+    1) Nasdaq 공식 나스닥 100 구성 종목 API
+    2) 위키백과 "List of NASDAQ-100 companies" 문서의 구성 종목 표
+    3) data/universe_fallback.csv — 위 두 곳이 모두 실패했을 때만 쓰는 로컬 스냅샷
 
-모델의 기억으로 티커를 추정하지 않는다. 항상 위 네 출처 중 하나에서 실제로 받아온
+모델의 기억으로 티커를 추정하지 않는다. 항상 위 세 출처 중 하나에서 실제로 받아온
 데이터만 쓰고, 어떤 출처를 썼는지는 반환 DataFrame의 `.attrs["source"]`와 실행 로그에
 남긴다. 결과 종목 수가 100 언저리(EXPECTED_COUNT_RANGE)를 벗어나면 경고한다.
 """
@@ -24,10 +23,6 @@ DATA_DIR = Path(__file__).resolve().parent
 FALLBACK_CSV = DATA_DIR / "universe_fallback.csv"
 NAME_KR_CSV = DATA_DIR / "name_kr.csv"
 
-INVESCO_QQQ_HOLDINGS_URL = (
-    "https://www.invesco.com/us/financial-products/etfs/holdings/main/holdings/0"
-    "?audienceType=Investor&action=download&ticker=QQQ"
-)
 NASDAQ_API_URL = "https://api.nasdaq.com/api/quote/list-type/nasdaq100"
 WIKI_COMPONENTS_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
 
@@ -37,23 +32,6 @@ _BROWSER_HEADERS = {
         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "en-US,en;q=0.9",
-}
-
-# Invesco는 Accept 헤더가 없는 요청을 406으로 막는다. 브라우저가 파일 내려받기를
-# 시작할 때 보내는 헤더를 그대로 흉내 내 한 번 더 시도한다 (P1.2 3번).
-_INVESCO_RETRY_HEADERS = {
-    **_BROWSER_HEADERS,
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Referer": (
-        "https://www.invesco.com/us/financial-products/etfs/product-detail"
-        "?audienceType=Investor&ticker=QQQ"
-    ),
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
-    "Sec-Fetch-User": "?1",
 }
 
 # 나스닥 100은 복수 주식군(알파벳 GOOGL/GOOG 등) 때문에 100~102종목이 정상 범위다.
@@ -102,44 +80,6 @@ def shorten_company_name(name: str) -> str:
             break
         short = stripped
     return short if short else str(name).strip()
-
-
-def _fetch_invesco_qqq() -> pd.DataFrame:
-    """Invesco QQQ ETF의 실제 보유 종목 CSV를 받는다 (나스닥 100을 그대로 추종).
-
-    406(Not Acceptable)으로 막히는 경우가 있어, 실패하면 브라우저와 같은
-    User-Agent·Accept 헤더로 한 번 더 시도한다 (P1.2 3번). 그래도 실패하면
-    예외를 올려 다음 출처로 넘어간다.
-
-    입력: 없음 (네트워크)
-    출력: DataFrame(ticker, name)
-    """
-    resp = None
-    last_error: Exception | None = None
-    for headers in (_BROWSER_HEADERS, _INVESCO_RETRY_HEADERS):
-        try:
-            resp = requests.get(INVESCO_QQQ_HOLDINGS_URL, headers=headers, timeout=20)
-            resp.raise_for_status()
-            break
-        except Exception as exc:
-            last_error = exc
-            resp = None
-    if resp is None:
-        raise ValueError(f"Invesco 응답 실패 (브라우저 헤더 재시도 포함): {last_error}")
-
-    df = pd.read_csv(io.StringIO(resp.text))
-    df.columns = [str(c).strip().lower() for c in df.columns]
-    ticker_col = next((c for c in df.columns if "ticker" in c), None)
-    name_col = next((c for c in df.columns if "name" in c and "fund" not in c), None)
-    if ticker_col is None or name_col is None:
-        raise ValueError("Invesco 응답에서 ticker/name 열을 찾지 못함 (접근이 막혔을 수 있음)")
-
-    out = df[[ticker_col, name_col]].rename(columns={ticker_col: "ticker", name_col: "name"})
-    out = out.dropna(subset=["ticker"])
-    out = out[out["ticker"].astype(str).str.match(r"^[A-Z.]{1,6}$")]  # 현금 등 비주식 행 제외
-    if len(out) < 50:
-        raise ValueError("Invesco 홀딩스 표에서 충분한 종목을 찾지 못함")
-    return out.reset_index(drop=True)
 
 
 def _fetch_nasdaq_official() -> pd.DataFrame:
@@ -201,7 +141,6 @@ def _load_fallback() -> pd.DataFrame:
 
 
 _SOURCES = [
-    ("invesco_qqq", _fetch_invesco_qqq),
     ("nasdaq_official", _fetch_nasdaq_official),
     ("wikipedia", _fetch_wikipedia),
     ("fallback_csv", _load_fallback),
@@ -229,7 +168,7 @@ def _attach_name_kr(df: pd.DataFrame) -> pd.DataFrame:
 def get_universe() -> pd.DataFrame:
     """나스닥 100 구성 종목 목록을 만든다.
 
-    출처 우선순위: Invesco QQQ 보유 종목 -> Nasdaq 공식 API -> 위키백과 -> 로컬 폴백.
+    출처 우선순위: Nasdaq 공식 API -> 위키백과 -> 로컬 폴백.
     모델의 기억으로 티커를 추정하지 않는다 — 실제 응답을 파싱한 결과만 쓴다.
 
     입력: 없음

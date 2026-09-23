@@ -8,6 +8,9 @@ service_account*.json
 # 데이터베이스
 *.db
 
+# 체결 기록 (실제 계좌 정보라 커밋하지 않는다. 예시만 fills.example.csv로 남긴다)
+data/fills.csv
+
 # 캐시·산출물
 data/cache/
 outputs/
