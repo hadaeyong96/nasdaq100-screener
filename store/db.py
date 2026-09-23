@@ -79,6 +79,19 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS price_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_at TEXT,
+            ticker TEXT,
+            date TEXT,
+            close REAL,
+            close_source TEXT,
+            meta_time TEXT
+        )
+        """
+    )
     conn.commit()
 
 
@@ -143,6 +156,20 @@ def record_events(conn: sqlite3.Connection, events: list[dict]) -> None:
         conn.execute(
             "INSERT INTO events (date, ticker, kind, detail) VALUES (?, ?, ?, ?)",
             (date, ticker, kind, detail),
+        )
+    conn.commit()
+
+
+def record_price_snapshots(conn: sqlite3.Connection, run_at: str, rows: list[dict]) -> None:
+    """실행마다 종목별 (close, close_source, meta_time)을 남긴다 (재현성 확인용, P2.1 보완 3번).
+
+    입력: run_at(실행 시각), rows({ticker, date, close, close_source, meta_time})
+    """
+    for row in rows:
+        conn.execute(
+            "INSERT INTO price_snapshots (run_at, ticker, date, close, close_source, meta_time) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (run_at, row["ticker"], row["date"], row.get("close"), row.get("close_source"), row.get("meta_time")),
         )
     conn.commit()
 

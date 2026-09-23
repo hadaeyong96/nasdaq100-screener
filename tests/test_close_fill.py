@@ -98,7 +98,30 @@ def test_drops_bar_when_meta_time_is_before_regular_close():
     out = _clean_raw(make_raw(MISSING_CLOSE_ROW), NOW_ET, meta_provider=lambda: meta)
 
     assert out.index[-1] == pd.Timestamp("2026-09-21")
-    assert any("정규장 마감 이후가 아니라" in w for w in out.attrs["warnings"])
+    assert any("허용 폭" in w for w in out.attrs["warnings"])
+
+
+def test_drops_bar_when_meta_time_is_long_after_regular_close():
+    """정규장 마감 후 한참 지난 시각(장후·라이브 가격일 수 있음)이면 채우지 않는다.
+
+    재현성을 위해(P2.1 보완 3번) 마감 직후의 좁은 허용 폭만 받아들인다.
+    """
+    meta = ChartMeta(price=228.87, time_et=CLOSE_ET + timedelta(hours=3))
+    out = _clean_raw(make_raw(MISSING_CLOSE_ROW), NOW_ET, meta_provider=lambda: meta)
+
+    assert out.index[-1] == pd.Timestamp("2026-09-21")
+    assert any("허용 폭" in w for w in out.attrs["warnings"])
+    assert not has_meta_close(out)
+
+
+def test_fills_close_within_tolerance_window():
+    """마감 후 허용 폭(5분) 이내면 그대로 채운다."""
+    meta = ChartMeta(price=228.87, time_et=CLOSE_ET + timedelta(minutes=2))
+    out = _clean_raw(make_raw(MISSING_CLOSE_ROW), NOW_ET, meta_provider=lambda: meta)
+
+    assert out.index[-1] == LAST_DATE
+    assert has_meta_close(out)
+    assert out.attrs["close_meta_time"] == meta.time_et.isoformat()
 
 
 def test_drops_bar_when_meta_is_for_another_day():

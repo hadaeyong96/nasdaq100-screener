@@ -9,6 +9,14 @@
 라이브 실행과 되돌려 보기는 core/의 같은 함수(core.state.process_day 등)를 쓴다.
 되돌려 보기 중에는 추천 수량대로 체결됐다고 가정한 "가상 보유" 상태로 만든다
 (core.state.apply_fill을 그 자리에서 호출해, 실제 체결 기록과 같은 경로로 반영한다).
+
+매매 금지 구간·동시 보유 한도(P2.1 보완 1번): 진입 신호가 매매 금지에 걸리거나
+동시 보유 8개 한도를 넘으면 core.state.process_day가 상태를 바꾸지 않고
+"BLOCKED" 이벤트만 남긴다. 동시 보유 한도는 종목을 가로질러 점수를 비교해야
+해서, 날짜마다 먼저 모든 종목의 새 진입 후보(core.state.preview_new_entry)를
+모아 점수 순으로 추려낸 뒤에야 각 종목을 실제로 처리한다 — 라이브 실행과
+되돌려 보기가 날짜 단위로 같은 순서를 따른다.
+
 결과는 outputs/signals_YYYY-MM-DD.{md,csv}에 저장한다.
 """
 
@@ -30,7 +38,7 @@ for _stream in (sys.stdout, sys.stderr):  # 윈도우 콘솔 cp949 UnicodeEncode
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
-from core import filters, sizing  # noqa: E402
+from core import sizing  # noqa: E402
 from core import signals as sig  # noqa: E402
 from core import state as st  # noqa: E402
 from core.indicators import compute_indicators  # noqa: E402
@@ -76,57 +84,26 @@ def _average_entry_price(state: dict) -> float | None:
     return sum(p * q for p, q in pairs) / total_qty
 
 
-def _size_entry(event: dict, df: pd.DataFrame, state_after: dict, earnings_map: dict, cfg: dict) -> dict:
-    """진입 이벤트 하나에 지정가·손절가·추천수량·등급·점수·매매금지 사유를 붙인다.
+def _held_count(states: dict) -> int:
+    return sum(1 for s in states.values() if any(q > 0 for q in s["units"].values()))
 
-    입력: event({date,kind,unit,price,ticker}), df(그 종목 지표 DataFrame),
-         state_after(이 이벤트가 반영된 뒤의 상태 — stop이 이미 갱신돼 있다),
-         earnings_map({ticker: date|None}), cfg
-    출력: {entry_price, stop_price, qty, grade, score, blocked(list[str]), earnings_unknown}
+
+def _size_and_price(event: dict, df: pd.DataFrame, state_after: dict, cfg: dict) -> dict:
+    """진입 이벤트에 지정가·손절가·추천수량을 붙인다 (매매 금지·한도는 core.state가 이미 판정했다).
+
+    입력: event({date,kind,unit,price,ticker,score,grade?}), df(그 종목 지표 DataFrame),
+         state_after(이 이벤트가 반영된 뒤의 상태 — stop이 이미 갱신돼 있다), cfg
+    출력: {entry_price, stop_price, qty}
     """
-    ticker = event["ticker"]
-    date = event["date"]
-    row = df.loc[date]
     equity = cfg["account"]["equity_usd"]
-
     entry_price = sig.entry_limit_price(event["price"], cfg)
     stop_price = state_after.get("stop")
-    qty = sizing.position_size(event["kind"], entry_price, stop_price, equity, cfg)
-    qty = sizing.cap_qty_by_position_limit(qty, entry_price, equity, cfg)
-
-    earnings_date = earnings_map.get(ticker)
-    earnings_unknown = earnings_date is None
-
-    grade_letter = None
-    gc_count = 0
-    if event["kind"] in ("A2", "B"):
-        gc_count = filters.macd_cross_count(df, date)
-        grade_letter = filters.grade(row.get("macd_norm"), gc_count, cfg)
-    elif event["kind"] == "A3":
-        grade_letter = state_after.get("grade")
-
-    thickness = filters.cloud_thickness_pct(row.get("cloud_top"), row.get("cloud_bot"), row.get("close"))
-    score = filters.priority_score(grade_letter, row.get("vol_ratio"), thickness, row.get("bb_width_pct"), cfg)
-
-    blocked: list[str] = []
-    if event["kind"] in ("A2", "A3", "B"):
-        idx = df.index.get_loc(date)
-        prev_close = df.iloc[idx - 1]["close"] if idx > 0 else float("nan")
-        blocked = filters.ban_reasons(
-            stage=event["kind"], row=row, gc_count_20d=gc_count, prev_close=prev_close, cfg=cfg, earnings_date=earnings_date
-        )
-    elif filters.is_earnings_within(date, earnings_date):
-        blocked = ["실적 발표 3거래일 이내"]
-
-    return {
-        "entry_price": entry_price,
-        "stop_price": stop_price,
-        "qty": qty,
-        "grade": grade_letter,
-        "score": score,
-        "blocked": blocked,
-        "earnings_unknown": earnings_unknown,
-    }
+    if stop_price is None:
+        qty = 0
+    else:
+        qty = sizing.position_size(event["kind"], entry_price, stop_price, equity, cfg)
+        qty = sizing.cap_qty_by_position_limit(qty, entry_price, equity, cfg)
+    return {"entry_price": entry_price, "stop_price": stop_price, "qty": qty}
 
 
 def run(cfg: dict, do_replay: bool, dry_run: bool) -> dict:
@@ -152,6 +129,18 @@ def run(cfg: dict, do_replay: bool, dry_run: bool) -> dict:
     positions = db.load_all_positions(conn)
     replay_needed = do_replay and len(positions) == 0
     lookback_days = cfg["replay"]["lookback_days"]
+    max_concurrent = cfg["risk"]["max_concurrent_positions"]
+
+    states: dict[str, dict] = {}
+    for ticker in indicator_map:
+        name_kr = name_map["name_kr"].get(ticker, "") if ticker in name_map.index else ""
+        state_ = positions.get(ticker) or st.init_state(ticker, name_kr)
+        state_["name_kr"] = name_kr or state_.get("name_kr", "")
+        states[ticker] = state_
+
+    per_ticker_dates = {t: _dates_to_process(df, replay_needed, lookback_days) for t, df in indicator_map.items()}
+    gap_dates_by_ticker = {t: {pd.Timestamp(d) for d in price_result.data_gap.get(t, [])} for t in indicator_map}
+    master_dates = sorted(set().union(*per_ticker_dates.values())) if per_ticker_dates else []
 
     all_run_events: list[dict] = []
     today_events: list[dict] = []
@@ -160,44 +149,65 @@ def run(cfg: dict, do_replay: bool, dry_run: bool) -> dict:
     as_of_by_ticker: dict[str, pd.Timestamp] = {}
     replay_start_by_ticker: dict[str, pd.Timestamp] = {}
 
-    for ticker, df in indicator_map.items():
-        name_kr = name_map["name_kr"].get(ticker, "") if ticker in name_map.index else ""
-        state_ = positions.get(ticker) or st.init_state(ticker, name_kr)
-        state_["name_kr"] = name_kr or state_.get("name_kr", "")
+    for date in master_dates:
+        active = [t for t in indicator_map if date in per_ticker_dates[t]]
 
-        gap_dates = {pd.Timestamp(d) for d in price_result.data_gap.get(ticker, [])}
-        dates = _dates_to_process(df, replay_needed, lookback_days)
-        as_of_by_ticker[ticker] = dates[-1]
-        replay_start_by_ticker[ticker] = dates[0]
-
-        for date in dates:
-            if date in gap_dates:
+        # ── Pass 1: data_gap 제외 + 오늘 새 진입(A1·B) 후보를 모두 모아 점수로 추린다 ──
+        skip_today: set[str] = set()
+        candidates = []
+        for ticker in active:
+            if date in gap_dates_by_ticker[ticker]:
+                skip_today.add(ticker)
                 run_warnings.append(f"{ticker} {date.date()} data_gap - 신호 판정에서 제외")
                 if ticker not in data_gap_tickers:
                     data_gap_tickers.append(ticker)
                 continue
+            cand = st.preview_new_entry(indicator_map[ticker], date, states[ticker], cfg, earnings_map.get(ticker))
+            if cand:
+                candidates.append({**cand, "ticker": ticker})
 
-            events, state_ = st.process_day(df, date, state_, cfg)
+        candidates.sort(key=lambda c: c["score"], reverse=True)
+        slots = max(max_concurrent - _held_count(states), 0)
+        admitted = {c["ticker"] for c in candidates[:slots]}
 
+        # ── Pass 2: 실제 처리 (같은 core 함수를 라이브·되돌려 보기 모두에 쓴다) ──
+        for ticker in active:
+            if ticker in skip_today:
+                continue
+            df = indicator_map[ticker]
+            events, states[ticker] = st.process_day(
+                df, date, states[ticker], cfg, earnings_date=earnings_map.get(ticker), new_entry_allowed=(ticker in admitted)
+            )
             for event in events:
                 event["ticker"] = ticker
-                if replay_needed and event["kind"] in _BUY_KINDS:
-                    # 되돌려 보기: 추천 수량대로 체결됐다고 가정한 가상 보유
-                    sized = _size_entry(event, df, state_, earnings_map, cfg)
-                    if sized["qty"] > 0 and not sized["blocked"]:
-                        state_ = st.apply_fill(
-                            state_,
-                            {"unit": event["unit"], "side": "buy", "price": sized["entry_price"], "qty": sized["qty"]},
-                            cfg,
-                        )
+
+            if replay_needed:
+                for event in list(events):
+                    if event["kind"] in _BUY_KINDS:
+                        sized = _size_and_price(event, df, states[ticker], cfg)
+                        if sized["qty"] > 0:
+                            fill = {"unit": event["unit"], "side": "buy", "price": sized["entry_price"], "qty": sized["qty"]}
+                            states[ticker] = st.apply_fill(states[ticker], fill, cfg)
+                            events.append(
+                                {"date": date, "ticker": ticker, "kind": "VIRTUAL_FILL", "unit": event["unit"], **fill}
+                            )
 
             for fill in fills_for(fills_df, ticker, date):
-                state_ = st.apply_fill(state_, fill, cfg)
+                states[ticker] = st.apply_fill(states[ticker], fill, cfg)
+                events.append({"date": date, "ticker": ticker, "kind": "FILL", **fill})
+
+            for event in events:
+                event["state_after"] = states[ticker]["state"]
+                event["stop_after"] = states[ticker].get("stop")
 
             all_run_events.extend(events)
-            if date == dates[-1]:
+            if date == per_ticker_dates[ticker][-1]:
                 today_events.extend(events)
+                as_of_by_ticker[ticker] = date
+            if date == per_ticker_dates[ticker][0]:
+                replay_start_by_ticker[ticker] = date
 
+    for ticker, state_ in states.items():
         positions[ticker] = state_
         if not dry_run:
             db.save_position(conn, state_)
@@ -208,7 +218,23 @@ def run(cfg: dict, do_replay: bool, dry_run: bool) -> dict:
     as_of = max(as_of_by_ticker.values()) if as_of_by_ticker else None
     replay_start = min(replay_start_by_ticker.values()) if replay_needed and replay_start_by_ticker else None
 
-    # ── 오늘 매수 신호: 등급·점수·수량을 붙인다 ──────────────────────────
+    # ── 재현성 확인용 가격 스냅샷 (P2.1 보완 3번): dry-run에도 남긴다(진단 목적) ──
+    run_at = datetime.now().isoformat(timespec="seconds")
+    snapshot_rows = []
+    for ticker, df in price_result.prices.items():
+        last = df.iloc[-1]
+        snapshot_rows.append(
+            {
+                "ticker": ticker,
+                "date": str(df.index[-1].date()),
+                "close": float(last["close"]) if pd.notna(last["close"]) else None,
+                "close_source": last.get("close_source"),
+                "meta_time": df.attrs.get("close_meta_time"),
+            }
+        )
+    db.record_price_snapshots(conn, run_at, snapshot_rows)
+
+    # ── 오늘 매수 신호: 지정가·손절가·수량을 붙인다 (등급·점수는 core.state가 이미 계산) ──
     buy_rows = []
     earnings_unknown_count = sum(1 for d in earnings_map.values() if d is None)
     for event in today_events:
@@ -216,41 +242,43 @@ def run(cfg: dict, do_replay: bool, dry_run: bool) -> dict:
             continue
         ticker = event["ticker"]
         df = indicator_map[ticker]
-        sized = _size_entry(event, df, positions[ticker], earnings_map, cfg)
-        if sized["blocked"]:
-            run_warnings.append(f"{ticker} {event['kind']} 매매 금지: {', '.join(sized['blocked'])}")
-            continue
+        sized = _size_and_price(event, df, positions[ticker], cfg)
+        earnings_date = earnings_map.get(ticker)
+
+        stop_cell = round(sized["stop_price"], 2) if sized["stop_price"] is not None else "미확정(swing_low 데이터 부족)"
+        qty_cell = sized["qty"] if sized["stop_price"] is not None else 0
+        note = "" if sized["stop_price"] is not None else "손절가 계산 불가로 수량 미산정"
 
         buy_rows.append(
             {
                 "티커": ticker,
                 "종목명": name_map["name_kr"].get(ticker, "") or ticker,
                 "단계": _STAGE_LABEL.get(event["kind"], event["kind"]),
-                "등급": sized["grade"] or "",
-                "점수": sized["score"],
+                "등급": event.get("grade") or "",
+                "점수": event.get("score", 0),
                 "지정가": round(sized["entry_price"], 2),
-                "손절가": round(sized["stop_price"], 2) if sized["stop_price"] is not None else None,
-                "추천수량": sized["qty"],
-                "실적확인필요": "Y" if sized["earnings_unknown"] else "",
-                "한도초과": "",
+                "손절가": stop_cell,
+                "추천수량": qty_cell,
+                "실적발표일": earnings_date.isoformat() if earnings_date else "확인불가",
+                "비고": note,
             }
         )
-
-    # 동시 보유 8개 한도: 이미 보유 중인 종목 수 + 오늘 신규 진입 후보 수가 한도를 넘으면
-    # 점수가 낮은 신규 종목부터 "한도초과"로 표시하고 수량을 0으로 비운다.
-    max_concurrent = cfg["risk"]["max_concurrent_positions"]
-    held_tickers = {t for t, s in positions.items() if any(q > 0 for q in s["units"].values())}
     buy_rows.sort(key=lambda r: r["점수"], reverse=True)
-    slots_left = max(max_concurrent - len(held_tickers), 0)
-    for row in buy_rows:
-        is_new_ticker = row["티커"] not in held_tickers
-        if not is_new_ticker:
-            continue
-        if slots_left > 0:
-            slots_left -= 1
-        else:
-            row["한도초과"] = "Y"
-            row["추천수량"] = 0
+
+    # ── 오늘 blocked 신호 (매매 금지·한도 초과로 막힌 진입) ────────────────────
+    blocked_rows = [
+        {
+            "티커": event["ticker"],
+            "종목명": name_map["name_kr"].get(event["ticker"], "") or event["ticker"],
+            "단계": _STAGE_LABEL.get(event["stage"], event["stage"]),
+            "유형": "동시보유한도" if event["blocked_type"] == "limit" else "매매금지",
+            "사유": ", ".join(event["reasons"]),
+            "점수": event.get("score", 0),
+        }
+        for event in today_events
+        if event["kind"] == "BLOCKED"
+    ]
+    blocked_rows.sort(key=lambda r: r["점수"], reverse=True)
 
     # ── 오늘 매도·손절 신호 ─────────────────────────────────────────────
     sell_rows = [
@@ -271,7 +299,9 @@ def run(cfg: dict, do_replay: bool, dry_run: bool) -> dict:
         state_ = positions[ticker]
         if not any(q > 0 for q in state_["units"].values()):
             continue
-        date = as_of_by_ticker[ticker]
+        date = as_of_by_ticker.get(ticker)
+        if date is None:
+            continue
         row = df.loc[date]
         idx = df.index.get_loc(date)
         prev_rsi = df.iloc[idx - 1]["rsi"] if idx > 0 else float("nan")
@@ -294,24 +324,29 @@ def run(cfg: dict, do_replay: bool, dry_run: bool) -> dict:
     stage_counts = {s: 0 for s in st.STATES}
     for state_ in positions.values():
         stage_counts[state_["state"]] = stage_counts.get(state_["state"], 0) + 1
+    held_tickers_count = _held_count(positions)
 
     summary = {
         "as_of": as_of,
         "replay_needed": replay_needed,
         "replay_start": replay_start,
         "buy_rows": buy_rows,
+        "blocked_rows": blocked_rows,
         "sell_rows": sell_rows,
         "alert_rows": alert_rows,
         "stage_counts": stage_counts,
+        "held_tickers_count": held_tickers_count,
+        "max_concurrent": max_concurrent,
         "warnings": run_warnings,
         "data_gap_tickers": data_gap_tickers,
         "earnings_unknown_count": earnings_unknown_count,
+        "all_events": all_run_events,
     }
 
     if not dry_run:
         db.record_run(
             conn,
-            run_at=datetime.now().isoformat(timespec="seconds"),
+            run_at=run_at,
             as_of_date=str(as_of.date()) if as_of is not None else "",
             ticker_count=len(indicator_map),
             warning_count=len(run_warnings),
@@ -348,10 +383,18 @@ def _write_outputs(summary: dict) -> None:
 
     pd.DataFrame(summary["buy_rows"]).to_csv(OUTPUT_DIR / f"signals_{as_of_str}_buy.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame(summary["sell_rows"]).to_csv(OUTPUT_DIR / f"signals_{as_of_str}_sell.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame(summary["blocked_rows"]).to_csv(
+        OUTPUT_DIR / f"signals_{as_of_str}_blocked.csv", index=False, encoding="utf-8-sig"
+    )
 
     lines = [f"# 나스닥100 신호 — 기준일 {as_of_str}", ""]
+    lines.append(f"보유 종목 수: {summary['held_tickers_count']} / 동시 보유 한도: {summary['max_concurrent']}")
+    lines.append("")
     lines.append("## 매수 신호 (점수 순)")
     lines.append(_to_markdown_table(summary["buy_rows"]))
+    lines.append("")
+    lines.append("## blocked 신호 (매매 금지·한도 초과)")
+    lines.append(_to_markdown_table(summary["blocked_rows"]))
     lines.append("")
     lines.append("## 매도·손절 신호")
     lines.append(_to_markdown_table(summary["sell_rows"]))
@@ -381,8 +424,8 @@ def main() -> None:
     print(f"\n기준일: {as_of.date().isoformat() if as_of is not None else '알수없음'}")
     if summary["replay_needed"] and summary["replay_start"] is not None:
         print(f"되돌려 보기 기간: {summary['replay_start'].date()} ~ {as_of.date()}")
-    print(f"단계별 종목 수: {summary['stage_counts']}")
-    print(f"오늘 매수 신호 {len(summary['buy_rows'])}건, 매도·손절 신호 {len(summary['sell_rows'])}건")
+    print(f"단계별 종목 수: {summary['stage_counts']} (보유 {summary['held_tickers_count']} / 한도 {summary['max_concurrent']})")
+    print(f"오늘 매수 신호 {len(summary['buy_rows'])}건, blocked {len(summary['blocked_rows'])}건, 매도·손절 신호 {len(summary['sell_rows'])}건")
     print(f"경고 {len(summary['warnings'])}건, data_gap 종목 {len(summary['data_gap_tickers'])}개")
     print(f"실적일 확인불가 종목 수: {summary['earnings_unknown_count']}")
 

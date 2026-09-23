@@ -128,36 +128,46 @@ def _needs_close_fill(df: pd.DataFrame) -> bool:
     return bool(pd.isna(last["close"]) and last[["open", "high", "low"]].notna().all())
 
 
+# meta.regularMarketTime을 받아들이는 허용 폭 (P2.1 보완 3번). 정규장 마감(16:00 ET)
+# 이후 이 폭을 넘겨 받은 시각이면 장후 거래 등 살아있는(계속 바뀌는) 값일 수 있어
+# 보완에 쓰지 않는다 — 그래야 같은 날 여러 번 실행해도 같은 값이 나온다.
+_META_CLOSE_TOLERANCE = timedelta(minutes=5)
+
+
 def _fill_last_close_from_meta(
     df: pd.DataFrame, meta: ChartMeta | None
-) -> tuple[pd.DataFrame, bool, list[str]]:
+) -> tuple[pd.DataFrame, bool, list[str], str | None]:
     """마지막 봉의 빈 close를 chart API meta의 정규장 가격으로 채운다 (순수 함수).
 
-    아래를 모두 만족할 때만 채운다 (P1.2 2번):
+    아래를 모두 만족할 때만 채운다 (P1.2 2번, P2.1 보완 3번):
       1) 마지막 봉의 close만 NaN이고 open/high/low는 값이 있다
-      2) meta.regularMarketTime이 그 봉과 같은 날짜이고, 정규장 마감(16:00 ET) 이후다
+      2) meta.regularMarketTime이 그 봉과 같은 날짜이고, 정규장 마감(16:00 ET)부터
+         _META_CLOSE_TOLERANCE 이내다 — 그보다 이르면 장중, 늦으면 장후(살아있는) 값이다.
       3) meta.regularMarketPrice가 같은 날 low~high 범위 안이다
     하나라도 어긋나면 채우지 않는다. 채우지 않은 봉은 이후 "확정되지 않은 마지막 봉"
     제거 단계에서 버려진다.
 
     입력: DataFrame(open, high, low, close, volume, close_source), ChartMeta 또는 None
-    출력: (보완된 DataFrame, 채웠는지 여부, 경고 메시지 목록)
+    출력: (보완된 DataFrame, 채웠는지 여부, 경고 메시지 목록, 사용한 meta.regularMarketTime
+          ISO 문자열(채우지 못했으면 None) — 실행 로그·재현성 확인용)
     """
     if not _needs_close_fill(df):
-        return df, False, []
+        return df, False, [], None
 
     last_date = df.index[-1].date()
     date_str = last_date.isoformat()
 
     if meta is None or meta.price is None or meta.time_et is None:
-        return df, False, [f"{date_str} close 비어 있음 - chart API meta를 쓸 수 없어 이 봉을 버림"]
+        return df, False, [f"{date_str} close 비어 있음 - chart API meta를 쓸 수 없어 이 봉을 버림"], None
 
     regular_close_et = datetime.combine(last_date, dtime(MARKET_CLOSE_HOUR, 0), tzinfo=US_EASTERN)
-    if meta.time_et.date() != last_date or meta.time_et < regular_close_et:
+    window_end = regular_close_et + _META_CLOSE_TOLERANCE
+    if meta.time_et.date() != last_date or not (regular_close_et <= meta.time_et <= window_end):
+        when = "이전(장중)" if meta.time_et < regular_close_et else "이후(장후·라이브 가격일 수 있음)"
         return df, False, [
             f"{date_str} close 비어 있음 - meta.regularMarketTime"
-            f"({meta.time_et.isoformat()})이 이 날 정규장 마감 이후가 아니라 이 봉을 버림"
-        ]
+            f"({meta.time_et.isoformat()})이 이 날 정규장 마감 허용 폭({when})을 벗어나 이 봉을 버림"
+        ], None
 
     low = float(df.iloc[-1]["low"])
     high = float(df.iloc[-1]["high"])
@@ -165,12 +175,12 @@ def _fill_last_close_from_meta(
     if not (low <= price <= high):
         return df, False, [
             f"{date_str} close 보완값 {price}이(가) 그날 저가~고가({low}~{high}) 범위를 벗어나 이 봉을 버림"
-        ]
+        ], None
 
     out = df.copy()
     out.iloc[-1, out.columns.get_loc("close")] = price
     out.iloc[-1, out.columns.get_loc(_CLOSE_SOURCE_COLUMN)] = CLOSE_SOURCE_META
-    return out, True, [f"{date_str} close를 chart API meta.regularMarketPrice({price})로 채움"]
+    return out, True, [f"{date_str} close를 chart API meta.regularMarketPrice({price})로 채움"], meta.time_et.isoformat()
 
 
 def _clean_raw(
@@ -200,8 +210,9 @@ def _clean_raw(
     # chart API meta의 정규장 종가로 채운다. 보완에 실패하면 채우지 않고,
     # 아래 "확정되지 않은 마지막 봉 제거"에서 그 봉이 버려진다.
     filled = False
+    meta_time_used: str | None = None
     if _needs_close_fill(out) and meta_provider is not None:
-        out, filled, fill_msgs = _fill_last_close_from_meta(out, meta_provider())
+        out, filled, fill_msgs, meta_time_used = _fill_last_close_from_meta(out, meta_provider())
         warnings.extend(fill_msgs)
 
     # 마감 직후(또는 야후 데이터 파이프라인 지연)에는 종가 등 일부 값이 NaN인 채로
@@ -221,6 +232,7 @@ def _clean_raw(
     out.index.name = "date"
     out.attrs["warnings"] = warnings
     out.attrs["close_filled_from_meta"] = filled
+    out.attrs["close_meta_time"] = meta_time_used
     return out
 
 
@@ -369,6 +381,7 @@ def fetch_one(ticker: str, cfg: dict, now_et: datetime | None = None) -> pd.Data
     if _cache_is_fresh(cached, now_et):
         cached.attrs.setdefault("warnings", [])
         cached.attrs.setdefault("close_filled_from_meta", False)
+        cached.attrs.setdefault("close_meta_time", None)  # 이번 실행에서 새로 채우지 않았다
         # parquet은 DataFrame.attrs를 보존하지 않으므로 캐시를 그대로 돌려줄 때도
         # data_gap 여부는 매번 다시 계산한다.
         gap_dates = find_mid_series_gaps(cached)

@@ -8,9 +8,13 @@
 - 중복 알림 방지 키(sent_alerts, 예: "A1:2026-09-10")로 같은 날 두 번 실행해도
   이벤트가 한 번만 기록되게 한다.
 
-이 모듈은 core/signals.py의 조건 판정 결과만 조합해 상태를 옮긴다. 등급·점수·
-매매 금지 구간(core/filters.py)과 수량 계산(core/sizing.py)은 진입 이벤트가
-"발생"한 뒤 engine/에서 덧붙인다 — 8장 상태도 자체는 그 값들을 모른다.
+P2.1 보완: 매매 금지 구간(core/filters.py의 ban_reasons)에 걸리면 **상태 전이가
+일어나지 않는다** — "BLOCKED" 이벤트만 남기고 이전 상태를 유지한다. 동시 보유
+8개 한도는 종목 간 비교가 필요해 이 모듈 혼자 판단할 수 없으므로, engine이
+`preview_new_entry`로 오늘 새 진입(A1·B) 후보를 모두 모아 점수 순으로 추려낸
+뒤 `process_day(..., new_entry_allowed=...)`로 허용 여부를 넘겨준다. 종목당
+투입 25% 한도는 수량 계산(core/sizing.py)에서 처리하므로 상태 전이를 막지
+않는다.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import copy
 
 import pandas as pd
 
+from core import filters
 from core import signals as sig
 
 STATES = ("대기", "정찰", "확인", "확정", "추세보유", "청산중")
@@ -41,9 +46,10 @@ def init_state(ticker: str, name_kr: str = "") -> dict:
         "cooldown_until": None,
         "sent_alerts": [],
         "updated_at": None,
-        # 8장 표에는 없지만 B형 손절가·비례 청산 계산에 필요한 내부 보조 필드.
+        # 8장 표에는 없지만 B형 손절가·비례 청산 계산, A2·A3 등급 표시에 필요한 내부 보조 필드.
         "b_entry_date": None,
         "b_total_qty": None,
+        "grade": None,
     }
 
 
@@ -75,6 +81,69 @@ def _held_units(state: dict) -> dict:
     return {u: q for u, q in state["units"].items() if q and q > 0}
 
 
+def _prev_close(df: pd.DataFrame, idx: int) -> float:
+    return float(df.iloc[idx - 1]["close"]) if idx > 0 else float("nan")
+
+
+def _ban_reasons(df: pd.DataFrame, date, row: pd.Series, stage: str, cfg: dict, earnings_date) -> list[str]:
+    """core/filters.py의 매매 금지 구간(7장)을 이 종목·날짜·단계에 대해 확인한다."""
+    idx = df.index.get_loc(date)
+    gc_count = filters.macd_cross_count(df, date) if stage in ("A2", "B") else 0
+    return filters.ban_reasons(
+        stage=stage, row=row, gc_count_20d=gc_count, prev_close=_prev_close(df, idx), cfg=cfg, earnings_date=earnings_date
+    )
+
+
+def _entry_score(df: pd.DataFrame, date, row: pd.Series, kind: str, cfg: dict) -> tuple[str | None, int]:
+    """진입 이벤트의 등급(A2·B형만)과 우선순위 점수(7장)를 계산한다."""
+    grade_letter = None
+    if kind in ("A2", "B"):
+        gc_count = filters.macd_cross_count(df, date)
+        grade_letter = filters.grade(row.get("macd_norm"), gc_count, cfg)
+    thickness = filters.cloud_thickness_pct(row.get("cloud_top"), row.get("cloud_bot"), row.get("close"))
+    score = filters.priority_score(grade_letter, row.get("vol_ratio"), thickness, row.get("bb_width_pct"), cfg)
+    return grade_letter, score
+
+
+def _detect_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict) -> tuple[str, str] | tuple[None, None]:
+    """대기 상태에서 오늘 A1 또는 B 조건이 성립하는지만 본다 (금지·한도는 보지 않는다)."""
+    if state.get("state") != "대기":
+        return None, None
+    idx = df.index.get_loc(date)
+    row = df.loc[date]
+    prev_row = df.iloc[idx - 1] if idx > 0 else None
+    prev_rsi = prev_row["rsi"] if prev_row is not None else float("nan")
+
+    if not _in_cooldown(state, date) and sig.check_a1(prev_rsi, row["rsi"]):
+        return "A1", _UNIT_1
+    if sig.check_b(row, cfg):
+        return "B", _UNIT_B
+    return None, None
+
+
+def preview_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict, earnings_date=None) -> dict | None:
+    """오늘 새 진입(A1·B) 후보가 있는지 미리 본다 (상태를 바꾸지 않는다).
+
+    동시 보유 8개 한도는 종목을 가로질러 점수를 비교해야 해서 이 함수 하나로는
+    판단할 수 없다. engine이 모든 종목의 이 결과를 모아 점수 순으로 추려
+    admitted 종목만 `process_day(..., new_entry_allowed=True)`로 넘긴다.
+    매매 금지(ban)에 걸리는 신호는 한도 계산에서도 제외한다(어차피 발생하지 않음).
+
+    입력: df, date, state, cfg, earnings_date(있으면 실적 필터도 확인)
+    출력: {"kind": "A1"|"B", "unit":..., "price":..., "score":...} 또는 None
+    """
+    if date not in df.index:
+        return None
+    kind, unit = _detect_new_entry(df, date, state, cfg)
+    if kind is None:
+        return None
+    row = df.loc[date]
+    if _ban_reasons(df, date, row, kind, cfg, earnings_date):
+        return None
+    _, score = _entry_score(df, date, row, kind, cfg)
+    return {"kind": kind, "unit": unit, "price": float(row["close"]), "score": score}
+
+
 def _liquidate_all(state: dict, date, reason: str, events: list, cooldown_days: int) -> None:
     """전량 매도(손절·E3)로 대기 상태로 되돌린다."""
     for unit, qty in _held_units(state).items():
@@ -93,18 +162,50 @@ def _liquidate_all(state: dict, date, reason: str, events: list, cooldown_days: 
     state["a1_date"] = None
     state["b_entry_date"] = None
     state["b_total_qty"] = None
+    state["grade"] = None
     state["state"] = "대기"
     state["cooldown_until"] = _add_cooldown(date, cooldown_days)
 
 
-def process_day(df: pd.DataFrame, date, state: dict, cfg: dict) -> tuple[list[dict], dict]:
+def _record_blocked(new_state: dict, date, kind: str, unit: str, reasons: list[str], blocked_type: str, score: int, events: list) -> None:
+    """매매 금지·한도 초과로 막힌 진입을 기록한다. 상태는 건드리지 않는다."""
+    key = f"{kind}:{pd.Timestamp(date).date()}"
+    if _sent(new_state, key):
+        return
+    events.append(
+        {
+            "date": date,
+            "kind": "BLOCKED",
+            "stage": kind,
+            "unit": unit,
+            "reasons": reasons,
+            "blocked_type": blocked_type,  # "ban" | "limit"
+            "score": score,
+        }
+    )
+    _mark_sent(new_state, key)
+
+
+def process_day(
+    df: pd.DataFrame,
+    date,
+    state: dict,
+    cfg: dict,
+    *,
+    earnings_date=None,
+    new_entry_allowed: bool = True,
+) -> tuple[list[dict], dict]:
     """하루치 상태 전이를 처리한다.
 
     입력: df(지표가 계산된 DataFrame), date(df.index의 값), state(종목 상태 dict),
-         cfg(config.yaml 로드값)
+         cfg(config.yaml 로드값), earnings_date(다음 실적 발표일, 모르면 None),
+         new_entry_allowed(오늘 이 종목이 새 포지션(A1·B)을 열어도 되는지 —
+         동시 보유 8개 한도를 engine이 점수 순으로 정해 넘겨준다. A2·A3 추가
+         매수는 이미 보유 중인 종목이라 이 값의 영향을 받지 않는다)
     출력: (그날 발생한 이벤트 목록, 새 상태 dict). state는 변경하지 않는다.
     이벤트 dict: {date, kind, unit, qty 또는 price, ...}
       kind: "A1"|"A2"|"A3"|"B"(진입, price 포함) | "STOP"|"A1_EXPIRE"|"E3"|"E1"|"E2"(매도, qty 포함)
+           | "BLOCKED"(매매 금지·한도 초과로 막힘, stage·reasons·blocked_type 포함)
     """
     if date not in df.index:
         raise ValueError(f"{date}가 df 인덱스에 없습니다")
@@ -186,6 +287,7 @@ def process_day(df: pd.DataFrame, date, state: dict, cfg: dict) -> tuple[list[di
             new_state["a1_date"] = None
             new_state["b_entry_date"] = None
             new_state["b_total_qty"] = None
+            new_state["grade"] = None
             new_state["state"] = "대기"
             new_state["cooldown_until"] = _add_cooldown(date, cooldown_days)
 
@@ -193,52 +295,71 @@ def process_day(df: pd.DataFrame, date, state: dict, cfg: dict) -> tuple[list[di
     st = new_state["state"]
 
     if st == "대기":
-        prev_rsi = prev_row["rsi"] if prev_row is not None else float("nan")
-        if not _in_cooldown(new_state, date) and sig.check_a1(prev_rsi, row["rsi"]):
-            key = f"A1:{pd.Timestamp(date).date()}"
+        kind, unit = _detect_new_entry(df, date, new_state, cfg)
+        if kind is not None:
+            key = f"{kind}:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
-                events.append({"date": date, "kind": "A1", "unit": _UNIT_1, "price": row["close"]})
-                new_state["a1_date"] = date
-                new_state["state"] = "정찰"
-                new_state["entries"][_UNIT_1] = None  # engine이 지정가·수량을 채운다
-                new_state["units"].setdefault(_UNIT_1, 0)
-                if not pd.isna(row.get("swing_low")):  # A1 발생일 기준 swing_low (6장)
-                    new_state["stop"] = float(row["swing_low"])
-                _mark_sent(new_state, key)
-        elif sig.check_b(row, cfg):
-            key = f"B:{pd.Timestamp(date).date()}"
-            if not _sent(new_state, key):
-                events.append({"date": date, "kind": "B", "unit": _UNIT_B, "price": row["close"]})
-                new_state["state"] = "추세보유"
-                new_state["b_entry_date"] = date
-                new_state["entries"][_UNIT_B] = None
-                new_state["units"].setdefault(_UNIT_B, 0)
-                if not pd.isna(row.get("swing_low")):  # B형 진입일 기준 swing_low (6장)
-                    new_state["stop"] = float(row["swing_low"])
-                _mark_sent(new_state, key)
+                grade_letter, score = _entry_score(df, date, row, kind, cfg)
+                reasons = _ban_reasons(df, date, row, kind, cfg, earnings_date)
+                if reasons:
+                    _record_blocked(new_state, date, kind, unit, reasons, "ban", score, events)
+                elif not new_entry_allowed:
+                    _record_blocked(new_state, date, kind, unit, ["동시 보유 종목 수 한도 초과"], "limit", score, events)
+                else:
+                    events.append({"date": date, "kind": kind, "unit": unit, "price": float(row["close"]), "score": score})
+                    new_state["state"] = "정찰" if kind == "A1" else "추세보유"
+                    new_state["entries"][unit] = None  # engine이 지정가·수량을 채운다
+                    new_state["units"].setdefault(unit, 0)
+                    if not pd.isna(row.get("swing_low")):  # 진입일 기준 swing_low (6장)
+                        new_state["stop"] = float(row["swing_low"])
+                    if kind == "A1":
+                        new_state["a1_date"] = date
+                    else:
+                        new_state["b_entry_date"] = date
+                    _mark_sent(new_state, key)
 
     elif st == "정찰":
+        # A2 판정은 당일 RSI 기준이다: A1 이후 중간에 RSI가 30 밑으로 다시 내려간
+        # 날이 있어도 A1을 무효로 하지 않는다(손절 규칙이 관리) — P2.1 보완 2번.
         if sig.check_a2(row):
             key = f"A2:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
-                events.append({"date": date, "kind": "A2", "unit": _UNIT_2, "price": row["close"]})
-                new_state["state"] = "확인"
-                new_state["entries"][_UNIT_2] = None
-                new_state["units"].setdefault(_UNIT_2, 0)
-                _mark_sent(new_state, key)
+                grade_letter, score = _entry_score(df, date, row, "A2", cfg)
+                reasons = _ban_reasons(df, date, row, "A2", cfg, earnings_date)
+                if reasons:
+                    # 정찰 상태를 유지한다 — A1 유효기간 안에 다음 골든크로스가 오면 다시 판정.
+                    _record_blocked(new_state, date, "A2", _UNIT_2, reasons, "ban", score, events)
+                else:
+                    events.append(
+                        {"date": date, "kind": "A2", "unit": _UNIT_2, "price": float(row["close"]), "score": score, "grade": grade_letter}
+                    )
+                    new_state["state"] = "확인"
+                    new_state["entries"][_UNIT_2] = None
+                    new_state["units"].setdefault(_UNIT_2, 0)
+                    new_state["grade"] = grade_letter
+                    _mark_sent(new_state, key)
 
     elif st == "확인":
         if sig.check_a3(row, cfg):
             key = f"A3:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
-                events.append({"date": date, "kind": "A3", "unit": _UNIT_6, "price": row["close"]})
-                new_state["state"] = "확정"
-                new_state["entries"][_UNIT_6] = None
-                new_state["units"].setdefault(_UNIT_6, 0)
-                # A3 확정 시 손절선을 max(A1 기준 swing_low, 오늘 구름 하단)으로 올린다 (6장).
-                if not pd.isna(row.get("cloud_bot")) and new_state.get("stop") is not None:
-                    new_state["stop"] = max(new_state["stop"], float(row["cloud_bot"]))
-                _mark_sent(new_state, key)
+                grade_letter = new_state.get("grade")
+                _, score = _entry_score(df, date, row, "A3", cfg)
+                reasons = _ban_reasons(df, date, row, "A3", cfg, earnings_date)
+                if reasons:
+                    # 확인 상태를 유지한다 — 다음 날 다시 판정한다.
+                    _record_blocked(new_state, date, "A3", _UNIT_6, reasons, "ban", score, events)
+                else:
+                    events.append(
+                        {"date": date, "kind": "A3", "unit": _UNIT_6, "price": float(row["close"]), "score": score, "grade": grade_letter}
+                    )
+                    new_state["state"] = "확정"
+                    new_state["entries"][_UNIT_6] = None
+                    new_state["units"].setdefault(_UNIT_6, 0)
+                    # A3 확정 시 손절선을 max(A1 기준 swing_low, 오늘 구름 하단)으로 올린다 (6장).
+                    if not pd.isna(row.get("cloud_bot")) and new_state.get("stop") is not None:
+                        new_state["stop"] = max(new_state["stop"], float(row["cloud_bot"]))
+                    _mark_sent(new_state, key)
 
     new_state["updated_at"] = date
     return events, new_state
@@ -279,7 +400,7 @@ def _sell_b_bundle(state: dict, date, unit: str, kind: str, events: list) -> boo
 
 
 def apply_fill(state: dict, fill: dict, cfg: dict) -> dict:
-    """체결 기록(data/fills.csv 한 행)을 상태에 반영한다 (5절 지시문).
+    """체결 기록(data/fills.csv 한 행, 또는 되돌려 보기의 가상 체결)을 상태에 반영한다.
 
     입력: state, fill({date, ticker, unit, side, price, qty}), cfg
     출력: 새 상태 dict.

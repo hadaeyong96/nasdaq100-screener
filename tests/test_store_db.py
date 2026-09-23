@@ -43,6 +43,23 @@ def test_load_all_positions_and_upsert(tmp_path):
     assert len(db.load_all_positions(conn)) == 2  # upsert가 새 행을 만들지 않는다
 
 
+def test_record_price_snapshots(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    db.record_price_snapshots(
+        conn,
+        run_at="2026-09-22T07:30:00",
+        rows=[
+            {"ticker": "NVDA", "date": "2026-09-22", "close": 228.87, "close_source": "meta", "meta_time": "2026-09-22T16:00:00-04:00"},
+            {"ticker": "AAPL", "date": "2026-09-22", "close": 339.75, "close_source": "yahoo", "meta_time": None},
+        ],
+    )
+    rows = conn.execute("SELECT ticker, close, close_source, meta_time FROM price_snapshots ORDER BY ticker").fetchall()
+    assert rows == [
+        ("AAPL", 339.75, "yahoo", None),
+        ("NVDA", 228.87, "meta", "2026-09-22T16:00:00-04:00"),
+    ]
+
+
 def test_record_events_and_run(tmp_path):
     conn = db.connect(tmp_path / "state.db")
     db.record_events(conn, [{"date": "2026-09-10", "ticker": "NVDA", "kind": "A1", "unit": "1", "price": 100.0}])

@@ -38,6 +38,10 @@ def check_a2(row: pd.Series) -> bool:
 
     A1 이후 10거래일 이내인지(유효기간)는 core/state.py가 a1_date와
     cfg["assumptions"]["a1_to_a2_expiry_days"]로 별도 확인한다.
+
+    [해석, P2.1 보완 2번] 정리본의 "RSI 30 이상 70 미만 유지"는 A2 판정 당일의
+    RSI만 본다. A1 이후 중간에 RSI가 다시 30 아래로 내려간 날이 있어도 A1을
+    무효로 하지 않는다 — 그 구간의 하락 위험은 손절 규칙(5장)이 이미 관리한다.
     """
     if pd.isna(row.get("gc")) or pd.isna(row.get("rsi")):
         return False
