@@ -140,7 +140,9 @@ backtest:
   total_krw: 40000000 # 총자금 4,000만 원 (p5_plan.md 3장 B0)
   benchmark_ticker: QQQ
   cash_etf_ticker: QQQM # 쉬는 돈. QQQM 상장(2020-12) 전 구간은 QQQ로 대체한다.
-  cash_etf_inception: "2020-12-22" # QQQM 상장일 — 이 날짜 전은 QQQ로 대체
+  cash_etf_inception: "2020-12-22" # QQQM 공식 상장일(표시용) — 실제 접합 경계는 받아온 데이터의 첫 날짜를 쓴다
+  qqq_expense_ratio_pct: 0.20 # QQQM 상장 전 대체 구간의 수익률 보정용 (P5-1.1 6번)
+  qqqm_expense_ratio_pct: 0.15
   warmup_start: "2014-01-01" # 지표 준비용 추가 수집 시작일
   train_start: "2015-01-01"
   train_end: "2021-12-31"

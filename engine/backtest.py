@@ -1,4 +1,4 @@
-"""과거 재생(백테스트) 엔진 (P5-1).
+"""과거 재생(백테스트) 엔진 (P5-1, P5-1.1 검산 반영).
 
 라이브(engine/daily.py)와 같은 core 함수(core.indicators, core.signals, core.filters,
 core.sizing, core.state)를 쓴다. 신호 판정·상태 전이 로직은 새로 만들지 않는다 —
@@ -17,9 +17,21 @@ core.sizing, core.state)를 쓴다. 신호 판정·상태 전이 로직은 새�
   core.state는 신호 당일 즉시 수량을 확정하므로, 다음 날 시가를 미리 조회해
   그 자리에서 체결가만 정한다(별도의 대기 상태를 새로 만들지 않는다).
 
+계좌 통화(P5-1.1 3번, 중요): Broker는 **달러 계좌**다. QQQM<->종목 재배분은
+달러 안에서만 일어나 환전이 없다. 환전은 시작할 때 원화를 달러로 바꾸는 한 번뿐이고
+(costs.fx_spread_pct 반영), 그 뒤로는 수수료(commission_buy/sell_pct)만 매매마다
+붙는다. 원화는 ① 세금 계산(원화 기준 실현손익) ② 보고용 평가(그날 환율로 환산)
+에만 쓴다.
+
+포지션·R(P5-1.1 2번): 1차·2차·3차(또는 재진입 1회)로 나뉜 부분 매수·매도를 전부
+하나의 "포지션"으로 묶는다. R = 그 포지션의 **초기 위험**(1차 또는 재진입 진입
+시점의 수량 × 주당위험, 원화) 분의 그 포지션 전체 손익(원화) — core/sizing.py의
+계산과 같은 뜻이다. trades.csv의 개별 진입·청산 행에는 그 행이 속한 position_id를
+남기고, 승률·손익비·기대값 같은 "거래 품질" 지표는 position_id로 묶은 뒤에만 계산한다
+(부분 청산을 거래 하나로 세지 않는다).
+
 실행:
     python -m engine.backtest              config.yaml의 backtest.train_start~train_end(B0)
-    python -m engine.backtest --benchmark-only
 """
 
 from __future__ import annotations
@@ -31,7 +43,7 @@ import statistics
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -46,7 +58,6 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8")
 
 from core import execution as ex  # noqa: E402
-from core import filters  # noqa: E402
 from core import sizing  # noqa: E402
 from core import signals as sig  # noqa: E402
 from core import state as st  # noqa: E402
@@ -57,7 +68,7 @@ from data import fx  # noqa: E402
 from data import market_calendar  # noqa: E402
 from data import universe_history as uh  # noqa: E402
 from data.universe import get_universe  # noqa: E402
-from engine.daily import _BUY_KINDS, _NEW_POSITION_KINDS, _SELL_KINDS, _STAGE_LABEL, _label_filter_reason  # noqa: E402
+from engine.daily import _BUY_KINDS, _NEW_POSITION_KINDS, _SELL_KINDS, _label_filter_reason  # noqa: E402
 
 OUTPUT_ROOT = ROOT / "outputs" / "backtest"
 
@@ -79,50 +90,56 @@ def _parse_date(s: str) -> date:
     return pd.Timestamp(s).date()
 
 
-# ── 자금 계좌 (KRW 현금 + QQQM 평균원가법) ──────────────────────────────────
+# ── 자금 계좌 (달러 계좌 + QQQM 평균원가법, P5-1.1 3번) ─────────────────────
 
 
 @dataclass
 class Broker:
-    """KRW 현금 계좌 + QQQM(쉬는 돈) 보유분. 신호 종목 매매는 전부 이 계좌를 거쳐 간다.
+    """달러 현금 계좌 + QQQM(쉬는 돈) 보유분. 신호 종목 매매는 전부 이 계좌를 거쳐 간다.
 
-    한국 해외주식 계좌 관행을 그대로 모형화한다: 미국 자산을 사고팔 때마다 원화
-    현금과 환전한다(스프레드), 그래서 "QQQM을 팔아 종목을 산다"도 실제로는
-    QQQM 매도(달러->원화) + 종목 매수(원화->달러) 두 번의 환전이다.
+    QQQM<->종목 재배분은 둘 다 달러 자산이라 환전이 없다(수수료만). 원화는 세금
+    계산과 보고용 평가에만 등장한다. apply_costs=False면 수수료를, apply_tax=False면
+    양도세·배당 원천징수를 0으로 둔다(원인 분해용, P5-1.1 4번).
     """
 
-    cash_krw: float
+    cash_usd: float
     qqqm_shares: float = 0.0
     qqqm_cost_usd: float = 0.0  # 평균원가법 총 매입원가(달러)
-    realized_gain_by_year: dict = field(default_factory=lambda: defaultdict(float))
-    dividend_tax_paid_krw: float = 0.0
+    realized_gain_by_year: dict = field(default_factory=lambda: defaultdict(float))  # 원화, 신호종목+QQQM 전체
+    qqqm_realized_gain_by_year: dict = field(default_factory=lambda: defaultdict(float))  # 원화, QQQM 매매분만
+    dividend_withheld_usd: float = 0.0
     tax_log: list = field(default_factory=list)
+    apply_costs: bool = True
+    apply_tax: bool = True
 
-    def buy_usd(self, usd_amount: float, commission_pct: float, fx_rate: float, spread_pct: float) -> float:
-        """원화 현금으로 usd_amount달러어치 미국 자산을 산다. 실제로 나간 원화를 반환."""
-        commission = usd_amount * commission_pct / 100
-        krw_cost = (usd_amount + commission) * fx_rate / (1 - spread_pct / 100)
-        self.cash_krw -= krw_cost
-        return krw_cost
+    def _commission(self, usd_amount: float, pct: float) -> float:
+        return usd_amount * pct / 100 if self.apply_costs else 0.0
 
-    def sell_usd(self, usd_amount: float, commission_pct: float, fx_rate: float, spread_pct: float) -> float:
-        """미국 자산 usd_amount달러어치(수수료 전)를 팔아 원화로 바꿔 현금에 더한다. 받은 원화를 반환."""
-        commission = usd_amount * commission_pct / 100
-        krw_proceeds = (usd_amount - commission) * fx_rate * (1 - spread_pct / 100)
-        self.cash_krw += krw_proceeds
-        return krw_proceeds
+    def buy_usd_asset(self, usd_amount: float, commission_pct: float) -> float:
+        """달러로 usd_amount달러어치 미국 자산을 산다(환전 없음, 수수료만). 실제로 나간 달러를 반환."""
+        cost = usd_amount + self._commission(usd_amount, commission_pct)
+        self.cash_usd -= cost
+        return cost
 
-    def buy_qqqm(self, usd_amount: float, price_usd: float, fx_rate: float, cfg: dict) -> float:
+    def sell_usd_asset(self, usd_amount: float, commission_pct: float) -> float:
+        """미국 자산 usd_amount달러어치(수수료 전)를 판다. 받은 순 달러(수수료 뺀 값)를 반환."""
+        proceeds = usd_amount - self._commission(usd_amount, commission_pct)
+        self.cash_usd += proceeds
+        return proceeds
+
+    def buy_qqqm(self, usd_amount: float, price_usd: float, cfg: dict) -> float:
         if usd_amount <= 0 or price_usd <= 0:
             return 0.0
         costs = cfg["backtest"]["costs"]
-        self.buy_usd(usd_amount, costs["commission_buy_pct"], fx_rate, costs["fx_spread_pct"])
+        self.buy_usd_asset(usd_amount, costs["commission_buy_pct"])
         shares = usd_amount / price_usd
         self.qqqm_shares += shares
         self.qqqm_cost_usd += usd_amount
         return shares
 
-    def sell_qqqm(self, usd_amount: float, price_usd: float, fx_rate: float, cfg: dict, year: int) -> float:
+    def sell_qqqm(self, usd_amount: float, price_usd: float, cfg: dict, fx_rate: float, year: int) -> float:
+        """QQQM을 usd_amount달러어치 판다. fx_rate는 실현손익을 원화로 환산해 세금 계산에
+        쓸 뿐 환전 비용은 없다(P5-1.1 3번). 받은 순 달러를 반환."""
         if usd_amount <= 0 or self.qqqm_shares <= 0:
             return 0.0
         usd_amount = min(usd_amount, self.qqqm_shares * price_usd)
@@ -130,40 +147,52 @@ class Broker:
         shares = usd_amount / price_usd
         avg_cost = self.qqqm_cost_usd / self.qqqm_shares
         cost_removed = avg_cost * shares
-        gain_usd = usd_amount - cost_removed
-        self.sell_usd(usd_amount, costs["commission_sell_pct"], fx_rate, costs["fx_spread_pct"])
+        proceeds = self.sell_usd_asset(usd_amount, costs["commission_sell_pct"])
+        gain_usd = proceeds - cost_removed  # 매도수수료까지 반영한 실현손익(달러)
         self.qqqm_shares -= shares
         self.qqqm_cost_usd -= cost_removed
-        self.realized_gain_by_year[year] += gain_usd * fx_rate
-        return shares
+        if fx_rate:
+            gain_krw = gain_usd * fx_rate
+            self.realized_gain_by_year[year] += gain_krw
+            self.qqqm_realized_gain_by_year[year] += gain_krw
+        return proceeds
 
     def pay_capital_gains_tax(self, year: int, price_usd: float, fx_rate: float, cfg: dict, settlement_year: int) -> float:
         """year의 실현손익에 대한 양도세를 settlement_year(보통 year+1) 5월에 낸다 (QQQM을 팔아 마련).
 
         세금을 마련하려고 파는 QQQM 자체의 실현손익은 그 해(year)가 아니라 실제로
-        파는 시점(settlement_year)에 잡아야 한다 — 여기서 그 둘을 구분한다.
+        파는 시점(settlement_year)에 잡는다.
         """
         tax_cfg = cfg["backtest"]["tax"]
         gain = self.realized_gain_by_year.get(year, 0.0)
-        amount = tax.capital_gains_tax(gain, tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100)
-        if amount <= 0:
+        amount_krw = (
+            tax.capital_gains_tax(gain, tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100)
+            if self.apply_tax
+            else 0.0
+        )
+        if amount_krw <= 0:
             self.tax_log.append({"year": year, "gain_krw": gain, "tax_krw": 0.0})
             return 0.0
-        usd_needed = amount / fx_rate
-        self.sell_qqqm(usd_needed, price_usd, fx_rate, cfg, year=settlement_year)
-        self.cash_krw -= amount  # 세금은 재투자하지 않고 밖으로 나간다
-        self.tax_log.append({"year": year, "gain_krw": gain, "tax_krw": amount})
-        return amount
+        usd_needed = amount_krw / fx_rate
+        self.sell_qqqm(usd_needed, price_usd, cfg, fx_rate, year=settlement_year)
+        self.cash_usd -= usd_needed  # 세금은 재투자하지 않고 밖으로 나간다
+        self.tax_log.append({"year": year, "gain_krw": gain, "tax_krw": amount_krw})
+        return amount_krw
 
-    def receive_dividend(self, gross_usd: float, fx_rate: float, cfg: dict) -> float:
-        """배당(달러, 세전)을 15% 원천징수 후 원화로 환전해 현금에 더한다."""
+    def receive_dividend(self, gross_usd: float, cfg: dict) -> float:
+        """배당(달러, 세전)을 15% 원천징수 후 현금에 더한다(환전 없음). 순 달러를 반환."""
         div_cfg = cfg["backtest"]["tax"]
-        net_usd = tax.dividend_after_withholding(gross_usd, div_cfg["dividend_withholding_pct"] / 100)
-        withheld_usd = gross_usd - net_usd
-        krw = net_usd * fx_rate * (1 - cfg["backtest"]["costs"]["fx_spread_pct"] / 100)
-        self.cash_krw += krw
-        self.dividend_tax_paid_krw += withheld_usd * fx_rate
-        return krw
+        rate = div_cfg["dividend_withholding_pct"] / 100 if self.apply_tax else 0.0
+        net_usd = tax.dividend_after_withholding(gross_usd, rate)
+        self.cash_usd += net_usd
+        self.dividend_withheld_usd += gross_usd - net_usd
+        return net_usd
+
+
+def _deposit_krw_to_usd(krw_amount: float, fx_rate: float, spread_pct: float, apply_costs: bool) -> float:
+    """맨 처음 원화를 달러로 바꾼다(P5-1.1 3번: 환전은 여기 한 번뿐)."""
+    spread = spread_pct / 100 if apply_costs else 0.0
+    return krw_amount / fx_rate * (1 - spread)
 
 
 # ── 데이터 준비 ─────────────────────────────────────────────────────────────
@@ -176,13 +205,45 @@ class BacktestData:
     checkpoints: list
     fx_by_date: dict
     universe_mode: str  # POINT_IN_TIME | CURRENT_CONSTITUENTS
-    survivorship_bias: bool
+    survivorship_bias: str  # "FALSE" | "PARTIAL" | "TRUE"
     failed_tickers: dict
     data_gap: dict
     qqq_df: pd.DataFrame
     qqq_dividends: pd.Series
-    cash_etf_df: pd.DataFrame  # QQQM(상장 후) / QQQ(상장 전 대체)
+    cash_etf_df: pd.DataFrame  # QQQM(상장 후) / QQQ(상장 전 대체, 수준을 맞춰 접합)
     cash_etf_dividends: pd.Series
+    all_needed_tickers: set = field(default_factory=set)
+
+
+def splice_pre_inception_series(proxy_df: pd.DataFrame, real_df: pd.DataFrame, proxy_expense_ratio_pct: float, real_expense_ratio_pct: float) -> pd.DataFrame:
+    """real_df(실제 상장 후 데이터)보다 이른 구간을 proxy_df(대용 자산)의 "수익률"로
+    채워 real_df 앞에 붙인다 (P5-1.1 2·6번, 순수 함수 — 회귀 방지 테스트 대상).
+
+    접합 경계(real_df의 첫 날짜)에서 proxy 구간의 수준을 real_df의 실제 종가에
+    맞춰 다시 고정한다 — 두 자산이 아예 다른 주당 가격대(별도 주식군)일 수 있어,
+    보수 차이만 곱하면 접합 경계에서 가격이 어긋나기 때문이다(예: QQQ ~290 ->
+    QQQM ~120로 하루 만에 반토막 나는 것처럼 보이는 문제, 실제로 있었던 회귀).
+
+    입력: proxy_df(대용 자산의 open/high/low/close, real_df보다 이전 구간 포함),
+         real_df(실제 자산의 open/high/low/close, index[0]이 접합 경계),
+         proxy_expense_ratio_pct(대용 자산 보수, %), real_expense_ratio_pct(실제 자산 보수, %)
+    출력: proxy 구간(접합 경계 이전, 수준을 맞춘) + real_df를 이어 붙인 DataFrame,
+         날짜 오름차순, 중복 없음
+    """
+    real_start = real_df.index[0]
+    real_start_close = float(real_df.loc[real_start, "close"])
+    pre = proxy_df.loc[proxy_df.index < real_start].copy()
+    if pre.empty:
+        return real_df.copy()
+    expense_drag_daily = (proxy_expense_ratio_pct - real_expense_ratio_pct) / 100 / 252
+    drag_factor = (1 - expense_drag_daily) ** pd.Series(range(len(pre)), index=pre.index)[::-1]
+    proxy_close_at_boundary = float(pre["close"].iloc[-1])
+    level_scale = real_start_close / (proxy_close_at_boundary * drag_factor.iloc[-1])
+    for col in ("open", "high", "low", "close"):
+        pre[col] = pre[col] * drag_factor.values * level_scale
+    out = pd.concat([pre, real_df])
+    assert out.index.is_monotonic_increasing and not out.index.duplicated().any()
+    return out
 
 
 def prepare_data(cfg: dict, warmup_start: date, end: date) -> BacktestData:
@@ -192,7 +253,6 @@ def prepare_data(cfg: dict, warmup_start: date, end: date) -> BacktestData:
     print("[backtest] 나스닥 100 현재 구성 종목을 가져오는 중...")
     current_tickers = set(get_universe()["ticker"])
 
-    survivorship_bias = False
     universe_mode = "POINT_IN_TIME"
     checkpoints: list = []
     try:
@@ -205,13 +265,21 @@ def prepare_data(cfg: dict, warmup_start: date, end: date) -> BacktestData:
     except Exception as exc:
         print(f"[backtest] 시점별 구성 종목 재구성 실패({exc}) — 현재 구성 종목만 쓴다 (SURVIVORSHIP_BIAS)")
         universe_mode = "CURRENT_CONSTITUENTS"
-        survivorship_bias = True
         all_needed = set(current_tickers)
         checkpoints = [(warmup_start, frozenset(current_tickers))]
 
     print(f"[backtest] 종목 {len(all_needed)}개의 과거 일봉을 받는 중... (시간이 걸립니다)")
     price_result = bp.fetch_universe_history(sorted(all_needed), warmup_start, end)
     print(f"[backtest]   성공 {len(price_result.prices)}종목 / 실패 {len(price_result.failed)}종목")
+
+    # 생존자 편향 표시 (P5-1.1 5번): 시점별 구성 종목을 못 구했으면 TRUE, 구했지만
+    # 그중 일부(특히 인수·상폐 종목)의 시세를 못 받았으면 FALSE가 아니라 PARTIAL.
+    if universe_mode == "CURRENT_CONSTITUENTS":
+        survivorship_bias = "TRUE"
+    elif price_result.failed:
+        survivorship_bias = "PARTIAL"
+    else:
+        survivorship_bias = "FALSE"
 
     indicator_map = {t: compute_indicators(df, cfg) for t, df in price_result.prices.items()}
 
@@ -235,32 +303,10 @@ def prepare_data(cfg: dict, warmup_start: date, end: date) -> BacktestData:
     else:
         cash_etf_df, _ = bp.fetch_history(cash_ticker, warmup_start, end)
         cash_etf_dividends = bp.fetch_dividends(cash_ticker, warmup_start, end)
-    # QQQM 상장 전 구간은 QQQ로 대체한다 (지시문 2번) — 두 ETF의 보수 차이를 반영해
-    # QQQM 상장 전 동안은 (QQQ 보수 - QQQM 보수)만큼 매일 수익률에서 깎는다.
-    #
-    # 실제 QQQM 상장일은 config의 cash_etf_inception(2020-12-22, 공식 상장일)보다
-    # 이르다 — yfinance가 그 전(2020-10-13~) 데이터도 내려준다. 접합 경계를 config
-    # 값으로 고정하면 그 사이 구간(10/13~12/21)에서 합성 구간(pre)과 실제 QQQM
-    # 데이터의 날짜가 겹치고, pd.concat().sort_index()의 기본 정렬(quicksort)은
-    # 안정 정렬이 아니라 같은 날짜에서 어느 쪽이 남을지 날짜마다 들쭉날쭉해진다
-    # (가격이 하루씩 오락가락하는 회귀를 낳았다). 실제 데이터가 존재하는 첫 날짜를
-    # 그대로 접합 경계로 써서 겹치는 구간 자체를 없앤다.
-    if cash_ticker != bt_cfg["benchmark_ticker"] and not cash_etf_df.empty and warmup_start < cash_etf_df.index[0].date():
-        real_start = cash_etf_df.index[0]
-        real_start_close = float(cash_etf_df.loc[real_start, "close"])
-        pre = qqq_df_raw.loc[qqq_df_raw.index < real_start].copy()
-        # QQQM은 QQQ의 보수만 다른 게 아니라 아예 다른 주당 가격대(별도 주식군)라, 그냥
-        # QQQ 가격에 보수 차이만 곱하면 접합 경계에서 가격 수준이 어긋난다(예: QQQ
-        # ~290 -> QQQM ~120로 하루 만에 반토막 나는 것처럼 보임). QQQ의 "수익률"만
-        # 대용으로 쓰고, 접합일 QQQM 실제 종가에 맞춰 수준을 다시 고정한다.
-        expense_drag_daily = (bt_cfg.get("qqq_expense_ratio_pct", 0.20) - bt_cfg.get("qqqm_expense_ratio_pct", 0.15)) / 100 / 252
-        drag_factor = (1 - expense_drag_daily) ** pd.Series(range(len(pre)), index=pre.index)[::-1]
-        qqq_close_at_boundary = float(qqq_df_raw.loc[qqq_df_raw.index < real_start, "close"].iloc[-1])
-        level_scale = real_start_close / (qqq_close_at_boundary * drag_factor.iloc[-1])
-        for col in ("open", "high", "low", "close"):
-            pre[col] = pre[col] * drag_factor.values * level_scale
-        cash_etf_df = pd.concat([pre, cash_etf_df])
-        assert cash_etf_df.index.is_monotonic_increasing and not cash_etf_df.index.duplicated().any()
+        if not cash_etf_df.empty and warmup_start < cash_etf_df.index[0].date():
+            cash_etf_df = splice_pre_inception_series(
+                qqq_df_raw, cash_etf_df, bt_cfg["qqq_expense_ratio_pct"], bt_cfg["qqqm_expense_ratio_pct"]
+            )
 
     print("[backtest] 원/달러 환율을 받는 중...")
     fx_history = fx.fetch_usd_krw_range(warmup_start, end)
@@ -286,6 +332,7 @@ def prepare_data(cfg: dict, warmup_start: date, end: date) -> BacktestData:
         qqq_dividends=qqq_dividends,
         cash_etf_df=compute_indicators(cash_etf_df, cfg) if not cash_etf_df.empty else cash_etf_df,
         cash_etf_dividends=cash_etf_dividends,
+        all_needed_tickers=all_needed,
     )
 
 
@@ -316,11 +363,20 @@ class BacktestResult:
     trades: list
     rejected: list
     broker: Broker
+    still_open_position_ids: set
     final_date: date | None
 
 
-def simulate_portfolio(data: BacktestData, cfg: dict, start: date, end: date) -> BacktestResult:
-    """core.state.process_day를 하루씩 재생해 포트폴리오를 시뮬레이션한다."""
+def simulate_portfolio(
+    data: BacktestData, cfg: dict, start: date, end: date, apply_costs: bool = True, apply_tax: bool = True
+) -> BacktestResult:
+    """core.state.process_day를 하루씩 재생해 포트폴리오를 시뮬레이션한다.
+
+    apply_costs=False/apply_tax=False는 원인 분해용(P5-1.1 4번)이다. core.sizing이
+    쓰는 수량 결정은 cfg의 고정값(총자금·전략한도)과 시세만 보고 Broker의 실제
+    현금·비용과 무관하게 정해지므로, 세 시나리오(무비용무세금/비용만/비용+세금)의
+    신호·체결·수량은 항상 같고 현금 흐름만 달라진다.
+    """
     bt_cfg = cfg["backtest"]
     total_krw = bt_cfg["total_krw"]
     cash_buffer_krw = total_krw * cfg["plan"]["cash_buffer_pct"] / 100
@@ -330,20 +386,23 @@ def simulate_portfolio(data: BacktestData, cfg: dict, start: date, end: date) ->
     trading_days = [d.date() for d in market_calendar.trading_days_between(start, end)]
     indicator_map = data.indicator_map
     states = {t: st.init_state(t) for t in indicator_map}
-    broker = Broker(cash_krw=total_krw)
+    broker = Broker(cash_usd=0.0, apply_costs=apply_costs, apply_tax=apply_tax)
 
     equity_rows: list = []
     trades: list = []
     rejected: list = []
     paid_years: set = set()
+    open_positions: dict[str, dict] = {}  # ticker -> {"id", "initial_risk_krw"}
+    next_position_id = [1]
 
-    # 첫 거래일에 버퍼를 뺀 전액을 QQQM에 넣는다.
+    # 첫 거래일에 버퍼를 뺀 전액을 달러로 바꿔(딱 한 번 환전) QQQM에 넣는다.
     first_ts = pd.Timestamp(trading_days[0])
     cash_etf_price0 = _price_on_or_before(data.cash_etf_df, first_ts)
     fx0 = data.fx_by_date.get(trading_days[0].isoformat())
     if cash_etf_price0 and fx0:
-        usd0 = (total_krw - cash_buffer_krw) / fx0
-        broker.buy_qqqm(usd0, cash_etf_price0, fx0, cfg)
+        usd0 = _deposit_krw_to_usd(total_krw - cash_buffer_krw, fx0, costs["fx_spread_pct"], apply_costs)
+        broker.cash_usd += usd0
+        broker.buy_qqqm(usd0, cash_etf_price0, cfg)
 
     for date_ in trading_days:
         ts = pd.Timestamp(date_)
@@ -369,12 +428,27 @@ def simulate_portfolio(data: BacktestData, cfg: dict, start: date, end: date) ->
             qty = pending.get("sized_qty", 0)
             if fill_price is not None and qty > 0:
                 usd_amount = fill_price * qty
-                broker.sell_qqqm(usd_amount, _price_on_or_before(data.cash_etf_df, ts) or fill_price, fx_rate, cfg, date_.year)
-                broker.buy_usd(usd_amount, costs["commission_buy_pct"], fx_rate, costs["fx_spread_pct"])
+                cash_etf_price = _price_on_or_before(data.cash_etf_df, ts) or fill_price
+                broker.sell_qqqm(usd_amount, cash_etf_price, cfg, fx_rate, date_.year)
+                broker.buy_usd_asset(usd_amount, costs["commission_buy_pct"])
+
+                is_new = pending["kind"] in _NEW_POSITION_KINDS
+                if is_new and ticker not in open_positions:
+                    stop_price = state_.get("stop")
+                    risk_per_share = sizing.per_share_risk(fill_price, stop_price, cfg) if stop_price is not None else fill_price * cfg["risk"]["min_risk_per_share_pct"] / 100
+                    initial_risk_krw = qty * risk_per_share * (fx_rate or 0)
+                    open_positions[ticker] = {"id": next_position_id[0], "initial_risk_krw": initial_risk_krw}
+                    next_position_id[0] += 1
+                position_open = open_positions.get(ticker, {})
+                position_id = position_open.get("id")
+
                 states[ticker] = st.apply_fill(state_, {"unit": pending["unit"], "side": "buy", "price": fill_price, "qty": qty}, cfg)
                 trades.append(
-                    {"date": date_.isoformat(), "ticker": ticker, "side": "진입", "stage": pending["kind"],
-                     "qty": qty, "price": fill_price, "fx_rate": fx_rate, "reason": "", "pnl_usd": None, "r": None}
+                    {"date": date_.isoformat(), "ticker": ticker, "position_id": position_id, "side": "진입", "stage": pending["kind"],
+                     "qty": qty, "price": fill_price, "fx_rate": fx_rate, "reason": "", "pnl_usd": None, "pnl_krw": None, "r": None,
+                     # 포지션이 방금 새로 열렸을 때만(is_new) 채운다 — 2·3차 추가매수 행에는 안 남겨
+                     # aggregate_positions가 "최초 진입" 값을 덮어쓰지 않게 한다(R의 정의, P5-1.1 2번).
+                     "initial_risk_krw": position_open.get("initial_risk_krw") if is_new else None}
                 )
             elif qty > 0:
                 rejected.append({"date": date_.isoformat(), "ticker": ticker, "stage": pending["kind"], "reason": "미체결(저가가 지정가보다 높음)"})
@@ -410,26 +484,31 @@ def simulate_portfolio(data: BacktestData, cfg: dict, start: date, end: date) ->
                          "reason": ", ".join(_label_filter_reason(r) for r in event["reasons"])}
                     )
                 elif event["kind"] in _SELL_KINDS:
-                    _settle_sell(event, ticker, date_, ts, indicator_map[ticker], broker, cfg, fx_rate, trades)
+                    position_id = open_positions.get(ticker, {}).get("id")
+                    _settle_sell(event, ticker, position_id, date_, ts, indicator_map[ticker], broker, cfg, fx_rate, trades)
                 elif event["kind"] in _BUY_KINDS:
                     today_buy_events.setdefault(ticker, []).append(event)
+
+            # 오늘 이 종목의 포지션이 완전히 청산됐으면(대기로 복귀) 포지션을 닫는다.
+            if ticker in open_positions and states[ticker]["state"] == "대기":
+                del open_positions[ticker]
 
         if today_buy_events:
             _size_and_stash(today_buy_events, states, indicator_map, ts, cfg, fx_rate, rejected, date_)
 
-        # ── 배당 ──
+        # ── 배당 (환전 없음, P5-1.1 3번) ──
         for ticker, state_ in states.items():
             qty_held = sum(q for q in state_["units"].values() if q > 0)
-            if qty_held <= 0 or fx_rate is None:
+            if qty_held <= 0:
                 continue
             div_series = data.dividends.get(ticker)
             if div_series is None or ts not in div_series.index:
                 continue
             gross_usd = float(div_series.loc[ts]) * qty_held
-            broker.receive_dividend(gross_usd, fx_rate, cfg)
-        if fx_rate is not None and broker.qqqm_shares > 0 and ts in data.cash_etf_dividends.index:
+            broker.receive_dividend(gross_usd, cfg)
+        if broker.qqqm_shares > 0 and ts in data.cash_etf_dividends.index:
             gross_usd = float(data.cash_etf_dividends.loc[ts]) * broker.qqqm_shares
-            broker.receive_dividend(gross_usd, fx_rate, cfg)
+            broker.receive_dividend(gross_usd, cfg)
 
         # ── 연간 양도세 (5월, 전년도분) ──
         if fx_rate is not None and date_.month >= bt_cfg["tax"]["payment_month"]:
@@ -440,20 +519,22 @@ def simulate_portfolio(data: BacktestData, cfg: dict, start: date, end: date) ->
                     broker.pay_capital_gains_tax(prior_year, price_now, fx_rate, cfg, settlement_year=date_.year)
                     paid_years.add(prior_year)
 
-        # ── 하루 끝: 남는 현금(버퍼 제외)을 QQQM으로 쓸어 담는다 ──
+        # ── 하루 끝: 남는 현금(버퍼만큼 달러로 환산한 값 제외)을 QQQM으로 쓸어 담는다 ──
         if fx_rate is not None:
             price_now = _price_on_or_before(data.cash_etf_df, ts)
             if price_now:
-                surplus_krw = broker.cash_krw - cash_buffer_krw
-                if surplus_krw > 1000:
-                    broker.buy_qqqm(surplus_krw / fx_rate, price_now, fx_rate, cfg)
-                elif surplus_krw < -1000 and broker.qqqm_shares > 0:
-                    broker.sell_qqqm(-surplus_krw / fx_rate, price_now, fx_rate, cfg, date_.year)
+                cash_buffer_usd = cash_buffer_krw / fx_rate
+                surplus_usd = broker.cash_usd - cash_buffer_usd
+                if surplus_usd > 1:
+                    broker.buy_qqqm(surplus_usd, price_now, cfg)
+                elif surplus_usd < -1 and broker.qqqm_shares > 0:
+                    broker.sell_qqqm(-surplus_usd, price_now, cfg, fx_rate, date_.year)
 
         # ── 자산 기록 ──
         if fx_rate is not None:
             price_now = _price_on_or_before(data.cash_etf_df, ts)
             qqqm_value_krw = broker.qqqm_shares * (price_now or 0) * fx_rate
+            cash_krw = broker.cash_usd * fx_rate
             positions_value_krw = 0.0
             for ticker, state_ in states.items():
                 qty_held = sum(q for q in state_["units"].values() if q > 0)
@@ -469,12 +550,16 @@ def simulate_portfolio(data: BacktestData, cfg: dict, start: date, end: date) ->
                     "date": date_.isoformat(),
                     "qqqm_value_krw": round(qqqm_value_krw),
                     "positions_value_krw": round(positions_value_krw),
-                    "cash_krw": round(broker.cash_krw),
-                    "total_krw": round(qqqm_value_krw + positions_value_krw + broker.cash_krw),
+                    "cash_krw": round(cash_krw),
+                    "total_krw": round(qqqm_value_krw + positions_value_krw + cash_krw),
                 }
             )
 
-    return BacktestResult(equity_rows=equity_rows, trades=trades, rejected=rejected, broker=broker, final_date=trading_days[-1] if trading_days else None)
+    still_open_ids = {v["id"] for v in open_positions.values()}
+    return BacktestResult(
+        equity_rows=equity_rows, trades=trades, rejected=rejected, broker=broker,
+        still_open_position_ids=still_open_ids, final_date=trading_days[-1] if trading_days else None,
+    )
 
 
 def _price_on_or_before(df: pd.DataFrame, ts: pd.Timestamp) -> float | None:
@@ -487,7 +572,7 @@ def _price_on_or_before(df: pd.DataFrame, ts: pd.Timestamp) -> float | None:
     return None if pd.isna(close) else float(close)
 
 
-def _settle_sell(event, ticker, date_, ts, df, broker: Broker, cfg, fx_rate, trades: list) -> None:
+def _settle_sell(event, ticker, position_id, date_, ts, df, broker: Broker, cfg, fx_rate, trades: list) -> None:
     """매도 이벤트의 체결가를 정해(손절=당일, 나머지=다음날 시가) 현금에 반영하고 trades에 남긴다."""
     kind = event["kind"]
     qty = event["qty"]
@@ -504,28 +589,24 @@ def _settle_sell(event, ticker, date_, ts, df, broker: Broker, cfg, fx_rate, tra
             exit_price = ex.exit_at_open(next_row.get("open"))
     if exit_price is None or entry_price is None or fx_rate is None:
         trades.append(
-            {"date": date_.isoformat(), "ticker": ticker, "side": "청산", "stage": kind, "qty": qty,
-             "price": None, "fx_rate": fx_rate, "reason": _SELL_REASON.get(kind, kind), "pnl_usd": None, "r": None}
+            {"date": date_.isoformat(), "ticker": ticker, "position_id": position_id, "side": "청산", "stage": kind, "qty": qty,
+             "price": None, "fx_rate": fx_rate, "reason": _SELL_REASON.get(kind, kind), "pnl_usd": None, "pnl_krw": None, "r": None}
         )
         return
 
+    costs = cfg["backtest"]["costs"]
     usd_amount = exit_price * qty
-    krw_proceeds = broker.sell_usd(usd_amount, cfg["backtest"]["costs"]["commission_sell_pct"], fx_rate, cfg["backtest"]["costs"]["fx_spread_pct"])
-    cost_krw = entry_price * qty * fx_rate
-    gain_krw = krw_proceeds - cost_krw
+    proceeds_usd = broker.sell_usd_asset(usd_amount, costs["commission_sell_pct"])
+    cost_usd = entry_price * qty * (1 + (costs["commission_buy_pct"] / 100 if broker.apply_costs else 0))
+    gain_usd = proceeds_usd - cost_usd
+    gain_krw = gain_usd * fx_rate
     broker.realized_gain_by_year[date_.year] += gain_krw
     pnl_usd = (exit_price - entry_price) * qty
-    # R 배수의 분모(주당 위험): STOP·E3(core.state._liquidate_all)만 이벤트에 stop_price를
-    # 남긴다. E1·E2·A1 만료는 분할 매도라 이벤트에 손절가가 없어, 최소 위험 기준
-    # (entry_price의 min_risk_per_share_pct, 보통 1%)으로 근사한다.
-    stop_ref = event.get("stop_price")
-    risk_per_share = sizing.per_share_risk(entry_price, stop_ref, cfg) if stop_ref is not None else entry_price * cfg["risk"]["min_risk_per_share_pct"] / 100
-    r_multiple = pnl_usd / (risk_per_share * qty) if risk_per_share and qty else None
     trades.append(
         {
-            "date": date_.isoformat(), "ticker": ticker, "side": "청산", "stage": kind, "qty": qty,
+            "date": date_.isoformat(), "ticker": ticker, "position_id": position_id, "side": "청산", "stage": kind, "qty": qty,
             "price": exit_price, "fx_rate": fx_rate, "reason": _SELL_REASON.get(kind, kind),
-            "entry_price": entry_price, "pnl_usd": round(pnl_usd, 2), "pnl_krw": round(gain_krw), "r": round(r_multiple, 2) if r_multiple is not None else None,
+            "entry_price": entry_price, "pnl_usd": round(pnl_usd, 2), "pnl_krw": round(gain_krw), "r": None,
         }
     )
 
@@ -557,6 +638,79 @@ def _size_and_stash(today_buy_events, states, indicator_map, ts, cfg, fx_rate, r
             rejected.append({"date": date_.isoformat(), "ticker": ticker, "stage": stage, "reason": reason})
 
 
+# ── 포지션 단위 거래 품질 지표 (P5-1.1 2번) ──────────────────────────────────
+
+
+def aggregate_positions(trades: list, still_open_position_ids: set) -> list[dict]:
+    """trades를 position_id로 묶어 포지션 단위 손익·R을 계산한다 (순수 함수, 테스트 가능).
+
+    입력: trades(진입·청산 행 목록, 각 행에 position_id·pnl_krw 등), still_open_position_ids
+         (백테스트가 끝날 때까지 청산 안 된 포지션 id — 통계에서 뺀다)
+    출력: [{"position_id","ticker","opened_date","closed_date","initial_risk_krw",
+           "pnl_krw","r"}, ...] 청산 완료된 포지션만, position_id 오름차순
+    """
+    by_id: dict[int, dict] = {}
+    for t in trades:
+        pid = t.get("position_id")
+        if pid is None:
+            continue
+        rec = by_id.setdefault(pid, {"position_id": pid, "ticker": t["ticker"], "pnl_krw": 0.0, "opened_date": None, "closed_date": None, "initial_risk_krw": t.get("initial_risk_krw")})
+        if t["side"] == "진입":
+            if rec["opened_date"] is None:
+                rec["opened_date"] = t["date"]
+            if t.get("initial_risk_krw") is not None:
+                rec["initial_risk_krw"] = t["initial_risk_krw"]
+        elif t["side"] == "청산":
+            rec["closed_date"] = t["date"]
+            if t.get("pnl_krw") is not None:
+                rec["pnl_krw"] += t["pnl_krw"]
+
+    out = []
+    for pid, rec in sorted(by_id.items()):
+        if pid in still_open_position_ids:
+            continue
+        if not rec["initial_risk_krw"]:
+            continue
+        rec["r"] = rec["pnl_krw"] / rec["initial_risk_krw"]
+        out.append(rec)
+    return out
+
+
+def compute_position_stats(positions: list[dict]) -> dict:
+    """포지션 목록(aggregate_positions 결과)에서 승률·손익비·기대값(R)을 계산한다 (순수 함수).
+
+    기대값 = 승률 × 평균 이익(R) − 패율 × |평균 손실(R)| — 이 식과 실제 값이
+    일치하는지는 tests에서 검증한다.
+    """
+    if not positions:
+        return {"count": 0}
+    wins = [p for p in positions if p["r"] > 0]
+    losses = [p for p in positions if p["r"] <= 0]
+    win_rate = len(wins) / len(positions)
+    loss_rate = 1 - win_rate
+    avg_win_r = statistics.mean(p["r"] for p in wins) if wins else 0.0
+    avg_loss_r = statistics.mean(p["r"] for p in losses) if losses else 0.0
+    max_loss_r = min((p["r"] for p in positions), default=0.0)
+    payoff_ratio = (avg_win_r / abs(avg_loss_r)) if avg_loss_r else None
+    expectancy_r = win_rate * avg_win_r - loss_rate * abs(avg_loss_r)
+    gross_profit = sum(p["pnl_krw"] for p in wins)
+    gross_loss = abs(sum(p["pnl_krw"] for p in losses))
+    profit_factor = (gross_profit / gross_loss) if gross_loss else None
+    worst = min(positions, key=lambda p: p["pnl_krw"], default=None)
+    return {
+        "count": len(positions),
+        "win_rate_pct": round(win_rate * 100, 1),
+        "avg_win_r": round(avg_win_r, 2),
+        "avg_loss_r": round(avg_loss_r, 2),
+        "max_loss_r": round(max_loss_r, 2),
+        "payoff_ratio": round(payoff_ratio, 2) if payoff_ratio is not None else None,
+        "expectancy_r": round(expectancy_r, 2),
+        "profit_factor": round(profit_factor, 2) if profit_factor is not None else None,
+        "worst_position_krw": round(worst["pnl_krw"]) if worst else None,
+        "worst_position_ticker": worst["ticker"] if worst else None,
+    }
+
+
 # ── 벤치마크(QQQ 매수 후 보유) ────────────────────────────────────────────────
 
 
@@ -567,9 +721,8 @@ class BenchmarkResult:
     final_shares: float
     cost_basis_usd: float
     realized_gain_by_year: dict
-    cagr_pretax: float
     cagr_liquidated: float  # (a) 기간 끝에 전량 매도, 세금까지 낸 경우
-    cagr_unrealized: float  # (b) 팔지 않은 경우(미실현)
+    cagr_unrealized: float  # (b) 팔지 않은 경우(미실현, 자본이득세 아직 없음)
     mdd_pct: float
 
 
@@ -584,12 +737,13 @@ def simulate_benchmark(data: BacktestData, cfg: dict, start: date, end: date) ->
     if not trading_days:
         raise ValueError("QQQ 시세에 백테스트 구간 데이터가 없습니다")
 
-    broker = Broker(cash_krw=total_krw)
+    broker = Broker(cash_usd=0.0)
     first_ts = pd.Timestamp(trading_days[0])
     fx0 = data.fx_by_date.get(trading_days[0].isoformat())
     price0 = float(df.loc[first_ts, "close"])
-    usd0 = total_krw / fx0
-    broker.buy_qqqm(usd0, price0, fx0, cfg)  # buy_qqqm은 일반적인 "미국 자산 사기"로 그대로 재사용한다
+    usd0 = _deposit_krw_to_usd(total_krw, fx0, costs["fx_spread_pct"], True)
+    broker.cash_usd += usd0
+    broker.buy_qqqm(usd0, price0, cfg)
 
     equity_rows = []
     peak = None
@@ -602,11 +756,10 @@ def simulate_benchmark(data: BacktestData, cfg: dict, start: date, end: date) ->
         price = float(df.loc[ts, "close"])
         if ts in data.qqq_dividends.index and broker.qqqm_shares > 0:
             gross_usd = float(data.qqq_dividends.loc[ts]) * broker.qqqm_shares
-            broker.receive_dividend(gross_usd, fx_rate, cfg)
-            surplus_krw = broker.cash_krw
-            if surplus_krw > 0:
-                broker.buy_qqqm(surplus_krw / fx_rate, price, fx_rate, cfg)
-        value_krw = broker.qqqm_shares * price * fx_rate + broker.cash_krw
+            broker.receive_dividend(gross_usd, cfg)
+            if broker.cash_usd > 0:
+                broker.buy_qqqm(broker.cash_usd, price, cfg)
+        value_krw = broker.qqqm_shares * price * fx_rate + broker.cash_usd * fx_rate
         equity_rows.append({"date": date_.isoformat(), "total_krw": round(value_krw)})
         peak = value_krw if peak is None else max(peak, value_krw)
         if peak:
@@ -615,32 +768,163 @@ def simulate_benchmark(data: BacktestData, cfg: dict, start: date, end: date) ->
     last_ts = pd.Timestamp(trading_days[-1])
     last_price = float(df.loc[last_ts, "close"])
     last_fx = data.fx_by_date.get(trading_days[-1].isoformat()) or fx0
-    unrealized_value_krw = broker.qqqm_shares * last_price * last_fx + broker.cash_krw
+    unrealized_value_krw = broker.qqqm_shares * last_price * last_fx + broker.cash_usd * last_fx
 
     years = (trading_days[-1] - trading_days[0]).days / 365.25
-    cagr_pretax = (unrealized_value_krw / total_krw) ** (1 / years) - 1 if years > 0 else 0.0
-    cagr_unrealized = cagr_pretax  # 세전=세후(미실현, 아직 세금 낼 일이 없음)
+    cagr_unrealized = (unrealized_value_krw / total_krw) ** (1 / years) - 1 if years > 0 and unrealized_value_krw > 0 else -1.0
 
-    # (a) 청산: 전량 매도 후 그동안 실현 안 된 손익까지 세금 반영
-    liq_broker = Broker(cash_krw=0.0, qqqm_shares=broker.qqqm_shares, qqqm_cost_usd=broker.qqqm_cost_usd,
-                         realized_gain_by_year=defaultdict(float, broker.realized_gain_by_year))
-    liq_broker.sell_qqqm(broker.qqqm_shares * last_price, last_price, last_fx, cfg, trading_days[-1].year)
+    # (a) 청산: 전량 매도 후 자본이득세까지 낸 경우. 파는 그 자체의 수수료·양도세를
+    # 뺀 "실제 손에 쥐는 돈"만 남겨야 한다 — 원래 보유분(unrealized_value_krw)을
+    # 다시 더하면 안 된다(이전 버전의 버그, P5-1.1 1번: (a)가 (b)보다 커지는 원인).
+    liq_broker = Broker(
+        cash_usd=0.0, qqqm_shares=broker.qqqm_shares, qqqm_cost_usd=broker.qqqm_cost_usd,
+        realized_gain_by_year=defaultdict(float, broker.realized_gain_by_year),
+    )
+    liq_broker.sell_qqqm(broker.qqqm_shares * last_price, last_price, cfg, last_fx, trading_days[-1].year)
     total_gain = sum(liq_broker.realized_gain_by_year.values())
-    tax_amount = tax.capital_gains_tax(total_gain, tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100)
-    liquidated_value_krw = unrealized_value_krw - broker.cash_krw + liq_broker.cash_krw - tax_amount
+    tax_amount_krw = tax.capital_gains_tax(total_gain, tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100)
+    liquidated_cash_usd = broker.cash_usd + liq_broker.cash_usd
+    liquidated_value_krw = liquidated_cash_usd * last_fx - tax_amount_krw
     cagr_liquidated = (liquidated_value_krw / total_krw) ** (1 / years) - 1 if years > 0 and liquidated_value_krw > 0 else -1.0
 
     return BenchmarkResult(
         equity_rows=equity_rows, final_value_usd=broker.qqqm_shares * last_price, final_shares=broker.qqqm_shares,
         cost_basis_usd=broker.qqqm_cost_usd, realized_gain_by_year=broker.realized_gain_by_year,
-        cagr_pretax=cagr_pretax, cagr_liquidated=cagr_liquidated, cagr_unrealized=cagr_unrealized, mdd_pct=mdd * 100,
+        cagr_liquidated=cagr_liquidated, cagr_unrealized=cagr_unrealized, mdd_pct=mdd * 100,
+    )
+
+
+# ── 연도별 수익률 표 (P5-1.1 1·6번) ──────────────────────────────────────────
+
+
+def compute_yearly_returns_from_equity(equity_rows: list) -> dict[int, float]:
+    """equity_rows(각 행에 date, total_krw)에서 달력 연도별 수익률(%)을 계산한다 (순수 함수).
+
+    그해 첫 거래일 값 대비 마지막 거래일 값의 변화율. 연도 첫해는 시작일 값을 쓴다.
+    """
+    if not equity_rows:
+        return {}
+    by_year: dict[int, list] = defaultdict(list)
+    for r in equity_rows:
+        by_year[pd.Timestamp(r["date"]).year].append(r["total_krw"])
+    years = sorted(by_year)
+    out = {}
+    prev_last = by_year[years[0]][0]
+    for y in years:
+        vals = by_year[y]
+        start_v = prev_last
+        end_v = vals[-1]
+        out[y] = round((end_v / start_v - 1) * 100, 2) if start_v else None
+        prev_last = end_v
+    return out
+
+
+def compute_pretax_benchmark_yearly_returns(qqq_df: pd.DataFrame, qqq_dividends: pd.Series, fx_by_date: dict, start: date, end: date) -> dict:
+    """세전(비용·세금 없음) QQQ 연도별 수익률을 달러 가격만/달러 총수익(배당 재투자)/원화
+    총수익 세 가지로 계산한다 (P5-1.1 1번 검산용, 순수 함수).
+    """
+    trading_days = [d for d in market_calendar.trading_days_between(start, end) if pd.Timestamp(d) in qqq_df.index]
+    if not trading_days:
+        return {}
+
+    price_series = []
+    tr_series = []  # 배당 재투자 총수익 지수(달러)
+    krw_series = []
+    tr_value = 1.0
+    prev_close = None
+    for d in trading_days:
+        ts = pd.Timestamp(d)
+        close = float(qqq_df.loc[ts, "close"])
+        if prev_close is not None:
+            div = float(qqq_dividends.loc[ts]) if ts in qqq_dividends.index else 0.0
+            tr_value *= (close + div) / prev_close
+        prev_close = close
+        fx_rate = fx_by_date.get(d.date().isoformat())
+        price_series.append((d, close))
+        tr_series.append((d, tr_value))
+        krw_series.append((d, tr_value * (fx_rate or float("nan"))))
+
+    def _yearly(series):
+        by_year = defaultdict(list)
+        for d, v in series:
+            by_year[d.year].append(v)
+        years = sorted(by_year)
+        out = {}
+        prev_last = by_year[years[0]][0]
+        for y in years:
+            vals = by_year[y]
+            out[y] = round((vals[-1] / prev_last - 1) * 100, 2) if prev_last else None
+            prev_last = vals[-1]
+        return out
+
+    return {
+        "usd_price_only": _yearly(price_series),
+        "usd_total_return": _yearly(tr_series),
+        "krw_total_return": _yearly(krw_series),
+    }
+
+
+# ── 생존 편향 영향 추정 (P5-1.1 5번) ─────────────────────────────────────────
+
+
+def ticker_membership_trading_days(ticker: str, checkpoints: list, start: date, end: date) -> int:
+    """checkpoints(membership_checkpoints 결과)에서 ticker가 [start, end] 동안 구성
+    종목이었던 거래일 수를 센다 (순수 함수)."""
+    total = 0
+    for i, (cp_date, members) in enumerate(checkpoints):
+        if ticker not in members:
+            continue
+        seg_start = max(cp_date, start)
+        seg_end_exclusive = checkpoints[i + 1][0] if i + 1 < len(checkpoints) else end + timedelta(days=1)
+        seg_end = min(seg_end_exclusive - timedelta(days=1), end)
+        if seg_start > seg_end:
+            continue
+        total += len(market_calendar.trading_days_between(seg_start, seg_end))
+    return total
+
+
+def estimate_survivorship_impact(data: BacktestData, entries_count: int, start: date, end: date) -> dict:
+    """실패 종목이 구성 종목이었던 기간 비율과, 그 기간에 놓쳤을 신호 수를 대략 추정한다."""
+    if not data.checkpoints or data.universe_mode != "POINT_IN_TIME":
+        return {}
+    all_tickers = set(data.all_needed_tickers)
+    failed = set(data.failed_tickers)
+    successful = all_tickers - failed
+
+    failed_days = sum(ticker_membership_trading_days(t, data.checkpoints, start, end) for t in failed)
+    success_days = sum(ticker_membership_trading_days(t, data.checkpoints, start, end) for t in successful)
+    total_days = failed_days + success_days
+    if total_days == 0:
+        return {}
+
+    signal_rate_per_ticker_day = entries_count / success_days if success_days else 0.0
+    estimated_missed_signals = round(signal_rate_per_ticker_day * failed_days)
+
+    return {
+        "failed_ticker_count": len(failed),
+        "total_ticker_count": len(all_tickers),
+        "failed_ticker_days": failed_days,
+        "total_ticker_days": total_days,
+        "failed_days_pct": round(failed_days / total_days * 100, 1),
+        "estimated_missed_signals": estimated_missed_signals,
+    }
+
+
+def write_missing_tickers_csv(out_dir: Path, data: BacktestData, start: date, end: date) -> None:
+    rows = []
+    for ticker, reason in data.failed_tickers.items():
+        days = ticker_membership_trading_days(ticker, data.checkpoints, start, end) if data.checkpoints else None
+        rows.append({"ticker": ticker, "reason": reason, "membership_trading_days": days})
+    pd.DataFrame(rows).sort_values("membership_trading_days", ascending=False, na_position="last").to_csv(
+        out_dir / "missing_tickers.csv", index=False, encoding="utf-8-sig"
     )
 
 
 # ── 지표 계산 ────────────────────────────────────────────────────────────────
 
 
-def compute_metrics(equity_rows: list, trades: list, start: date, end: date) -> dict:
+def compute_equity_metrics(equity_rows: list) -> dict:
+    """CAGR·MDD·샤프 등 equity 곡선 지표만 계산한다 (거래 품질 지표는 별도, P5-1.1 2번)."""
     if not equity_rows:
         return {}
     values = [r["total_krw"] for r in equity_rows]
@@ -648,7 +932,7 @@ def compute_metrics(equity_rows: list, trades: list, start: date, end: date) -> 
     start_v, end_v = values[0], values[-1]
     years = (dates[-1] - dates[0]).days / 365.25
 
-    cagr_pretax = (end_v / start_v) ** (1 / years) - 1 if years > 0 and start_v > 0 and end_v > 0 else None
+    cagr = (end_v / start_v) ** (1 / years) - 1 if years > 0 and start_v > 0 and end_v > 0 else None
 
     peak = values[0]
     mdd = 0.0
@@ -672,7 +956,6 @@ def compute_metrics(equity_rows: list, trades: list, start: date, end: date) -> 
 
     recovery_days = None
     if mdd_end is not None:
-        trough_value = min(v for v, d in zip(values, dates) if d == mdd_end)
         after = [(v, d) for v, d in zip(values, dates) if d > mdd_end]
         for v, d in after:
             if v >= peak:
@@ -684,37 +967,13 @@ def compute_metrics(equity_rows: list, trades: list, start: date, end: date) -> 
     if len(daily_returns) > 1 and statistics.pstdev(daily_returns) > 0:
         sharpe = statistics.mean(daily_returns) / statistics.pstdev(daily_returns) * (252 ** 0.5)
 
-    closed = [t for t in trades if t.get("side") == "청산" and t.get("pnl_usd") is not None]
-    wins = [t for t in closed if t["pnl_usd"] > 0]
-    losses = [t for t in closed if t["pnl_usd"] <= 0]
-    win_rate = len(wins) / len(closed) if closed else None
-    avg_win = statistics.mean(t["pnl_usd"] for t in wins) if wins else 0
-    avg_loss = statistics.mean(t["pnl_usd"] for t in losses) if losses else 0
-    payoff_ratio = (avg_win / abs(avg_loss)) if avg_loss else None
-    expectancy_r = statistics.mean(t["r"] for t in closed if t.get("r") is not None) if any(t.get("r") is not None for t in closed) else None
-    gross_profit = sum(t["pnl_usd"] for t in wins)
-    gross_loss = abs(sum(t["pnl_usd"] for t in losses))
-    profit_factor = (gross_profit / gross_loss) if gross_loss else None
-
-    worst_trade = min(closed, key=lambda t: t["pnl_usd"], default=None)
-
     return {
-        # equity_rows의 total_krw는 이미 수수료·환전 스프레드·양도세·배당 원천징수를
-        # 반영한 실제 현금 잔고 기반이라(Broker가 매 거래마다 깎는다), 이 CAGR은
-        # "세전"이 아니라 세후(비용+세금 다 뺀) 값이다 — 이름에 주의.
-        "cagr_posttax_pct": round(cagr_pretax * 100, 2) if cagr_pretax is not None else None,
+        "cagr_pct": round(cagr * 100, 2) if cagr is not None else None,
         "mdd_pct": round(mdd * 100, 2),
         "mdd_start": mdd_start.date().isoformat() if mdd_start is not None else None,
         "mdd_end": mdd_end.date().isoformat() if mdd_end is not None else None,
         "mdd_recovery_days": recovery_days,
         "sharpe": round(sharpe, 2) if sharpe is not None else None,
-        "win_rate_pct": round(win_rate * 100, 1) if win_rate is not None else None,
-        "payoff_ratio": round(payoff_ratio, 2) if payoff_ratio is not None else None,
-        "expectancy_r": round(expectancy_r, 2) if expectancy_r is not None else None,
-        "profit_factor": round(profit_factor, 2) if profit_factor is not None else None,
-        "trade_count": len(closed),
-        "worst_trade_usd": round(worst_trade["pnl_usd"], 2) if worst_trade else None,
-        "worst_trade_ticker": worst_trade["ticker"] if worst_trade else None,
     }
 
 
@@ -727,13 +986,24 @@ def make_run_id(cfg: dict, start: date, end: date) -> str:
     return f"{date.today().isoformat()}_{digest}"
 
 
-def write_outputs(run_id: str, cfg: dict, result: BacktestResult, benchmark: BenchmarkResult, data: BacktestData, metrics: dict, start: date, end: date) -> Path:
+def _fmt_yearly(table: dict) -> str:
+    return " · ".join(f"{y}: {v:+.1f}%" if v is not None else f"{y}: -" for y, v in sorted(table.items()))
+
+
+def write_outputs(
+    run_id: str, cfg: dict, result: BacktestResult, benchmark: BenchmarkResult, data: BacktestData,
+    equity_metrics: dict, position_stats: dict, decomposition: dict, survivorship: dict,
+    pretax_yearly: dict, b0_yearly: dict, qqq_yearly: dict, start: date, end: date,
+) -> Path:
     out_dir = OUTPUT_ROOT / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame(result.equity_rows).to_csv(out_dir / "equity.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame(result.trades).to_csv(out_dir / "trades.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame(result.rejected).to_csv(out_dir / "rejected.csv", index=False, encoding="utf-8-sig")
+    positions = aggregate_positions(result.trades, result.still_open_position_ids)
+    pd.DataFrame(positions).to_csv(out_dir / "positions.csv", index=False, encoding="utf-8-sig")
+    write_missing_tickers_csv(out_dir, data, start, end)
     (out_dir / "config_snapshot.yaml").write_text(yaml.dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     rejected_reasons = defaultdict(int)
@@ -749,30 +1019,56 @@ def write_outputs(run_id: str, cfg: dict, result: BacktestResult, benchmark: Ben
             monthly_signals[t["date"][:7]] += 1
     avg_monthly_signals = round(sum(monthly_signals.values()) / max(len(monthly_signals), 1), 1)
 
+    qqq_tax_line = ""
+    if decomposition:
+        qqq_tax_line = f"- QQQM 반복 매매로 생긴 양도세(추정): {decomposition.get('qqqm_attributable_tax_krw', 0):,.0f}원"
+
     lines = [
         f"# 백테스트 결과 — {run_id}",
         "",
         f"기간: {start} ~ {end} (학습 구간, 검증 구간 2022- 봉인)",
-        f"유니버스: {data.universe_mode} · SURVIVORSHIP_BIAS = {'TRUE' if data.survivorship_bias else 'FALSE'}",
-        f"data_gap 종목: {len(data.data_gap)}개, 시세 실패 종목: {len(data.failed_tickers)}개",
+        f"유니버스: {data.universe_mode} · SURVIVORSHIP_BIAS = {data.survivorship_bias}",
+        f"data_gap 종목: {len(data.data_gap)}개, 시세 실패 종목: {len(data.failed_tickers)}개 (목록: missing_tickers.csv)",
+        "실적 필터 미적용: 과거 시점별 실적 발표일 데이터가 없어 실적 임박 필터는 백테스트에서 항상 통과 처리됨",
         "",
-        "## 벤치마크 (QQQ 매수 후 보유, 배당 재투자 — 비용·배당 원천징수는 이미 반영)",
+        "## 벤치마크 — 세전 연도별 수익률 (참고 검산: 달러 대략 2015 +9% 2016 +7% 2017 +33% 2018 0% 2019 +39% 2020 +49% 2021 +27%, CAGR 약 22%)",
+        f"- 달러 가격만: {_fmt_yearly(pretax_yearly.get('usd_price_only', {}))}",
+        f"- 달러 총수익(배당 재투자): {_fmt_yearly(pretax_yearly.get('usd_total_return', {}))}",
+        f"- 원화 총수익: {_fmt_yearly(pretax_yearly.get('krw_total_return', {}))}",
+        "",
+        "## 벤치마크 (QQQ 매수 후 보유, 배당 재투자, 비용 반영 — 세후)",
         f"- 세후(b, 미청산 — 자본이득세는 아직 안 냄) CAGR: {benchmark.cagr_unrealized * 100:.2f}%",
-        f"- 세후(a, 기간 끝 청산해 자본이득세까지 낸 경우) CAGR: {benchmark.cagr_liquidated * 100:.2f}%",
+        f"- 세후(a, 기간 끝 전량 청산해 자본이득세까지 낸 경우) CAGR: {benchmark.cagr_liquidated * 100:.2f}%",
         f"- MDD: {benchmark.mdd_pct:.2f}%",
+        f"- 연도별(세후, 총액 기준): {_fmt_yearly(qqq_yearly)}",
         "",
-        "## B0 (전략 v3 + QQQM + 슬롯 8 + 전략한도 60% + 4,000만 원)",
-        f"- 세후(비용·양도세·배당원천징수 모두 반영) CAGR: {metrics.get('cagr_posttax_pct')}%",
-        f"- QQQ 대비(세후 b 기준): {(metrics.get('cagr_posttax_pct') or 0) - benchmark.cagr_unrealized * 100:.2f}%p",
-        f"- MDD: {metrics.get('mdd_pct')}% ({metrics.get('mdd_start')} ~ {metrics.get('mdd_end')}, 회복 {metrics.get('mdd_recovery_days')}일)",
-        f"- 샤프: {metrics.get('sharpe')}",
-        f"- 승률: {metrics.get('win_rate_pct')}%",
-        f"- 손익비: {metrics.get('payoff_ratio')}",
-        f"- 기대값(R): {metrics.get('expectancy_r')}",
-        f"- Profit Factor: {metrics.get('profit_factor')}",
-        f"- 청산 거래 수: {metrics.get('trade_count')} (진입 {entries}건)",
+        "## B0 (전략 v3 + QQQM + 슬롯 8 + 전략한도 60% + 4,000만 원, 세후)",
+        f"- 세후(비용·양도세·배당원천징수 모두 반영) CAGR: {equity_metrics.get('cagr_pct')}%",
+        f"- QQQ 대비(세후 b 기준): {(equity_metrics.get('cagr_pct') or 0) - benchmark.cagr_unrealized * 100:.2f}%p",
+        f"- MDD: {equity_metrics.get('mdd_pct')}% ({equity_metrics.get('mdd_start')} ~ {equity_metrics.get('mdd_end')}, 회복 {equity_metrics.get('mdd_recovery_days')}일)",
+        f"- 샤프: {equity_metrics.get('sharpe')}",
+        f"- 연도별: {_fmt_yearly(b0_yearly)}",
+        "",
+        "## B0 거래 품질 (포지션 단위, P5-1.1 2번 — 부분 청산을 거래로 세지 않음)",
+        f"- 청산 완료 포지션 수: {position_stats.get('count')} (진입 신호 {entries}건, 아직 열려 있는 포지션 {len(result.still_open_position_ids)}개는 제외)",
+        f"- 승률: {position_stats.get('win_rate_pct')}%",
+        f"- 평균 이익: {position_stats.get('avg_win_r')}R · 평균 손실: {position_stats.get('avg_loss_r')}R · 최대 손실: {position_stats.get('max_loss_r')}R",
+        f"- 손익비: {position_stats.get('payoff_ratio')}",
+        f"- 기대값(R) = 승률×평균이익 − 패율×|평균손실|: {position_stats.get('expectancy_r')}",
+        f"- Profit Factor: {position_stats.get('profit_factor')}",
+        f"- 최악의 포지션: {position_stats.get('worst_position_ticker')} {position_stats.get('worst_position_krw')}원",
         f"- 월평균 신규 진입: {avg_monthly_signals}건",
-        f"- 최악의 거래: {metrics.get('worst_trade_ticker')} {metrics.get('worst_trade_usd')}달러",
+        "",
+        "## 수익 저하 원인 분해 (P5-1.1 4번, 세 시나리오 모두 같은 신호·수량 — 현금 흐름만 다름)",
+        f"- ① 비용·세금 없음: {decomposition.get('no_cost_no_tax_cagr_pct')}%",
+        f"- ② 비용만(수수료+최초 환전 스프레드): {decomposition.get('cost_only_cagr_pct')}%",
+        f"- ③ 비용+세금(= 위 B0 세후 수치와 같아야 함): {decomposition.get('cost_and_tax_cagr_pct')}%",
+        qqq_tax_line,
+        "",
+        "## 생존 편향 영향 추정",
+        f"- 실패 종목 {survivorship.get('failed_ticker_count')}개 / 전체 {survivorship.get('total_ticker_count')}개",
+        f"- 실패 종목의 구성 종목 재직 일수 비율: {survivorship.get('failed_days_pct')}% (실패 {survivorship.get('failed_ticker_days')}일 / 전체 {survivorship.get('total_ticker_days')}일)",
+        f"- 놓쳤을 신호 수(대략, 성공 종목의 신호 발생률로 추정): {survivorship.get('estimated_missed_signals')}건",
         "",
         "## 데이터·체결 상태",
         f"- 미체결(지정가 도달 못 함) 건수: {unfilled}",
@@ -788,13 +1084,57 @@ def write_outputs(run_id: str, cfg: dict, result: BacktestResult, benchmark: Ben
 def run(cfg: dict, start: date, end: date, warmup_start: date | None = None) -> Path:
     warmup_start = warmup_start or _parse_date(cfg["backtest"]["warmup_start"])
     data = prepare_data(cfg, warmup_start, end)
-    print("[backtest] B0 포트폴리오 시뮬레이션 중...")
-    result = simulate_portfolio(data, cfg, start, end)
+
+    print("[backtest] B0 포트폴리오 시뮬레이션 중 (③ 비용+세금 — 기준)...")
+    result = simulate_portfolio(data, cfg, start, end, apply_costs=True, apply_tax=True)
+    equity_metrics = compute_equity_metrics(result.equity_rows)
+    positions = aggregate_positions(result.trades, result.still_open_position_ids)
+    position_stats = compute_position_stats(positions)
+
+    print("[backtest] 원인 분해 시뮬레이션 중 (① 무비용무세금, ② 비용만)...")
+    result_nocost = simulate_portfolio(data, cfg, start, end, apply_costs=False, apply_tax=False)
+    metrics_nocost = compute_equity_metrics(result_nocost.equity_rows)
+    result_costonly = simulate_portfolio(data, cfg, start, end, apply_costs=True, apply_tax=False)
+    metrics_costonly = compute_equity_metrics(result_costonly.equity_rows)
+
+    qqqm_gain_total = sum(result.broker.qqqm_realized_gain_by_year.values())
+    non_qqqm_gain_total = sum(
+        result.broker.realized_gain_by_year.get(y, 0) - result.broker.qqqm_realized_gain_by_year.get(y, 0)
+        for y in result.broker.realized_gain_by_year
+    )
+    tax_cfg = cfg["backtest"]["tax"]
+    tax_on_total = sum(t["tax_krw"] for t in result.broker.tax_log)
+    tax_on_non_qqqm_only = sum(
+        tax.capital_gains_tax(
+            result.broker.realized_gain_by_year.get(y, 0) - result.broker.qqqm_realized_gain_by_year.get(y, 0),
+            tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100,
+        )
+        for y in result.broker.realized_gain_by_year
+    )
+    decomposition = {
+        "no_cost_no_tax_cagr_pct": compute_equity_metrics(result_nocost.equity_rows).get("cagr_pct"),
+        "cost_only_cagr_pct": metrics_costonly.get("cagr_pct"),
+        "cost_and_tax_cagr_pct": equity_metrics.get("cagr_pct"),
+        "qqqm_attributable_tax_krw": round(tax_on_total - tax_on_non_qqqm_only),
+    }
+
     print("[backtest] 벤치마크(QQQ 매수 후 보유) 시뮬레이션 중...")
     benchmark = simulate_benchmark(data, cfg, start, end)
-    metrics = compute_metrics(result.equity_rows, result.trades, start, end)
+    benchmark_lookup_test_ab = benchmark.cagr_liquidated <= benchmark.cagr_unrealized + 1e-9
+
+    pretax_yearly = compute_pretax_benchmark_yearly_returns(data.qqq_df, data.qqq_dividends, data.fx_by_date, start, end)
+    qqq_yearly = compute_yearly_returns_from_equity(benchmark.equity_rows)
+    b0_yearly = compute_yearly_returns_from_equity(result.equity_rows)
+
+    entries_count = sum(1 for t in result.trades if t.get("side") == "진입")
+    survivorship = estimate_survivorship_impact(data, entries_count, start, end)
+
     run_id = make_run_id(cfg, start, end)
-    out_dir = write_outputs(run_id, cfg, result, benchmark, data, metrics, start, end)
+    out_dir = write_outputs(
+        run_id, cfg, result, benchmark, data, equity_metrics, position_stats, decomposition, survivorship,
+        pretax_yearly, b0_yearly, qqq_yearly, start, end,
+    )
+    print(f"[backtest] (a)<=(b) 검산: {'OK' if benchmark_lookup_test_ab else 'FAIL'}")
     print(f"[backtest] 결과: {out_dir}")
     return out_dir
 
