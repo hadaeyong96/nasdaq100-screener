@@ -15,16 +15,20 @@ python -m engine.daily --no-send    # 보고서만 만들고 텔레그램은 보
 python -m engine.daily --mode paper # config.yaml의 mode보다 이 값을 우선
 ```
 
-- 운용 모드는 `config.yaml`의 `mode: live | paper`로 정한다. live는 `data/fills.csv`의
+- 운용 모드는 `config.yaml`의 `mode: live | paper`로 정한다. live는 `data/fills.xlsx`의
   실제 체결 기록으로만 보유를 만들고(가상 체결 없음), paper는 추천대로 체결됐다고
   가정하는 모의 운용이다. 두 모드는 `data/state.db`·`data/paper_state.db`로 DB가
   완전히 분리된다.
 - `python -m engine.daily`는 각 모드 DB(SQLite)에 종목별 상태를 저장하고,
   `outputs/report_YYYY-MM-DD.html`(보고서), `outputs/telegram_YYYY-MM-DD.txt`(발송 글),
   `outputs/signals_YYYY-MM-DD.{md,csv}`, `outputs/funnel_YYYY-MM-DD.csv`를 남긴다.
-- 실제 체결가·수량은 `data/fills.csv`(커밋되지 않음, `data/fills.example.csv` 참고)에
-  한글 형식(`날짜, 종목, 차수, 매수매도, 체결가, 수량`)으로 적어 두면 다음 실행 때
+- 실제 체결가·수량은 `data/fills.xlsx`(커밋되지 않음)의 "체결기록" 시트에
+  (`날짜, 종목, 차수, 매수매도, 체결가, 수량`) 한 줄씩 적어 두면 다음 실행 때
   반영된다. 늦게 적어도 다음 실행에서 그 날짜부터 다시 계산해 올바르게 반영된다.
+  `data/fills.xlsx`가 없으면 `data/fills.csv`(같은 한글 형식)를 폴백으로 읽는다.
+- `python -m engine.daily --resend`는 상태를 다시 처리하지 않고, 마지막 기준일의
+  보고서·글을 다시 보낸다(중복 발송 방지 기록 무시). 체결 기록을 확인하기 전에
+  글을 못 받았거나 다시 보고 싶을 때 쓴다.
 - `--dry-run`을 붙이면 DB에 쓰지 않고 결과만 확인할 수 있다.
 - `--replay`는 테스트·백테스트(P5)용 레거시 경로다(60거래일을 가상 체결로 되돌려 봄).
   운용 시작의 기본 경로가 아니다.

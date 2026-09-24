@@ -59,7 +59,7 @@ from core import signals as sig  # noqa: E402
 from core import state as st  # noqa: E402
 from core.indicators import compute_indicators  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
-from data.fills import fills_for, load_fills  # noqa: E402
+from data.fills import fills_for, load_fills, summarize_cash_rows  # noqa: E402
 from data.market_calendar import latest_closed_trading_day  # noqa: E402
 from data.prices import US_EASTERN, fetch_universe_prices  # noqa: E402
 from data.universe import get_universe  # noqa: E402
@@ -731,6 +731,25 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
                 "오늘신호": today_signal_by_ticker.get(ticker, ""),
             }
         )
+    # ── 대기자금(QQQM) 요약 (P3.4 4번): 신호 판정에는 쓰지 않고 보유 표에 한 줄만 보여준다 ──
+    cash_summary = summarize_cash_rows(fills_result.cash_rows)
+    if cash_summary and cash_summary["qty"]:
+        hold_rows.append(
+            {
+                "티커": "QQQM",
+                "종목명": "QQQM (대기자금)",
+                "단계": "대기자금",
+                "수량": cash_summary["qty"],
+                "평균단가": round(cash_summary["avg_price"], 2) if cash_summary["avg_price"] is not None else None,
+                "종가": None,
+                "평가금액": None,
+                "손익률": None,
+                "손절가": None,
+                "손절까지": None,
+                "오늘신호": "",
+            }
+        )
+
     hold_rows.sort(key=lambda r: r["티커"])
 
     # ── 관찰 목록: 다음 단계를 기다리는 종목 ────────────────────────────────
@@ -881,16 +900,42 @@ def _write_outputs(summary: dict) -> None:
     (OUTPUT_DIR / f"signals_{as_of_str}.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def _resend_last(cfg: dict, mode: str, force_no_send: bool) -> None:
+    """--resend(P3.4 3번): 상태를 다시 처리하지 않고 마지막 기준일의 보고서·글을
+    다시 보낸다. 중복 발송 방지 기록(store.db의 notifications)은 확인하지 않는다."""
+    conn = db.connect(db.db_path_for_mode(mode))
+    last_date = db.get_meta(conn, "last_processed_date")
+    conn.close()
+    if last_date is None:
+        print(f"[daily] --resend: {_MODE_LABEL[mode]} 모드에 처리된 기준일 기록이 없습니다.")
+        return
+
+    report_path = OUTPUT_DIR / f"report_{last_date}.html"
+    text_path = OUTPUT_DIR / f"telegram_{last_date}.txt"
+    print(f"[daily] --resend: 기준일 {last_date} 재발송")
+    ok = telegram.resend_last(report_path, text_path, last_date, force_no_send=force_no_send)
+    print(f"[daily] 재발송 {'성공' if ok else '실패'}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="나스닥 100 MACD 스크리너 — 일일 신호 판정")
     parser.add_argument("--mode", choices=["live", "paper"], default=None, help="config.yaml의 mode보다 우선")
     parser.add_argument("--replay", action="store_true", help="레거시(P2): state.db가 비어 있으면 되돌려 보기로 상태를 만든다")
     parser.add_argument("--dry-run", action="store_true", help="DB에 쓰지 않고 결과만 출력한다")
     parser.add_argument("--no-send", action="store_true", help="보고서만 만들고 텔레그램은 보내지 않는다")
+    parser.add_argument(
+        "--resend", action="store_true",
+        help="상태를 다시 처리하지 않고, 마지막 기준일의 보고서·글을 다시 보낸다(중복 발송 방지 기록 무시)",
+    )
     args = parser.parse_args()
 
     cfg = load_config()
     mode = resolve_mode(cfg, args.mode)
+
+    if args.resend:
+        _resend_last(cfg, mode, force_no_send=args.no_send)
+        return
+
     summary = run(cfg, mode, do_replay=args.replay, dry_run=args.dry_run)
 
     if summary.get("skipped"):  # P3.2 3번: 이번 기준일이 이미 처리됨 — 아무것도 하지 않는다

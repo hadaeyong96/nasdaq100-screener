@@ -18,7 +18,7 @@ import jinja2
 import pandas as pd
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
-FILLS_CSV_PATH = Path(__file__).resolve().parents[1] / "data" / "fills.csv"
+FILLS_XLSX_PATH = Path(__file__).resolve().parents[1] / "data" / "fills.xlsx"
 
 _env = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(TEMPLATE_DIR)),
@@ -34,6 +34,21 @@ def _num(value, digits: int = 2):
     if value is None:
         return None
     return round(float(value), digits)
+
+
+def _hold_totals(hold_rows: list[dict]) -> dict | None:
+    """"내 보유 종목" 표의 합계 줄에 쓸 값 (종가·평균단가가 있는 행만 — QQQM 대기자금 줄 등은 뺀다).
+
+    입력: hold_rows(engine/daily.py의 보유 현황 행 목록)
+    출력: {count, pnl_pct, value} 또는 계산할 행이 없으면 None
+    """
+    priced = [r for r in hold_rows if r.get("평가금액") is not None and r.get("평균단가") is not None]
+    if not priced:
+        return None
+    total_value = sum(r["평가금액"] for r in priced)
+    total_cost = sum(r["평균단가"] * r["수량"] for r in priced)
+    pnl_pct = round((total_value - total_cost) / total_cost * 100, 1) if total_cost else None
+    return {"count": len(priced), "pnl_pct": pnl_pct, "value": round(total_value, 2)}
 
 
 def _stage_flags(stage: str) -> list[bool]:
@@ -149,6 +164,9 @@ def build_context(summary: dict, cfg: dict) -> dict:
     pending_names = " · ".join(r["종목명"] for r in summary.get("pending_order_rows", []))
     unfilled_names = " · ".join(r["종목명"] for r in summary.get("unfilled_rows", []))
 
+    hold_totals = _hold_totals(hold_rows)
+    account_pct = round(hold_totals["value"] / equity * 100, 1) if (hold_totals and equity) else None
+
     return {
         "stale": bool(summary.get("stale")),
         "expected_date_str": summary.get("expected_date") or "",
@@ -170,13 +188,15 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "buy_tabs": buy_tabs,
         "sell_rows": summary.get("sell_rows", []),
         "hold_rows": hold_rows,
+        "hold_totals": hold_totals,
+        "account_pct": account_pct,
         "watch_rows": summary.get("watch_rows", []),
         "filtered_rows": summary.get("filtered_rows", []),
         "warn_rows": summary.get("warn_rows", []),
         "data_status_rows": summary.get("data_status_rows", []),
         "pending_names": pending_names,
         "unfilled_names": unfilled_names,
-        "fills_path": str(FILLS_CSV_PATH),
+        "fills_path": str(FILLS_XLSX_PATH),
         "ichimoku_shift": cfg["indicators"]["ichimoku_shift"],
         "max_position_pct": risk_cfg["max_position_pct"],
     }

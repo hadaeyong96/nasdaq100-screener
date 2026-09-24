@@ -81,18 +81,95 @@ def test_send_briefing_skips_when_already_notified(tmp_path, monkeypatch):
     assert calls == []  # 이미 발송한 기록이 있어 아무것도 호출하지 않는다
 
 
-def test_build_briefing_text_lists_empty_sections_as_none():
+def _base_summary(**overrides):
     summary = {
         "mode": "live",
         "mode_label": "실전",
-        "as_of": pd.Timestamp("2026-09-23"),
+        "as_of": pd.Timestamp("2026-09-23"),  # 수요일
         "buy_groups": {"b1": [], "b2": [], "b3": [], "b9": []},
         "buy_count": 0,
         "sell_rows": [],
         "hold_rows": [],
         "unfilled_rows": [],
     }
+    summary.update(overrides)
+    return summary
+
+
+def test_build_briefing_text_no_signals_is_one_line():
+    text = briefing.build_briefing_text(_base_summary(), {})
+    assert "오늘 매매 신호 없음" in text
+    assert "🟢" not in text and "🔴" not in text
+    assert "9/23(수)" in text
+    assert "📎" in text
+
+
+def test_build_briefing_text_buy_only_shows_ticker_and_stage():
+    summary = _base_summary(
+        buy_groups={"b1": [{"ticker": "CMCSA", "kr": "컴캐스트"}], "b2": [], "b3": [], "b9": [{"ticker": "PLTR", "kr": "팔란티어"}]},
+        buy_count=2,
+    )
     text = briefing.build_briefing_text(summary, {})
-    assert "매수 없음" in text
-    assert "매도·손절 없음" in text
-    assert "상세는 첨부 보고서" in text
+    assert "🟢 매수 2 · CMCSA(1차) PLTR(재진입)" in text
+    assert "🔴 매도 0" in text
+    assert "컴캐스트" not in text  # 종목은 티커만
+
+
+def test_build_briefing_text_sell_only_shows_stop_label():
+    summary = _base_summary(
+        sell_rows=[{"티커": "ROP", "신호": "손절", "매도범위": "전량"}],
+    )
+    text = briefing.build_briefing_text(summary, {})
+    assert "🟢 매수 0" in text
+    assert "🔴 매도 1 · ROP(손절)" in text
+
+
+def test_build_briefing_text_unfilled_line_only_when_present():
+    summary = _base_summary(unfilled_rows=[{"티커": "CMCSA", "종목명": "컴캐스트"}])
+    text = briefing.build_briefing_text(summary, {})
+    assert "⚠️ 미체결 1 · CMCSA" in text
+
+    text_none = briefing.build_briefing_text(_base_summary(), {})
+    assert "⚠️" not in text_none
+
+
+def test_report_attachment_name_uses_korean_title_and_date():
+    assert telegram.report_attachment_name("2026-09-23") == "나스닥100_2026-09-23.html"
+
+
+def test_resend_last_no_send_flag_never_calls_network(tmp_path, monkeypatch):
+    text_path = tmp_path / "telegram_2026-09-23.txt"
+    text_path.write_text("본문", encoding="utf-8")
+    report_path = tmp_path / "report_2026-09-23.html"
+    report_path.write_text("<html></html>", encoding="utf-8")
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("네트워크를 호출하면 안 된다 (--no-send)")
+
+    monkeypatch.setattr(telegram, "_send_text", _boom)
+    monkeypatch.setattr(telegram, "_send_document", _boom)
+
+    assert telegram.resend_last(report_path, text_path, "2026-09-23", force_no_send=True) is True
+
+
+def test_resend_last_missing_text_file_fails(tmp_path):
+    ok = telegram.resend_last(tmp_path / "no_report.html", tmp_path / "no_text.txt", "2026-09-23")
+    assert ok is False
+
+
+def test_resend_last_ignores_dedup_record(tmp_path, monkeypatch):
+    """--resend는 이미 발송 기록이 있어도(has_notified) 다시 보낸다 — dedup 확인을 하지 않는다."""
+    text_path = tmp_path / "telegram_2026-09-23.txt"
+    text_path.write_text("본문", encoding="utf-8")
+    report_path = tmp_path / "report_2026-09-23.html"
+    report_path.write_text("<html></html>", encoding="utf-8")
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")
+    calls = []
+    monkeypatch.setattr(telegram, "_send_text", lambda *a, **k: calls.append("text") or True)
+    monkeypatch.setattr(telegram, "_send_document", lambda *a, **k: calls.append("doc") or True)
+
+    ok = telegram.resend_last(report_path, text_path, "2026-09-23", force_no_send=False)
+    assert ok is True
+    assert calls == ["text", "doc"]

@@ -1,74 +1,70 @@
-"""텔레그램 짧은 브리핑 글 (P3, 4번).
+"""텔레그램 짧은 브리핑 글 (P3.4).
 
-휴대폰에서 읽기 좋게 짧게 쓰고, 자세한 내용은 첨부하는 HTML 보고서를 보라고 안내한다.
-이 모듈은 summary dict(engine/daily.py) + cfg만 받아 문자열을 만든다 (순수 함수,
-네트워크·파일 없음 — 테스트가 summary를 직접 만들어 호출할 수 있다).
+첨부하는 HTML 보고서가 본체이고, 텔레그램 글은 최소로 줄인다. 종목은 티커만
+쓴다. 이 모듈은 summary dict(engine/daily.py) + cfg만 받아 문자열을 만든다
+(순수 함수, 네트워크·파일 없음 — 테스트가 summary를 직접 만들어 호출할 수 있다).
 """
 
 from __future__ import annotations
 
 _STAGE_ORDER = ["b1", "b2", "b3", "b9"]
-_STAGE_TITLE = {"b1": "1차 · RSI 30 탈출", "b2": "2차 · 골든크로스", "b3": "3차 · 구름 돌파", "b9": "재진입"}
+_BUY_STAGE_SHORT = {"b1": "1차", "b2": "2차", "b3": "3차", "b9": "재진입"}
+_KOREAN_WEEKDAY = ["월", "화", "수", "목", "금", "토", "일"]
+
+
+def _sell_short_label(row: dict) -> str:
+    """매도 범위를 티커 옆 괄호에 쓸 한두 글자로 줄인다 (예: "ROP(전량)", "ROP(손절)")."""
+    if row.get("신호") == "손절":
+        return "손절"
+    범위 = row.get("매도범위", "")
+    if "1차분" in 범위:
+        return "1차분"
+    if "2차분" in 범위:
+        return "2차분"
+    return "전량"
 
 
 def build_briefing_text(summary: dict, cfg: dict) -> str:
-    """summary + cfg -> 텔레그램에 보낼 본문 문자열."""
+    """summary + cfg -> 텔레그램에 보낼 본문 문자열 (최소 형식, P3.4 2번)."""
     as_of = summary.get("as_of")
-    as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
     mode_label = summary.get("mode_label", "실전")
+    if as_of is not None:
+        d = as_of.date()
+        date_str = f"{d.month}/{d.day}({_KOREAN_WEEKDAY[as_of.dayofweek]})"
+    else:
+        date_str = "알수없음"
 
-    lines = [f"나스닥100 브리핑 ({mode_label})", f"{as_of_str} 미국장 마감", ""]
-
-    buy_count = summary.get("buy_count", 0)
-    sell_count = len(summary.get("sell_rows", []))
-    lines.append(f"[오늘 할 일] 매수 {buy_count} · 매도·손절 {sell_count}")
-    lines.append("")
+    lines = [f"📊 나스닥100 · {date_str} 마감 · {mode_label}"]
 
     buy_groups = summary.get("buy_groups", {})
-    any_buy = False
-    for key in _STAGE_ORDER:
-        rows = buy_groups.get(key, [])
-        if not rows:
-            continue
-        any_buy = True
-        lines.append(f"━━━ 매수 · {_STAGE_TITLE[key]} ({len(rows)}) ━━━")
-        for r in rows:
-            stop_txt = f"{r['stop']:.2f}" if r.get("stop") is not None else "미확정"
-            lines.append(f"{r['kr']} {r['limit']:.2f} / {r.get('qty', 0)}주 / 손절 {stop_txt}")
-        lines.append("")
-    if not any_buy:
-        lines.append("매수 없음")
-        lines.append("")
-
-    pending_rows = summary.get("pending_order_rows", [])
-    if pending_rows:
-        names = " · ".join(r["종목명"] for r in pending_rows)
-        lines.append(f"주문 후 체결 기록 필요: {names}")
-        lines.append("")
+    buy_items = [
+        f"{r['ticker']}({_BUY_STAGE_SHORT[key]})"
+        for key in _STAGE_ORDER
+        for r in buy_groups.get(key, [])
+    ]
+    buy_count = summary.get("buy_count", 0)
 
     sell_rows = summary.get("sell_rows", [])
-    if sell_rows:
-        lines.append("━━━ 매도·손절 ━━━")
-        for r in sell_rows:
-            lines.append(f"{r['종목명']} {r['신호']} · {r['매도범위']} · {r['수량']}주")
-        lines.append("")
-    else:
-        lines.append("매도·손절 없음")
-        lines.append("")
+    sell_items = [f"{r['티커']}({_sell_short_label(r)})" for r in sell_rows]
+    sell_count = len(sell_rows)
 
-    hold_signal_rows = [r for r in summary.get("hold_rows", []) if r.get("오늘신호")]
-    if hold_signal_rows:
-        lines.append("━━━ 보유 종목 오늘 신호 ━━━")
-        for r in hold_signal_rows:
-            lines.append(f"{r['종목명']} {r['오늘신호']}")
-        lines.append("")
+    if buy_count == 0 and sell_count == 0:
+        lines.append("오늘 매매 신호 없음")
+    else:
+        buy_line = f"🟢 매수 {buy_count}"
+        if buy_items:
+            buy_line += " · " + " ".join(buy_items)
+        lines.append(buy_line)
+
+        sell_line = f"🔴 매도 {sell_count}"
+        if sell_items:
+            sell_line += " · " + " ".join(sell_items)
+        lines.append(sell_line)
 
     unfilled_rows = summary.get("unfilled_rows", [])
     if unfilled_rows:
-        lines.append("━━━ 미체결 알림 ━━━")
-        for r in unfilled_rows:
-            lines.append(f"{r['종목명']} {r['단계']} {r['내용']}")
-        lines.append("")
+        names = " ".join(r["티커"] for r in unfilled_rows)
+        lines.append(f"⚠️ 미체결 {len(unfilled_rows)} · {names}")
 
-    lines.append("상세는 첨부 보고서를 확인하세요.")
-    return "\n".join(lines).strip() + "\n"
+    lines.append("📎 보고서를 열어 확인하세요")
+    return "\n".join(lines) + "\n"

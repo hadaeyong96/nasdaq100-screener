@@ -11,8 +11,11 @@ service_account*.json
 # 데이터베이스
 *.db
 
-# 체결 기록 (실제 계좌 정보라 커밋하지 않는다. 예시만 fills.example.csv로 남긴다)
+# 체결 기록 (실제 계좌 정보라 커밋하지 않는다. data/fills.xlsx가 기본, data/fills.csv는 폴백)
+data/fills.xlsx
+~$*.xlsx
 data/fills.csv
+data/fills_csv_backup.csv
 
 # 캐시·산출물
 data/cache/

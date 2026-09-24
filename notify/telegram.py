@@ -75,14 +75,20 @@ def _send_text(token: str, chat_id: str, text: str) -> bool:
     )
 
 
-def _send_document(token: str, chat_id: str, path: Path) -> bool:
+def _send_document(token: str, chat_id: str, path: Path, filename: str | None = None) -> bool:
     url = TELEGRAM_API.format(token=token, method="sendDocument")
+    display_name = filename or path.name
 
     def _do():
         with open(path, "rb") as f:
-            return requests.post(url, data={"chat_id": chat_id}, files={"document": (path.name, f)}, timeout=60)
+            return requests.post(url, data={"chat_id": chat_id}, files={"document": (display_name, f)}, timeout=60)
 
     return _request_with_retry(_do, "sendDocument")
+
+
+def report_attachment_name(as_of_str: str) -> str:
+    """휴대폰 파일 목록에서 알아보기 쉬운 첨부 파일 이름 (P3.4 2번): 나스닥100_YYYY-MM-DD.html"""
+    return f"나스닥100_{as_of_str}.html"
 
 
 def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = False) -> Path:
@@ -119,7 +125,7 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
         report_path = summary.get("report_path")
         if report_path and Path(report_path).exists():
             time.sleep(1)
-            ok = _send_document(token, chat_id, Path(report_path)) and ok
+            ok = _send_document(token, chat_id, Path(report_path), report_attachment_name(as_of_str)) and ok
 
         if ok:
             db.record_notified(conn, as_of_str, datetime.now().isoformat(timespec="seconds"))
@@ -170,3 +176,35 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
     finally:
         conn.close()
     return out_path
+
+
+def resend_last(report_path: Path, text_path: Path, as_of_str: str, force_no_send: bool = False) -> bool:
+    """--resend(P3.4 3번): 상태를 다시 처리하지 않고, 이미 만들어 둔 보고서·글
+    파일을 다시 보낸다. 중복 발송 방지 기록(store.db)은 확인하지도, 남기지도 않는다.
+
+    입력: report_path(outputs/report_YYYY-MM-DD.html), text_path(outputs/telegram_YYYY-MM-DD.txt),
+         as_of_str(첨부 파일 이름에 쓸 기준일), force_no_send(--no-send 플래그)
+    출력: 발송(또는 --no-send 처리) 성공 여부
+    """
+    if not text_path.exists():
+        print(f"[telegram] {text_path}가 없어 다시 보낼 수 없습니다.")
+        return False
+    text = text_path.read_text(encoding="utf-8")
+
+    if force_no_send:
+        print(f"[telegram] --no-send: 재발송하지 않습니다 ({text_path.name}).")
+        return True
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+    if not token or not chat_id:
+        print("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 재발송할 수 없습니다.")
+        return False
+
+    ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
+    if report_path.exists():
+        time.sleep(1)
+        ok = _send_document(token, chat_id, report_path, report_attachment_name(as_of_str)) and ok
+    else:
+        print(f"[telegram] {report_path}가 없어 보고서 없이 글만 보냅니다.")
+    return ok
