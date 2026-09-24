@@ -189,7 +189,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
   {% for tab in buy_tabs %}
   <div class="sub{{ ' on' if loop.first else '' }}" id="{{ tab.key }}"><div class="sheet"><table>
-  <thead><tr>{% for h in tab.headers %}<th{{ ' class="nosort"' if h in ('종목','비고') else (' class="num"' if h in ('거래량','점수','지정가','수량','투입금액','계좌%','손절가','손절폭','위험금액','시가 갭') else '') }}>{{ h }}</th>{% endfor %}</tr></thead>
+  <thead><tr>{% for h in tab.headers %}<th{{ ' class="nosort"' if h in ('종목','결정','비고') else (' class="num"' if h in ('지정가','수량','투입금액','손절가','손절폭','점수') else '') }}>{{ h }}</th>{% endfor %}</tr></thead>
   <tbody>
   {% if not tab.rows %}
   <tr><td colspan="{{ tab.headers|length }}" class="empty">오늘 해당 종목 없음</td></tr>
@@ -197,17 +197,13 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   {% for row in tab.rows %}
   <tr class="sig" data-stage="{{ tab.key }}" data-limit="{{ row.limit }}" data-stop="{{ row.stop if row.stop is not none else '' }}">
     <td><span class="tk">{{ row.ticker }}</span><span class="kr">{{ row.kr }}</span></td>
-    {% for c in row.cond %}<td>{{ c }}</td>{% endfor %}
+    <td><span class="badge {{ 'b-buy' if row.decision == '매수' else 'b-warn' }}">{{ row.decision }}</span></td>
     <td class="num" data-v="{{ row.limit }}">${{ '%.2f'|format(row.limit) }}</td>
     <td class="num calc q">-</td>
     <td class="num calc amt">-</td>
-    <td class="num calc pct">-</td>
     <td class="num">{{ '$%.2f'|format(row.stop) if row.stop is not none else '미확정' }}</td>
     <td class="num">{{ '%+.1f%%'|format(row.stop_pct) if row.stop_pct is not none else '-' }}</td>
-    <td>{{ row.stop_basis }}</td>
-    <td class="num calc rk">-</td>
-    <td>{{ row.earnings }}</td>
-    <td><span class="badge {{ 'b-buy' if row.decision == '매수' else 'b-warn' }}">{{ row.decision }}</span></td>
+    <td class="num">{{ row.score }}</td>
     <td class="note">{{ row.note }}</td>
   </tr>
   {% endfor %}
@@ -220,10 +216,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="sell">
   <p class="desc">손절이 모든 신호보다 우선합니다. 추세가 약해지는 정도에 따라 1차분 → 2차분 → 3차분 순으로 나눠 팝니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">신호</th><th class="nosort">매도 범위</th><th class="num">매도 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">손익률</th><th class="nosort">비고</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">신호</th><th class="nosort">매도 범위</th><th class="num">매도 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">손익률</th><th class="nosort">주문 안내</th><th class="nosort">비고</th></tr></thead>
   <tbody>
   {% if not sell_rows %}
-  <tr><td colspan="8" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="9" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in sell_rows %}
   <tr>
@@ -234,6 +230,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <td class="num">{{ '$%.2f'|format(row['평균단가']) if row['평균단가'] is not none else '-' }}</td>
     <td class="num">{{ '$%.2f'|format(row['종가']) if row['종가'] is not none else '-' }}</td>
     <td class="num {{ 'ok' if (row['손익률'] or 0) >= 0 else 'no' }}">{{ '%+.1f%%'|format(row['손익률']) if row['손익률'] is not none else '-' }}</td>
+    <td class="note">{{ row['주문안내'] }}</td>
     <td class="note">{{ row['비고'] }}</td>
   </tr>
   {% endfor %}
@@ -245,7 +242,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="hold">
   <p class="desc">진행 칸은 1차·2차·3차 매수 여부입니다. 손절가는 증권사 예약 주문과 같아야 합니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">단계</th><th class="nosort">진행</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">평가금액</th><th class="num">손익률</th><th class="num">손절가</th><th class="num">손절까지</th><th class="nosort">오늘 신호</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">단계</th><th class="nosort">진행</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">평가금액</th><th class="num">손익률</th><th class="num">손절가</th><th class="num">손절까지</th><th class="nosort">비고</th></tr></thead>
   <tbody>
   {% if not hold_rows %}
   <tr><td colspan="11" class="empty">오늘 해당 종목 없음</td></tr>
@@ -262,11 +259,20 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <td class="num {{ 'ok' if (row['손익률'] or 0) >= 0 else 'no' }}">{{ '%+.1f%%'|format(row['손익률']) if row['손익률'] is not none else '-' }}</td>
     <td class="num">{{ '$%.2f'|format(row['손절가']) if row['손절가'] is not none else '-' }}</td>
     <td class="num">{{ '%+.1f%%'|format(row['손절까지']) if row['손절까지'] is not none else '-' }}</td>
-    <td class="na">{{ row['오늘신호'] or '–' }}</td>
+    <td class="note">{% if row['배지'] %}<span class="badge {{ row['배지클래스'] }}">{{ row['배지'] }}</span>{% else %}<span class="na">{{ row['오늘신호'] or '–' }}</span>{% endif %}</td>
   </tr>
   {% endfor %}
   {% endif %}
-  </tbody></table></div>
+  </tbody>
+  {% if hold_totals %}
+  <tfoot><tr>
+    <td>합계 {{ hold_totals.count }}종목</td><td></td><td></td><td></td><td></td><td></td><td></td>
+    <td class="num {{ 'ok' if hold_totals.pnl_pct is not none and hold_totals.pnl_pct >= 0 else 'no' }}">{{ '%+.1f%%'|format(hold_totals.pnl_pct) if hold_totals.pnl_pct is not none else '-' }}</td>
+    <td></td><td></td>
+    <td class="note">평가금액 ${{ '%.2f'|format(hold_totals.value) }} · 계좌 대비 투자 {{ '%.1f'|format(account_pct) if account_pct is not none else '-' }}%</td>
+  </tr></tfoot>
+  {% endif %}
+  </table></div>
 </section>
 
 <!-- 관찰 목록 -->
@@ -323,7 +329,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   {% for row in warn_rows %}
   <tr>
     <td><span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span></td>
-    <td><span class="badge b-info">{{ row['내용'] }}</span></td>
+    <td><span class="badge {{ row.get('badge_class', 'b-info') }}">{{ row['내용'] }}</span></td>
   </tr>
   {% endfor %}
   {% endif %}
@@ -365,51 +371,17 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <tr><td>손절</td><td>종가 &lt; 손절가</td><td>전량 (최우선)</td></tr>
     <tr><td>E1 모멘텀 약화</td><td>MACD 데드크로스</td><td>1차분 매도(11%)</td></tr>
     <tr><td>E2 추세 약화</td><td>RSI 50 하향 이탈</td><td>2차분 매도(22%)</td></tr>
-    <tr><td>E3 구조 붕괴</td><td>구름 하단 이탈 · 후행스팬 &lt; 선행 B</td><td>전량</td></tr>
+    <tr><td>E3 구조 붕괴</td><td>구름 하단 이탈 · 후행스팬 &lt; 선행 B</td><td>3차분(67%) 또는 잔량</td></tr>
     </tbody></table></div>
   </div>
   <p class="desc" style="margin-top:10px">종목당 투입 금액 한도: 계좌의 {{ max_position_pct }}% 이하. 동시 보유 종목: 최대 {{ max_concurrent }}개.</p>
 </section>
 
-<div class="pf" style="margin-top:22px">
-  <h2>내 보유 종목 <small>체결 기록 기준 · 종가 {{ as_of_str }}</small></h2>
-  <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">단계</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">손익률</th><th class="num">평가금액</th><th class="num">손절가</th><th class="nosort">오늘 신호</th></tr></thead>
-  <tbody>
-  {% if not hold_rows %}
-  <tr><td colspan="9" class="empty">오늘 해당 종목 없음</td></tr>
-  {% else %}
-  {% for row in hold_rows %}
-  <tr>
-    <td><span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span></td>
-    <td>{{ row['단계_표시'] }}</td>
-    <td class="num">{{ row['수량'] }}</td>
-    <td class="num">{{ '$%.2f'|format(row['평균단가']) if row['평균단가'] is not none else '-' }}</td>
-    <td class="num">{{ '$%.2f'|format(row['종가']) if row['종가'] is not none else '-' }}</td>
-    <td class="num {{ 'ok' if (row['손익률'] or 0) >= 0 else 'no' }}">{{ '%+.1f%%'|format(row['손익률']) if row['손익률'] is not none else '-' }}</td>
-    <td class="num">{{ '$%.2f'|format(row['평가금액']) if row['평가금액'] is not none else '-' }}</td>
-    <td class="num">{{ '$%.2f'|format(row['손절가']) if row['손절가'] is not none else '-' }}</td>
-    <td class="na">{{ row['오늘신호'] or '–' }}</td>
-  </tr>
-  {% endfor %}
-  {% endif %}
-  </tbody>
-  {% if hold_totals %}
-  <tfoot><tr>
-    <td>합계 {{ hold_totals.count }}종목</td><td></td><td></td><td></td><td></td>
-    <td class="num {{ 'ok' if hold_totals.pnl_pct is not none and hold_totals.pnl_pct >= 0 else 'no' }}">{{ '%+.1f%%'|format(hold_totals.pnl_pct) if hold_totals.pnl_pct is not none else '-' }}</td>
-    <td class="num">${{ '%.2f'|format(hold_totals.value) }}</td>
-    <td></td>
-    <td class="note">계좌 대비 투자 {{ '%.1f'|format(account_pct) }}%</td>
-  </tr></tfoot>
-  {% endif %}
-  </table></div>
-  <div class="todo">
+<div class="todo" style="margin-top:16px">
 {% if unfilled_names %}<b>미체결 (기록 없음)</b>: {{ unfilled_names }}<br>{% endif %}
 {% if pending_names %}<b>주문 후 체결 기록 필요</b>: {{ pending_names }}<br>{% endif %}
 오늘 주문할 종목은 체결 후 아래 파일에 한 줄씩 기록하세요.<br>
 <code style="font-size:12px">{{ fills_path }}</code> · 형식: 날짜, 종목, 차수, 매수매도, 체결가, 수량 (예: {{ as_of_str }}, PEP, 1차, 매수, 131.80, 34)</div>
-</div>
 
 <footer>
 데이터: yfinance 일봉(분할 반영) · 구성 종목 출처 Nasdaq 공식 · 일목 이동 {{ ichimoku_shift }} · 종목당 위험 2%(재진입 1%), 갭 여유 1.5% · 운용 모드: {{ mode_label }}<br>

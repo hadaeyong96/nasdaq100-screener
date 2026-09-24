@@ -140,6 +140,77 @@ def test_non_stale_summary_has_no_banner(tmp_path, cfg):
     assert 'class="stale-banner"' not in html
 
 
+def test_buy_table_header_is_simplified_to_9_columns(tmp_path, cfg):
+    """P3.4 1번: 신규 매수 표는 종목·결정·지정가·수량·투입금액·손절가·손절폭·점수·비고 9칸이다."""
+    path = report_html.render_report(_empty_summary(), cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    for header in ("종목", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "점수", "비고"):
+        assert f"<th" in html and header in html
+    # 이전 버전의 조건 열(탭별로 달랐던 헤더)은 더 이상 없어야 한다.
+    assert "RSI 30 돌파" not in html
+    assert "앞구름 양운" not in html
+    assert "계좌%" not in html
+    assert "위험금액" not in html
+
+
+def test_bottom_hold_table_is_removed_but_fills_notice_remains(tmp_path, cfg):
+    """P3.4 1번: 하단 "내 보유 종목" 표는 삭제하고, 체결 기록 안내 줄만 남긴다."""
+    path = report_html.render_report(_empty_summary(), cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "내 보유 종목" not in html
+    assert "체결 후 아래 파일에 한 줄씩 기록하세요" in html
+    assert html.count('id="hold"') == 1  # "보유 현황" 탭 하나만 남는다
+
+
+def test_hold_row_renders_stop_alert_badge(tmp_path, cfg):
+    """P3.5: 보유 현황 비고 칸은 배지(b-warn/b-info/b-sell)로 손절 알림을 보여준다."""
+    summary = _empty_summary()
+    summary["hold_rows"] = [
+        {
+            "티커": "AMZN",
+            "종목명": "아마존",
+            "단계": "정찰",
+            "수량": 12,
+            "평균단가": 221.40,
+            "종가": 224.10,
+            "평가금액": 2689.20,
+            "손익률": 1.2,
+            "손절가": 212.80,
+            "손절까지": -5.0,
+            "오늘신호": "",
+            "배지클래스": "b-warn",
+            "배지": "손절 근접 · 예약 $212.80 확인",
+        }
+    ]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert '<span class="badge b-warn">손절 근접 · 예약 $212.80 확인</span>' in html
+
+
+def test_sell_row_renders_order_guidance_column(tmp_path, cfg):
+    """P3.5 5번: 매도·손절 탭에 주문 안내 칸이 있다."""
+    summary = _empty_summary()
+    summary["sell_rows"] = [
+        {
+            "티커": "ROP",
+            "종목명": "로퍼",
+            "kind": "STOP",
+            "신호": "손절",
+            "매도범위": "전량",
+            "수량": 14,
+            "평균단가": 441.20,
+            "종가": 412.30,
+            "손익률": -6.6,
+            "주문안내": "손절 예약 확인 · 증권사 손절 예약($405.00)이 오늘 체결됐으면 체결 기록만 입력. 체결 안 됐으면 다음 거래일 장 시작 시 14주 전량 시장가 매도 예약",
+            "비고": "",
+        }
+    ]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "주문 안내" in html
+    assert "손절 예약 확인" in html
+
+
 def test_filtered_reason_label_mapping():
     from engine.daily import _label_filter_reason
 

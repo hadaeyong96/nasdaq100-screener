@@ -182,6 +182,20 @@ def kijun_breach(close: float, kijun: float) -> bool:
     return bool(close < kijun)
 
 
+def stop_near(close: float, stop_price: float | None, pct: float) -> bool:
+    """손절 근접 경고(P3.5): 종가가 손절가보다 위에 있고, 그 차이가 pct% 이내.
+
+    경계값 포함(예: 정확히 pct%면 True). 이미 손절 신호(종가 < 손절가)가 난
+    날은 core/state.py가 먼저 처리하므로 이 함수는 그 경우까지 신경 쓰지
+    않는다(check_stop이 우선한다는 전제로 호출부가 순서를 지킨다).
+    """
+    if stop_price is None or pd.isna(close) or pd.isna(stop_price) or stop_price <= 0:
+        return False
+    if close < stop_price:
+        return False
+    return bool((close - stop_price) / stop_price * 100 <= pct)
+
+
 def target_reached(avg_entry_price: float, current_price: float, stop_price: float | None) -> bool:
     """목표 도달 경고: 평균 매수가 기준 손익비 2배 도달 (avg_entry - stop = 1R)."""
     if stop_price is None or pd.isna(avg_entry_price) or pd.isna(current_price) or pd.isna(stop_price):

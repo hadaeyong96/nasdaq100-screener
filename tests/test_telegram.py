@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import pytest
 
@@ -116,12 +118,45 @@ def test_build_briefing_text_buy_only_shows_ticker_and_stage():
 
 
 def test_build_briefing_text_sell_only_shows_stop_label():
+    """P3.5 5번: 텔레그램 매도 줄의 손절은 "예약 체결 확인"까지 붙여 보여준다."""
     summary = _base_summary(
-        sell_rows=[{"티커": "ROP", "신호": "손절", "매도범위": "전량"}],
+        sell_rows=[{"티커": "ROP", "kind": "STOP", "신호": "손절", "매도범위": "전량"}],
     )
     text = briefing.build_briefing_text(summary, {})
     assert "🟢 매수 0" in text
-    assert "🔴 매도 1 · ROP(손절)" in text
+    assert "🔴 매도 1 · ROP(손절·예약 체결 확인)" in text
+
+
+def test_build_briefing_text_sell_labels_use_kind_e_numbers():
+    """일반 매도 줄 표기는 1차분(E1)/2차분(E2)/3차분(E3)/전량 (기존 지시문 — Telegram 전용)."""
+    summary = _base_summary(
+        sell_rows=[
+            {"티커": "AAA", "kind": "E1", "신호": "모멘텀 약화(E1, 데드크로스)", "매도범위": "1차분 매도(11%)"},
+            {"티커": "BBB", "kind": "E2", "신호": "추세 약화(E2, RSI 50 이탈)", "매도범위": "2차분 매도(22%)"},
+            {"티커": "CCC", "kind": "E3", "신호": "구조 붕괴(E3)", "매도범위": "3차분(67%) 또는 잔량"},
+            {"티커": "DDD", "kind": "A1_EXPIRE", "신호": "A1 만료", "매도범위": "1차분 (전량)"},
+        ],
+    )
+    text = briefing.build_briefing_text(summary, {})
+    assert "AAA(1차분(E1))" in text
+    assert "BBB(2차분(E2))" in text
+    assert "CCC(3차분(E3))" in text
+    assert "DDD(전량)" in text
+
+
+def test_build_briefing_text_stop_alerts_line_only_when_present():
+    summary = _base_summary(
+        stop_alerts=[
+            {"티커": "AMZN", "종목명": "아마존", "type": "근접"},
+            {"티커": "TSLA", "종목명": "테슬라", "type": "변경"},
+            {"티커": "CMCSA", "종목명": "컴캐스트", "type": "신규"},
+        ]
+    )
+    text = briefing.build_briefing_text(summary, {})
+    assert "🛡️ 손절 예약 · AMZN(근접) TSLA(변경) CMCSA(신규)" in text
+
+    text_none = briefing.build_briefing_text(_base_summary(), {})
+    assert "🛡️" not in text_none
 
 
 def test_build_briefing_text_unfilled_line_only_when_present():
@@ -155,6 +190,37 @@ def test_resend_last_no_send_flag_never_calls_network(tmp_path, monkeypatch):
 def test_resend_last_missing_text_file_fails(tmp_path):
     ok = telegram.resend_last(tmp_path / "no_report.html", tmp_path / "no_text.txt", "2026-09-23")
     assert ok is False
+
+
+def test_env_status_reports_existence_and_length_never_value(tmp_path, monkeypatch):
+    """P3.5 보완: .env 로드 진단은 존재 여부·길이만 말하고 값은 절대 포함하지 않는다."""
+    monkeypatch.setattr(telegram, "ENV_PATH", tmp_path / ".env")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "super-secret-token-value")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "12345")
+
+    status = telegram.env_status()
+
+    assert "super-secret-token-value" not in status
+    assert "없음" in status  # tmp_path/.env는 실제로 없다
+    assert f"길이 {len('super-secret-token-value')}" in status
+    assert "길이 5" in status
+
+
+def test_load_dotenv_from_real_env_file_populates_environment(tmp_path, monkeypatch):
+    """P3.5 보완: .env가 실제로 존재하고 토큰 줄이 있으면 os.environ에 반영돼야 한다
+    (P3.4에서 ".env missing"으로 잘못 보고됐던 경로에 대한 회귀 테스트)."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("TELEGRAM_BOT_TOKEN=dummy-token\nTELEGRAM_CHAT_ID=999\n", encoding="utf-8")
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
+    from dotenv import load_dotenv
+
+    ok = load_dotenv(env_file, override=True)
+
+    assert ok is True
+    assert os.environ.get("TELEGRAM_BOT_TOKEN") == "dummy-token"
+    assert os.environ.get("TELEGRAM_CHAT_ID") == "999"
 
 
 def test_resend_last_ignores_dedup_record(tmp_path, monkeypatch):

@@ -22,7 +22,10 @@ from dotenv import load_dotenv
 from store import db
 
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env")
+ENV_PATH = ROOT / ".env"
+# override=True: 이 프로세스의 OS 환경변수에 같은 이름의 빈 값이 이미 있어도
+# .env의 값으로 덮어쓴다 — 아니면 .env가 있어도 토큰이 반영되지 않을 수 있다.
+load_dotenv(ENV_PATH, override=True)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_LEN = 4096
@@ -86,6 +89,20 @@ def _send_document(token: str, chat_id: str, path: Path, filename: str | None = 
     return _request_with_retry(_do, "sendDocument")
 
 
+def env_status() -> str:
+    """텔레그램 토큰 관련 환경변수 진단 문구 (P3.2 0번 — 존재 여부와 길이만, 값은 금지).
+
+    ".env 없음" 오진단(P3.5 보완)을 막기 위해 실제로 확인한 사실만 말한다:
+    .env 파일 존재 여부와 각 환경변수의 글자 수. 값 자체는 절대 포함하지 않는다.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+    return (
+        f".env 파일: {'있음' if ENV_PATH.exists() else '없음'}({ENV_PATH}) · "
+        f"TELEGRAM_BOT_TOKEN 길이 {len(token)} · TELEGRAM_CHAT_ID 길이 {len(chat_id)}"
+    )
+
+
 def report_attachment_name(as_of_str: str) -> str:
     """휴대폰 파일 목록에서 알아보기 쉬운 첨부 파일 이름 (P3.4 2번): 나스닥100_YYYY-MM-DD.html"""
     return f"나스닥100_{as_of_str}.html"
@@ -111,7 +128,7 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
     if force_no_send:
         return out_path
     if not token or not chat_id:
-        print("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다.")
+        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
         return out_path
 
     mode = summary.get("mode", "live")
@@ -158,7 +175,7 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
     if force_no_send:
         return out_path
     if not token or not chat_id:
-        print("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다.")
+        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
         return out_path
 
     mode = summary.get("mode", "live")
@@ -198,7 +215,7 @@ def resend_last(report_path: Path, text_path: Path, as_of_str: str, force_no_sen
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
-        print("[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 재발송할 수 없습니다.")
+        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 재발송할 수 없습니다. ({env_status()})")
         return False
 
     ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))

@@ -58,6 +58,28 @@ def test_entry_limit_price_rounds_to_cent(cfg):
     assert sig.entry_limit_price(100.0, cfg) == 101.0
 
 
+# ── 손절 근접 경고 (P3.5 1번) ────────────────────────────────────────────
+
+
+def test_stop_near_at_exactly_the_boundary_pct_is_shown():
+    """종가가 손절가보다 정확히 3.0% 위면 근접 표시(경계 포함)."""
+    assert sig.stop_near(close=103.0, stop_price=100.0, pct=3) is True
+
+
+def test_stop_near_just_over_the_boundary_pct_is_not_shown():
+    """3.1%면 표시하지 않는다."""
+    assert sig.stop_near(close=103.1, stop_price=100.0, pct=3) is False
+
+
+def test_stop_near_below_stop_price_is_false():
+    """이미 손절가 아래(손절 신호일)면 근접이 아니라 손절이다 — False."""
+    assert sig.stop_near(close=99.0, stop_price=100.0, pct=3) is False
+
+
+def test_stop_near_no_stop_price_is_false():
+    assert sig.stop_near(close=100.0, stop_price=None, pct=3) is False
+
+
 # ── 미래 데이터 방지: t까지 자른 데이터의 지표 == 전체 데이터의 t행 ─────────
 # (core.signals가 참조하는 gc/dc/cloud_top 등은 core.indicators가 만든다.
 #  여기서는 그 지표를 바탕으로 core.signals 조건이 같은 결과를 내는지 본다.)

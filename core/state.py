@@ -232,6 +232,7 @@ def _start_pending(new_state: dict, prev: dict, kind: str, unit: str, date, pric
 
 def _liquidate_all(state: dict, date, reason: str, events: list, cooldown_days: int) -> None:
     """전량 매도(손절·E3)로 대기 상태로 되돌린다."""
+    stop_price = state.get("stop")  # 청산 전 손절가 (P3.5 — 손절 신호일 주문 안내에 쓴다)
     for unit, qty in _held_units(state).items():
         events.append(
             {
@@ -240,6 +241,7 @@ def _liquidate_all(state: dict, date, reason: str, events: list, cooldown_days: 
                 "unit": unit,
                 "qty": qty,
                 "entry_price": state["entries"].get(unit),
+                "stop_price": stop_price,
             }
         )
     state["units"] = {}
@@ -449,7 +451,19 @@ def process_day(
                     new_state["units"].setdefault(_UNIT_6, 0)
                     # A3 확정 시 손절선을 max(A1 기준 swing_low, 오늘 구름 하단)으로 올린다 (6장).
                     if not pd.isna(row.get("cloud_bot")) and new_state.get("stop") is not None:
-                        new_state["stop"] = max(new_state["stop"], float(row["cloud_bot"]))
+                        old_stop = new_state["stop"]
+                        new_stop = max(old_stop, float(row["cloud_bot"]))
+                        if new_stop != old_stop:
+                            events.append(
+                                {
+                                    "date": date,
+                                    "kind": "stop_changed",
+                                    "old_stop": old_stop,
+                                    "new_stop": new_stop,
+                                    "reason": "3차 매수 · 구름 하단 상향",
+                                }
+                            )
+                        new_state["stop"] = new_stop
                     _start_pending(new_state, prev, "A3", _UNIT_6, date, float(row["close"]), score, grade_letter)
                     _mark_sent(new_state, key)
 

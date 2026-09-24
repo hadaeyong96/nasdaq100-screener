@@ -327,3 +327,82 @@ def test_pending_order_unfilled_next_day_reverts_without_cooldown(cfg):
 
     events_again, _ = st.process_day(df, df.index[2], state, cfg)  # 같은 날 다시 실행해도 알림은 한 번만
     assert events_again == []
+
+
+# ── P3.5 1번: 손절가 변경 이력(stop_changed) ────────────────────────────────
+
+
+def test_a3_raises_stop_emits_stop_changed_event(cfg):
+    """3차 매수로 구름 하단이 기존 손절가보다 높으면 손절가가 올라가고 stop_changed가 남는다."""
+    state = st.init_state("TEST")
+    rows = [
+        {"close": 50.0, "rsi": 20.0},  # day-1: A1 기준
+        {"close": 51.0, "rsi": 32.0, "swing_low": 48.0},  # day0: A1
+        {"close": 52.0, "rsi": 40.0},  # day1: A1 체결 확인
+        {"close": 53.0, "rsi": 55.0, "gc": True},  # day2: A2
+        {"close": 54.0, "rsi": 56.0},  # day3: A2 체결 확인
+        {  # day4: A3 (구름 하단 60 > 기존 손절가 48)
+            "close": 100.0,
+            "rsi": 60.0,
+            "cloud_top": 90.0,
+            "cloud_bot": 60.0,
+            "macd": 1.0,
+            "signal": 0.5,
+        },
+    ]
+    df = make_df(rows, start="2026-02-02")
+
+    _, state = st.process_day(df, df.index[0], state, cfg)
+    _, state = st.process_day(df, df.index[1], state, cfg)  # A1, 주문대기
+    state = st.apply_fill(state, {"unit": "1", "side": "buy", "price": 51.5, "qty": 40}, cfg)
+    _, state = st.process_day(df, df.index[2], state, cfg)  # 정찰로 전이
+    assert state["state"] == "정찰"
+    assert state["stop"] == 48.0
+
+    _, state = st.process_day(df, df.index[3], state, cfg)  # A2, 주문대기
+    state = st.apply_fill(state, {"unit": "2", "side": "buy", "price": 53.5, "qty": 20}, cfg)
+    _, state = st.process_day(df, df.index[4], state, cfg)  # 확인으로 전이
+    assert state["state"] == "확인"
+
+    events, state = st.process_day(df, df.index[5], state, cfg)  # A3 확정
+
+    changed = [e for e in events if e["kind"] == "stop_changed"]
+    assert len(changed) == 1
+    assert changed[0]["old_stop"] == 48.0
+    assert changed[0]["new_stop"] == 60.0
+    assert changed[0]["reason"]
+    assert state["stop"] == 60.0
+
+
+def test_a3_keeps_stop_when_cloud_bot_is_lower_no_stop_changed(cfg):
+    """구름 하단이 기존 손절가보다 낮으면 손절가는 그대로고 stop_changed도 없다."""
+    state = st.init_state("TEST")
+    rows = [
+        {"close": 50.0, "rsi": 20.0},
+        {"close": 51.0, "rsi": 32.0, "swing_low": 48.0},  # A1, 손절가 48
+        {"close": 52.0, "rsi": 40.0},
+        {"close": 53.0, "rsi": 55.0, "gc": True},
+        {"close": 54.0, "rsi": 56.0},
+        {  # 구름 하단 40 < 기존 손절가 48 -> 그대로 유지
+            "close": 100.0,
+            "rsi": 60.0,
+            "cloud_top": 90.0,
+            "cloud_bot": 40.0,
+            "macd": 1.0,
+            "signal": 0.5,
+        },
+    ]
+    df = make_df(rows, start="2026-02-02")
+
+    _, state = st.process_day(df, df.index[0], state, cfg)
+    _, state = st.process_day(df, df.index[1], state, cfg)
+    state = st.apply_fill(state, {"unit": "1", "side": "buy", "price": 51.5, "qty": 40}, cfg)
+    _, state = st.process_day(df, df.index[2], state, cfg)
+    _, state = st.process_day(df, df.index[3], state, cfg)
+    state = st.apply_fill(state, {"unit": "2", "side": "buy", "price": 53.5, "qty": 20}, cfg)
+    _, state = st.process_day(df, df.index[4], state, cfg)
+
+    events, state = st.process_day(df, df.index[5], state, cfg)
+
+    assert not any(e["kind"] == "stop_changed" for e in events)
+    assert state["stop"] == 48.0

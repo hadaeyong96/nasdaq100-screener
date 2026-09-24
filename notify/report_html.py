@@ -26,10 +26,6 @@ _env = jinja2.Environment(
 )
 
 
-def _check(value) -> str:
-    return "✔" if value else "✘"
-
-
 def _num(value, digits: int = 2):
     if value is None:
         return None
@@ -58,53 +54,11 @@ def _stage_flags(stage: str) -> list[bool]:
     return [i < n for i in range(3)]
 
 
-_BUY_HEADERS = {
-    "b1": ["종목", "RSI 30 돌파", "MACD", "구름", "거래량", "점수", "지정가", "수량", "투입금액", "계좌%", "손절가", "손절폭", "손절 기준", "위험금액", "실적일", "결정", "비고"],
-    "b2": ["종목", "1차 날짜", "MACD 골든크로스", "RSI", "등급", "점수", "지정가", "수량", "투입금액", "계좌%", "손절가", "손절폭", "손절 기준", "위험금액", "실적일", "결정", "비고"],
-    "b3": ["종목", "구름 위", "앞구름 양운", "후행스팬 돌파", "모멘텀", "시가 갭", "지정가", "수량", "투입금액", "계좌%", "손절가", "손절폭", "손절 기준", "위험금액", "실적일", "결정", "비고"],
-    "b9": ["종목", "구름 위 · 양운", "MACD 골든크로스", "RSI 50~70", "등급", "점수", "지정가", "수량", "투입금액", "계좌%", "손절가", "손절폭", "손절 기준", "위험금액", "실적일", "결정", "비고"],
-}
+# 9칸 단순화 (P3.4 1번): 지표 근거(RSI 변화·등급·거래량 부족·실적 임박 등)는
+# engine/daily.py의 _buy_stage_summary가 만든 비고 한 줄로 옮기고, 모든 차수가
+# 같은 헤더를 쓴다.
+_BUY_HEADERS = ["종목", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "점수", "비고"]
 _BUY_TITLES = {"b1": "1차 정찰 · 11%", "b2": "2차 확인 · 22%", "b3": "3차 확정 · 67%", "b9": "재진입 · 1회"}
-
-
-def _buy_row_cells(row: dict) -> list[str]:
-    """탭별 조건 열 5칸을 문자열 목록으로 만든다 (지정가·손절가 등 나머지는 공통 칸)."""
-    stage = row["stage"]
-    score_text = str(row.get("score", 0))
-    grade_text = row.get("grade") or "-"
-
-    if stage == "A1":
-        return [
-            f"{_check(True)} {row.get('rsi_prev', '-')} → {row.get('rsi_now', '-')}",
-            "2차 대기",
-            "아래",
-            f"{row['vol_ratio']}배" if row.get("vol_ratio") is not None else "-",
-            score_text,
-        ]
-    if stage == "A2":
-        return [
-            row.get("a1_date") or "-",
-            f"정규화 {row['macd_norm']:+.2f}%" if row.get("macd_norm") is not None else "-",
-            f"{row.get('rsi_now', '-')}",
-            grade_text,
-            score_text,
-        ]
-    if stage == "A3":
-        return [
-            _check(row.get("cloud_ok")),
-            _check(row.get("future_yang_ok")),
-            _check(row.get("chikou_ok")),
-            _check(row.get("momentum_ok")),
-            f"{row['gap_pct']:+.1f}%" if row.get("gap_pct") is not None else "-",
-        ]
-    # B (재진입)
-    return [
-        _check(row.get("trend_ok")),
-        f"정규화 {row['macd_norm']:+.2f}%" if row.get("macd_norm") is not None else "-",
-        f"{row.get('rsi_now', '-')}",
-        grade_text,
-        score_text,
-    ]
 
 
 def build_context(summary: dict, cfg: dict) -> dict:
@@ -134,18 +88,15 @@ def build_context(summary: dict, cfg: dict) -> dict:
                 "key": key,
                 "title": _BUY_TITLES[key],
                 "count": len(rows),
-                "headers": _BUY_HEADERS[key],
+                "headers": _BUY_HEADERS,
                 "rows": [
                     {
                         "ticker": r["ticker"],
                         "kr": r["kr"],
-                        "cond": _buy_row_cells(r),
                         "score": r.get("score", ""),
                         "limit": _num(r["limit"]),
                         "stop": _num(r["stop"]),
                         "stop_pct": r.get("stop_pct"),
-                        "stop_basis": r["stop_basis"],
-                        "earnings": r["earnings"],
                         "decision": r["decision"],
                         "note": r["note"],
                     }

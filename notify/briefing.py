@@ -11,16 +11,29 @@ _STAGE_ORDER = ["b1", "b2", "b3", "b9"]
 _BUY_STAGE_SHORT = {"b1": "1차", "b2": "2차", "b3": "3차", "b9": "재진입"}
 _KOREAN_WEEKDAY = ["월", "화", "수", "목", "금", "토", "일"]
 
+# 텔레그램 매도 줄 괄호 표기 (P3.5): 손절은 예약 체결 확인까지 덧붙인다 (P3.5 5번).
+_SELL_KIND_SHORT = {
+    "STOP": "손절·예약 체결 확인",
+    "E1": "1차분(E1)",
+    "E2": "2차분(E2)",
+    "E3": "3차분(E3)",
+    "A1_EXPIRE": "전량",
+}
+
 
 def _sell_short_label(row: dict) -> str:
-    """매도 범위를 티커 옆 괄호에 쓸 한두 글자로 줄인다 (예: "ROP(전량)", "ROP(손절)")."""
+    """매도 범위를 티커 옆 괄호에 쓸 짧은 표기로 줄인다 (예: "ROP(1차분(E1))", "ROP(손절·예약 체결 확인)")."""
+    kind = row.get("kind")
+    if kind in _SELL_KIND_SHORT:
+        return _SELL_KIND_SHORT[kind]
+    # kind가 없는 옛 호출부(테스트 등) 호환: 신호·매도범위 텍스트로 추정한다.
     if row.get("신호") == "손절":
-        return "손절"
+        return _SELL_KIND_SHORT["STOP"]
     범위 = row.get("매도범위", "")
     if "1차분" in 범위:
-        return "1차분"
+        return "1차분(E1)"
     if "2차분" in 범위:
-        return "2차분"
+        return "2차분(E2)"
     return "전량"
 
 
@@ -65,6 +78,11 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     if unfilled_rows:
         names = " ".join(r["티커"] for r in unfilled_rows)
         lines.append(f"⚠️ 미체결 {len(unfilled_rows)} · {names}")
+
+    stop_alerts = summary.get("stop_alerts", [])
+    if stop_alerts:
+        items = " ".join(f"{a['티커']}({a['type']})" for a in stop_alerts)
+        lines.append(f"🛡️ 손절 예약 · {items}")
 
     lines.append("📎 보고서를 열어 확인하세요")
     return "\n".join(lines) + "\n"

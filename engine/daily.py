@@ -80,19 +80,83 @@ _SELL_REASON = {
 # 표기 규칙: "묶음" 대신 매도 범위를 이렇게 쓴다.
 _SELL_RANGE_LABEL = {
     "STOP": "전량",
-    "E3": "전량",
+    "E3": "3차분(67%) 또는 잔량",
     "A1_EXPIRE": "1차분 (전량)",
     "E1": "1차분 매도(11%)",
     "E2": "2차분 매도(22%)",
 }
 _STAGE_LABEL = {"A1": "1차 · RSI 30 탈출", "A2": "2차 · 골든크로스", "A3": "3차 · 구름 돌파", "B": "추세 재진입"}
 _STAGE_TO_BUCKET = {"A1": "b1", "A2": "b2", "A3": "b3", "B": "b9"}
+
+# ── 손절 예약 알림 (P3.5) ────────────────────────────────────────────────
+# 우선순위: 손절(실제 매도 신호) > 손절 근접 > 손절 예약 변경 > 손절 예약 필요.
+# 배지는 종목당 하나만 보유 현황 비고 칸에 쓰고, 나머지는 경고 탭에 모두 남긴다.
+_STOP_ALERT_STOP = ("stop", "b-sell", "손절 · 예약 체결 확인")
 _MODE_LABEL = {"live": "실전", "paper": "모의"}
 
 # 표기 규칙: "휩소" 대신 "잦은 교차 (횡보)". E1·E2·E3는 "모멘텀 약화·추세 약화·구조 붕괴"와 함께 표기.
 _FILTER_REASON_LABEL = {
     "골든크로스 당일 RSI 70 이상": "과열 (RSI 70 이상)",
 }
+
+
+def _stop_alert_candidates(
+    close: float | None, stop: float | None, stop_near_pct: float, changed: dict | None, needs_order: bool
+) -> list[tuple[str, str, str]]:
+    """손절 근접·예약 변경·예약 필요 알림 후보를 우선순위 순으로 만든다 (P3.5 1번).
+
+    호출부가 이미 오늘 손절(STOP) 신호가 난 종목은 걸러내고 부른다 — 손절
+    신호일에는 이 알림들을 보이지 않는다. 순수 함수(네트워크·상태 없음).
+    입력: close(종가), stop(현재 손절가), stop_near_pct(설정값), changed(오늘
+         stop_changed 이벤트 dict 또는 None), needs_order(오늘 새로 체결된
+         매수가 있어 손절 예약이 필요한지)
+    출력: [(type, badge_class, text), ...] 우선순위 순(근접>변경>신규), 없으면 []
+    """
+    candidates: list[tuple[str, str, str]] = []
+    if stop is not None and close is not None and sig.stop_near(close, stop, stop_near_pct):
+        candidates.append(("근접", "b-warn", f"손절 근접 · 예약 ${stop:,.2f} 확인"))
+    if changed is not None:
+        candidates.append(
+            ("변경", "b-info", f"손절 예약 변경 · ${changed['old_stop']:,.2f} → ${changed['new_stop']:,.2f}")
+        )
+    if needs_order:
+        text = f"손절 예약 필요 · ${stop:,.2f}" if stop is not None else "손절 예약 필요"
+        candidates.append(("신규", "b-info", text))
+    return candidates
+
+
+def _stop_event_tickers(today_events: list[dict]) -> set[str]:
+    """오늘 손절(STOP) 신호가 난 종목 (P3.5 1번 — 이 종목은 근접 알림을 보이지 않는다)."""
+    return {e["ticker"] for e in today_events if e["kind"] == "STOP"}
+
+
+def _stop_changed_by_ticker(today_events: list[dict]) -> dict[str, dict]:
+    """오늘 손절가가 바뀐(stop_changed) 종목별 이벤트 (P3.5 1번)."""
+    return {e["ticker"]: e for e in today_events if e["kind"] == "stop_changed"}
+
+
+def _need_stop_order_tickers(today_events: list[dict]) -> set[str]:
+    """오늘 새로 체결된 매수가 있어 손절 예약이 필요한 종목 (P3.5 1번 — "손절 예약 필요").
+
+    live 모드의 실제 체결(FILL)과 paper 모드의 가상 체결(VIRTUAL_FILL)을 모두 본다.
+    """
+    return {
+        e["ticker"]
+        for e in today_events
+        if e["kind"] in ("FILL", "VIRTUAL_FILL") and e.get("side") == "buy" and (e.get("qty") or 0) > 0
+    }
+
+
+def _order_guidance(kind: str, qty: int, stop_price: float | None, cfg: dict) -> str:
+    """매도·손절 탭의 "주문 안내" 칸 문구 (P3.5 5번). 손절만 문구가 다르다."""
+    if kind == "STOP":
+        fallback = cfg["orders"]["stop_fallback_type"]
+        stop_txt = f"${stop_price:,.2f}" if stop_price is not None else "미확인"
+        return (
+            f"손절 예약 확인 · 증권사 손절 예약({stop_txt})이 오늘 체결됐으면 체결 기록만 입력. "
+            f"체결 안 됐으면 다음 거래일 장 시작 시 {qty}주 전량 {fallback} 매도 예약"
+        )
+    return f"다음 거래일 장 시작 시 {qty}주 매도 주문 예약"
 
 
 def load_config() -> dict:
@@ -356,6 +420,38 @@ def _compute_funnel(today_events: list[dict], indicator_map: dict, as_of_by_tick
     }
 
 
+def _buy_stage_summary(kind: str, base: dict, earnings_date, as_of_date) -> str:
+    """9칸 매수 표(P3.4 1번)의 비고 칸: 지표 근거(RSI 변화·등급·거래량 부족·실적 임박 등)를
+    한 줄로 요약한다. 조건 열이 없어진 대신 이 문자열 하나로 판단 근거를 남긴다."""
+    parts: list[str] = []
+    if kind == "A1":
+        if base.get("rsi_prev") is not None and base.get("rsi_now") is not None:
+            parts.append(f"RSI {base['rsi_prev']} → {base['rsi_now']}")
+        vol_ratio = base.get("vol_ratio")
+        if vol_ratio is not None and vol_ratio < 1:
+            parts.append(f"거래량 부족({vol_ratio}배)")
+    elif kind == "A2":
+        if base.get("grade"):
+            parts.append(f"등급 {base['grade']}")
+        if base.get("macd_norm") is not None:
+            parts.append(f"MACD 정규화 {base['macd_norm']:+.2f}%")
+    elif kind == "A3":
+        gap_pct = base.get("gap_pct")
+        if gap_pct is not None and abs(gap_pct) >= 1:
+            parts.append(f"시가 갭 {gap_pct:+.1f}%")
+    else:  # B (재진입)
+        parts.append("재진입 1회 전량 · 위험 1%")
+        if base.get("grade"):
+            parts.append(f"등급 {base['grade']}")
+
+    if earnings_date is not None and as_of_date is not None:
+        days = (pd.Timestamp(earnings_date) - pd.Timestamp(as_of_date)).days
+        if 0 <= days <= 14:
+            parts.append(f"실적 임박 {earnings_date.month}/{earnings_date.day}")
+
+    return " · ".join(parts)
+
+
 def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict, name_map, earnings_map) -> dict:
     """매수 이벤트 하나를 보고서·텔레그램에 쓸 행 dict로 만든다 (탭별 조건 열 포함)."""
     ticker = event["ticker"]
@@ -428,6 +524,9 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
                 "rsi_now": round(row.get("rsi"), 1) if not pd.isna(row.get("rsi")) else None,
             }
         )
+
+    stage_note = _buy_stage_summary(event["kind"], base, earnings_date, date)
+    base["note"] = " · ".join(part for part in (base["note"], stage_note) if part)
     return base
 
 
@@ -461,6 +560,7 @@ def _empty_run_summary(
         "pending_order_rows": [],
         "unfilled_rows": [],
         "hold_rows": [],
+        "stop_alerts": [],
         "watch_rows": [],
         "stage_counts": {},
         "held_tickers_count": 0,
@@ -476,6 +576,7 @@ def _empty_run_summary(
 def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
     """엔진을 한 번 실행한다. 결과 요약 dict를 반환한다 (완료 보고·보고서·텔레그램용)."""
     print(f"[모드: {_MODE_LABEL[mode]} ({mode})]")
+    print(f"[daily] {telegram.env_status()}")  # 값은 절대 출력하지 않는다 (CLAUDE.md 보안, P3.2 0번)
     print("나스닥 100 구성 종목 목록을 가져오는 중...")
     universe = get_universe()
     name_map_df = universe.set_index("ticker")[["name_kr"]]
@@ -650,12 +751,14 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
             {
                 "티커": ticker,
                 "종목명": name_map.get(ticker, "") or ticker,
+                "kind": event["kind"],
                 "신호": _SELL_REASON[event["kind"]],
                 "매도범위": _SELL_RANGE_LABEL[event["kind"]],
                 "수량": event["qty"],
                 "평균단가": round(entry_price, 2) if entry_price is not None else None,
                 "종가": round(close, 2) if close is not None else None,
                 "손익률": pnl_pct,
+                "주문안내": _order_guidance(event["kind"], event["qty"], event.get("stop_price"), cfg),
                 "비고": "",
             }
         )
@@ -675,12 +778,20 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         name_kr = name_map.get(ticker, "") or ticker
 
         if sig.kijun_breach(row.get("close"), row.get("kijun")):
-            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "기준선 이탈 (매도 아님)"})
+            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "기준선 이탈 (매도 아님)", "badge_class": "b-info"})
         if sig.rsi_overheat_relief(prev_rsi, row.get("rsi")):
-            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "RSI 과열 해소 (매도 아님)"})
+            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "RSI 과열 해소 (매도 아님)", "badge_class": "b-info"})
         avg_entry = _average_entry_price(state_)
         if avg_entry is not None and sig.target_reached(avg_entry, row.get("close"), state_.get("stop")):
-            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "목표 도달 (손익비 2배, 매도 아님)"})
+            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "목표 도달 (손익비 2배, 매도 아님)", "badge_class": "b-info"})
+
+    # ── 손절 예약 알림 (P3.5 1번): 근접·변경·신규 3종 + 손절 발생 종목 최우선 ──────
+    stop_near_pct = cfg["alerts"]["stop_near_pct"]
+    stop_event_tickers = _stop_event_tickers(today_events)
+    changed_by_ticker = _stop_changed_by_ticker(today_events)
+    need_order_tickers = _need_stop_order_tickers(today_events)
+    stop_alerts: list[dict] = []  # 텔레그램 "🛡️ 손절 예약" 줄용 (종목당 대표 알림 하나)
+    hold_alert_by_ticker: dict[str, tuple[str, str]] = {}  # ticker -> (badge_class, text)
 
     # 신호 당일(오늘)은 "주문 후 체결 기록 필요" 안내만, 미체결 확정은 다음 날에만 (P3.1 보완 2번).
     pending_order_rows = _pending_order_rows(positions, name_map, mode)
@@ -716,10 +827,31 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         pnl_pct = round((close - avg_entry) / avg_entry * 100, 1) if (close and avg_entry) else None
         stop = state_.get("stop")
         stop_dist_pct = round((stop - close) / close * 100, 1) if (stop is not None and close) else None
+        name_kr = name_map.get(ticker, "") or ticker
+
+        # 손절 신호일에는 근접 알림을 보이지 않는다 (매도 탭에서 이미 다룬다, P3.5 1번).
+        candidates: list[tuple[str, str, str]] = (
+            []
+            if ticker in stop_event_tickers
+            else _stop_alert_candidates(
+                close, stop, stop_near_pct, changed_by_ticker.get(ticker), ticker in need_order_tickers
+            )
+        )
+
+        if ticker in stop_event_tickers:  # 방어적: 손절은 전량 매도라 보통 이 목록엔 이미 없다
+            hold_alert_by_ticker[ticker] = _STOP_ALERT_STOP[1:]
+        elif candidates:
+            alert_type, badge_class, text = candidates[0]
+            hold_alert_by_ticker[ticker] = (badge_class, text)
+            stop_alerts.append({"티커": ticker, "종목명": name_kr, "type": alert_type, "text": text})
+            for extra_type, extra_class, extra_text in candidates[1:]:
+                warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": extra_text, "badge_class": extra_class})
+
+        badge = hold_alert_by_ticker.get(ticker)
         hold_rows.append(
             {
                 "티커": ticker,
-                "종목명": name_map.get(ticker, "") or ticker,
+                "종목명": name_kr,
                 "단계": state_["state"],
                 "수량": qty,
                 "평균단가": round(avg_entry, 2) if avg_entry is not None else None,
@@ -729,6 +861,8 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
                 "손절가": round(stop, 2) if stop is not None else None,
                 "손절까지": stop_dist_pct,
                 "오늘신호": today_signal_by_ticker.get(ticker, ""),
+                "배지클래스": badge[0] if badge else None,
+                "배지": badge[1] if badge else None,
             }
         )
     # ── 대기자금(QQQM) 요약 (P3.4 4번): 신호 판정에는 쓰지 않고 보유 표에 한 줄만 보여준다 ──
@@ -820,6 +954,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         "pending_order_rows": pending_order_rows,
         "unfilled_rows": unfilled_rows,
         "hold_rows": hold_rows,
+        "stop_alerts": stop_alerts,
         "watch_rows": watch_rows,
         "stage_counts": stage_counts,
         "held_tickers_count": held_tickers_count,
