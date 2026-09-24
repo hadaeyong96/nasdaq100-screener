@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(.env)",
+      "Read(**/.env)",
+      "Bash(cat .env)",
+      "Bash(cat .env*)",
+      "Bash(cat ./.env)",
+      "Bash(cat ./.env*)",
+      "Bash(type .env)",
+      "Bash(type .env*)",
+      "Bash(type ./.env)",
+      "Bash(type ./.env*)",
+      "Bash(more .env)",
+      "Bash(more .env*)",
+      "Bash(more ./.env)",
+      "Bash(more ./.env*)",
+      "Bash(less .env)",
+      "Bash(less .env*)",
+      "Bash(less ./.env)",
+      "Bash(less ./.env*)",
+      "Bash(head .env)",
+      "Bash(head .env*)",
+      "Bash(head ./.env)",
+      "Bash(head ./.env*)",
+      "Bash(tail .env)",
+      "Bash(tail .env*)",
+      "Bash(tail ./.env)",
+      "Bash(tail ./.env*)",
+      "Bash(cat -A .env*)",
+      "Bash(cat -A ./.env*)",
+      "Bash(strings .env*)",
+      "Bash(strings ./.env*)",
+      "Bash(Get-Content .env*)",
+      "Bash(Get-Content ./.env*)",
+      "Bash(gc .env*)",
+      "Bash(gc ./.env*)"
+    ]
+  }
+}

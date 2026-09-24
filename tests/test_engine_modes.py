@@ -54,10 +54,12 @@ def test_live_mode_without_fills_has_no_holdings(cfg):
 
 
 def test_paper_mode_auto_fills_at_recommended_qty(cfg):
-    # 가상 체결은 core/sizing.py로 수량을 계산해야 해서 account·risk 설정도 필요하다.
+    # 가상 체결은 core.sizing.size_buy_signals(자금 계획)로 수량을 계산해야 해서
+    # account·plan·risk 설정과 그날의 환율이 모두 필요하다 (P5-1 0번).
     cfg = {
         **cfg,
         "account": {"total_krw": 130_000_000},
+        "plan": {"strategy_limit_pct": 60, "cash_buffer_pct": 5, "max_slots": 8},
         "risk": {
             "a1_budget_pct": 0.2222222222222222,
             "a2_budget_pct": 0.4444444444444444,
@@ -71,10 +73,11 @@ def test_paper_mode_auto_fills_at_recommended_qty(cfg):
     indicator_map, per_ticker_dates, gap_dates_by_ticker, earnings_map = _setup(cfg)
     states = {"TEST": st.init_state("TEST")}
     empty_fills = pd.DataFrame(columns=["date", "ticker", "unit", "side", "price", "qty"])
+    fx_rate_by_date = {d.date().isoformat(): 1_300.0 for d in indicator_map["TEST"].index}
 
     result = simulate_since(
         indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker,
-        empty_fills, virtual_fill=True, max_concurrent=8, total_usd=100_000,
+        empty_fills, virtual_fill=True, max_concurrent=8, fx_rate_by_date=fx_rate_by_date,
     )
 
     final_state = result["states"]["TEST"]

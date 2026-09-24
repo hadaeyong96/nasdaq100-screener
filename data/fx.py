@@ -114,3 +114,52 @@ def get_usd_krw_rate(as_of_date, fetch_provider=fetch_usd_krw_history) -> FxRate
     if fetch_error:
         warning += f" — {fetch_error}"
     return FxRateResult(rate=rate, rate_date=rate_date, is_fallback=True, warning=warning)
+
+
+def fetch_usd_krw_range(start, end) -> dict[str, float]:
+    """yfinance `KRW=X`의 [start, end] 구간 일별 종가를 {날짜: 환율} dict로 받는다 (백테스트용).
+
+    입력: start, end(date 또는 date-like)
+    출력: {"YYYY-MM-DD": 환율, ...}
+    예외: 네트워크·응답 형식 오류는 그대로 올린다
+    """
+    import yfinance as yf
+    from datetime import timedelta
+
+    raw = yf.Ticker("KRW=X").history(start=start, end=end + timedelta(days=1), auto_adjust=False)
+    if raw.empty:
+        return {}
+    out: dict[str, float] = {}
+    for ts, row in raw.iterrows():
+        close = row.get("Close")
+        if close is None or close != close:
+            continue
+        out[ts.date().isoformat()] = float(close)
+    return out
+
+
+def get_usd_krw_rate_map(dates: list, fetch_provider=fetch_usd_krw_history) -> dict[str, float | None]:
+    """여러 날짜의 원/달러 환율을 한 번의 조회로 구한다 (며칠치를 한 번에 처리하는
+    engine.daily의 catch-up 실행·engine.backtest용 — 날짜마다 네트워크를 부르지 않는다).
+
+    입력: dates(date 또는 date-like 목록), fetch_provider(테스트 주입용 — 백테스트처럼
+         긴 기간이 필요하면 더 넓은 period나 명시적 범위를 받는 provider를 넘긴다)
+    출력: {날짜.isoformat(): 환율 또는 (그 날짜 이하 값이 전혀 없으면) None}
+    """
+    stored = _load_cache()
+    try:
+        fresh = fetch_provider()
+    except Exception:
+        fresh = {}
+
+    merged = {**stored, **fresh}
+    if fresh:
+        _save_cache(merged)
+
+    out: dict[str, float | None] = {}
+    for d in dates:
+        # pd.Timestamp/datetime은 .isoformat()에 시각까지 붙으므로 날짜만(.date())로 맞춘다.
+        target = d.date().isoformat() if hasattr(d, "date") and callable(d.date) else (d.isoformat() if hasattr(d, "isoformat") else str(d))
+        picked = pick_rate_for_date(merged, target)
+        out[target] = picked[0] if picked else None
+    return out

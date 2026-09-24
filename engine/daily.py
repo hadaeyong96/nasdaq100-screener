@@ -221,26 +221,61 @@ def _held_count(states: dict) -> int:
     return sum(1 for s in states.values() if any(q > 0 for q in s["units"].values()))
 
 
-def _size_and_price(event: dict, df: pd.DataFrame, state_after: dict, cfg: dict, total_usd: float) -> dict:
-    """진입 이벤트에 지정가·손절가·추천수량을 붙인다 (매매 금지·한도는 core.state가 이미 판정했다).
+def _held_signals_snapshot(states: dict, indicator_map: dict, date) -> list[dict]:
+    """core.sizing.size_buy_signals의 held 입력을 오늘(date) 기준 상태에서 만든다 (P5-1 0번).
 
-    가상 체결(paper 모드·레거시 --replay)에만 쓴다 — 위험 예산 기준(6장)의 단순
-    모델이다. 실제 보고서에 보여줄 수량은 자금 계획 기준(P3.6, build_report_summary의
-    _build_buy_row)을 따로 쓴다.
+    보유 중(단위 수량>0)인 종목만 담는다. "주문대기"이면서 이전 신호로 이미 어느
+    단계를 지나 있었으면(예: A2 신호가 나 정찰→주문대기로 넘어간 경우) 예약 계산은
+    신호 전 상태(pending.prev_state)를 쓴다 — 오늘의 새 신호 자체는 아직 반영 전이므로.
 
-    입력: event({date,kind,unit,price,ticker,score,grade?}), df(그 종목 지표 DataFrame),
-         state_after(이 이벤트가 반영된 뒤의 상태 — stop이 이미 갱신돼 있다), cfg,
-         total_usd(총자금을 환율로 환산한 달러 금액)
-    출력: {entry_price, stop_price, qty}
+    입력: states({ticker: 상태}), indicator_map({ticker: df}), date(종가 조회용)
+    출력: [{"ticker","qty","close","state_label"}, ...]
     """
-    entry_price = sig.entry_limit_price(event["price"], cfg)
-    stop_price = state_after.get("stop")
-    if stop_price is None:
-        qty = 0
-    else:
-        qty = sizing.position_size(event["kind"], entry_price, stop_price, total_usd, cfg)
-        qty = sizing.cap_qty_by_position_limit(qty, entry_price, total_usd, cfg)
-    return {"entry_price": entry_price, "stop_price": stop_price, "qty": qty}
+    out = []
+    for ticker, state_ in states.items():
+        qty_held = sum(q for q in state_["units"].values() if q > 0)
+        if qty_held <= 0:
+            continue
+        df = indicator_map.get(ticker)
+        close = None
+        if df is not None and date in df.index:
+            c = df.loc[date, "close"]
+            close = float(c) if not pd.isna(c) else None
+        state_label = state_["state"]
+        if state_label == "주문대기" and state_.get("pending"):
+            state_label = state_["pending"].get("prev_state", state_label)
+        out.append({"ticker": ticker, "qty": qty_held, "close": close, "state_label": state_label})
+    return out
+
+
+def _todays_buy_signals(events_by_ticker: dict, states: dict, cfg: dict) -> tuple[list[dict], dict]:
+    """오늘 발생한 매수 이벤트들을 core.sizing.size_buy_signals의 signals 입력으로 바꾼다 (P5-1 0번).
+
+    입력: events_by_ticker({ticker: [오늘 이벤트, ...]}), states(process_day 반영 후 —
+         stop이 이미 갱신돼 있다), cfg
+    출력: (signals 목록, {key: (ticker, event, entry_price)} — 체결 적용 시 역참조용)
+    """
+    signals: list[dict] = []
+    lookup: dict = {}
+    for ticker, events in events_by_ticker.items():
+        for event in events:
+            if event["kind"] not in _BUY_KINDS:
+                continue
+            entry_price = sig.entry_limit_price(event["price"], cfg)
+            stop_price = states[ticker].get("stop")
+            key = f"{ticker}-{event['kind']}"
+            signals.append(
+                {
+                    "key": key,
+                    "stage": event["kind"],
+                    "entry_price": entry_price,
+                    "stop_price": stop_price,
+                    "score": event.get("score", 0),
+                    "is_new_position": event["kind"] in _NEW_POSITION_KINDS,
+                }
+            )
+            lookup[key] = (ticker, event, entry_price)
+    return signals, lookup
 
 
 def simulate_since(
@@ -253,24 +288,31 @@ def simulate_since(
     fills_df: pd.DataFrame,
     virtual_fill: bool,
     max_concurrent: int,
-    total_usd: float = 0.0,
+    fx_rate_by_date: dict | None = None,
 ) -> dict:
     """여러 종목의 날짜별 상태 전이를 한 번에 처리한다 (네트워크·DB 없음, 테스트 가능).
 
     매매 금지 구간·동시 보유 한도는 종목을 가로질러 점수를 비교해야 해서, 날짜마다
-    먼저 모든 종목의 새 진입 후보(core.state.preview_new_entry)를 모아 점수 순으로
+    먼저 모든 종목의 새 진입 후보(core.state.preview_new_entry)를 모아 점수로
     추려낸 뒤에야 각 종목을 실제로 처리한다(engine/daily.py 모듈 설명 참고).
+
+    가상 체결(virtual_fill)의 수량도 라이브 보고서와 똑같이 core.sizing.size_buy_signals
+    (자금 계획: 슬롯+위험 상한+남은 한도+예약)로 정한다 (P5-1 0번 — 라이브 보고서 수량과
+    paper 가상 체결 수량이 갈리면 안 된다). 그래서 하루 안에서도 모든 종목의 process_day를
+    먼저 끝내 오늘의 매수 신호를 다 모은 뒤에야 한 번에 크기를 매긴다(점수 순 남은 한도
+    배분이 종목을 가로질러야 하므로).
 
     입력: indicator_map({ticker: df}), per_ticker_dates({ticker: [처리할 날짜, ...]}),
          states({ticker: 시작 상태}), cfg, earnings_map({ticker: 실적일 또는 None}),
          gap_dates_by_ticker({ticker: {data_gap 날짜, ...}}), fills_df(실제 체결 기록),
          virtual_fill(True면 추천대로 체결됐다고 가정하는 가상 체결을 쓴다 — paper 모드·
          레거시 --replay용. False면 fills_df의 실제 체결 기록만 쓴다 — live 모드),
-         max_concurrent(동시 보유 한도), total_usd(가상 체결 수량 계산용 위험 예산 기준
-         총자금(달러) — virtual_fill이 아니면 쓰지 않는다)
+         max_concurrent(동시 보유 한도), fx_rate_by_date({날짜.isoformat(): 원/달러 환율} —
+         virtual_fill일 때만 쓴다. 그 날짜가 없으면 그날은 수량 0)
     출력: {states, all_events, today_events, warnings, data_gap_tickers,
           as_of_by_ticker, start_by_ticker}
     """
+    fx_rate_by_date = fx_rate_by_date or {}
     master_dates = sorted(set().union(*per_ticker_dates.values())) if per_ticker_dates else []
 
     all_events: list[dict] = []
@@ -301,7 +343,10 @@ def simulate_since(
         slots = max(max_concurrent - _held_count(states), 0)
         admitted = {c["ticker"] for c in candidates[:slots]}
 
-        # ── Pass 2: 실제 처리 (같은 core 함수를 라이브·paper·되돌려 보기 모두에 쓴다) ──
+        # ── Pass 2a: 상태 전이를 모든 종목에 대해 먼저 끝낸다 (같은 core 함수를 라이브·
+        # paper·되돌려 보기 모두에 쓴다) — 가상 체결 크기는 오늘의 매수 신호를 모두 모은
+        # 뒤에야(Pass 2b) 종목을 가로질러 점수 순으로 정할 수 있어서다.
+        events_by_ticker: dict[str, list[dict]] = {}
         for ticker in active:
             if ticker in skip_today:
                 continue
@@ -311,18 +356,31 @@ def simulate_since(
             )
             for event in events:
                 event["ticker"] = ticker
+            events_by_ticker[ticker] = events
 
-            if virtual_fill:
-                for event in list(events):
-                    if event["kind"] in _BUY_KINDS:
-                        sized = _size_and_price(event, df, states[ticker], cfg, total_usd)
-                        if sized["qty"] > 0:
-                            fill = {"unit": event["unit"], "side": "buy", "price": sized["entry_price"], "qty": sized["qty"]}
-                            states[ticker] = st.apply_fill(states[ticker], fill, cfg)
-                            events.append(
-                                {"date": date, "ticker": ticker, "kind": "VIRTUAL_FILL", "unit": event["unit"], **fill}
-                            )
-            else:
+        # ── Pass 2b: 가상 체결(paper·레거시 --replay) — 라이브 보고서와 같은
+        # core.sizing.size_buy_signals로 수량을 정한다 (P5-1 0번).
+        if virtual_fill:
+            fx_rate = fx_rate_by_date.get(pd.Timestamp(date).date().isoformat())
+            held = _held_signals_snapshot(states, indicator_map, date)
+            signals, lookup = _todays_buy_signals(events_by_ticker, states, cfg)
+            sized = sizing.size_buy_signals(signals, held, cfg, fx_rate)
+            for key, row in sized["rows"].items():
+                if row["qty"] <= 0:
+                    continue
+                ticker, event, entry_price = lookup[key]
+                fill = {"unit": event["unit"], "side": "buy", "price": entry_price, "qty": row["qty"]}
+                states[ticker] = st.apply_fill(states[ticker], fill, cfg)
+                events_by_ticker[ticker].append(
+                    {"date": date, "ticker": ticker, "kind": "VIRTUAL_FILL", "unit": event["unit"], **fill}
+                )
+
+        # ── Pass 2c: 실제 체결(live) 반영 + 마무리 ──
+        for ticker in active:
+            if ticker in skip_today:
+                continue
+            events = events_by_ticker[ticker]
+            if not virtual_fill:
                 for fill in fills_for(fills_df, ticker, date):
                     states[ticker] = st.apply_fill(states[ticker], fill, cfg)
                     events.append({"date": date, "ticker": ticker, "kind": "FILL", **fill})
@@ -464,12 +522,13 @@ def _buy_stage_summary(kind: str, base: dict, earnings_date, as_of_date) -> str:
     return " · ".join(parts)
 
 
-def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict, name_map, earnings_map, fx_rate: float | None) -> dict:
+def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict, name_map, earnings_map) -> dict:
     """매수 이벤트 하나를 보고서·텔레그램에 쓸 행 dict로 만든다 (탭별 조건 열 포함, P3.6 6-2번).
 
-    수량·투입금액·최대손실은 core.sizing.funding_qty(자금 계획: 슬롯 목표 금액과
-    위험 상한 중 작은 값)로 정한다. 남은 한도 배분(신규 포지션만)은
-    build_report_summary가 이 함수 호출 뒤 별도로 조정한다.
+    수량·투입금액·최대손실은 여기서 계산하지 않는다 — build_report_summary가 오늘의
+    모든 매수 신호를 모은 뒤 core.sizing.size_buy_signals 한 번으로 정해 채운다
+    (P5-1 0번, 라이브 보고서·paper 가상 체결·백테스트가 항상 같은 수량을 내게 하기 위해).
+    이 함수는 지정가·손절가와 탭별 조건 열, 지표 근거 비고만 만든다.
     """
     ticker = event["ticker"]
     date = event["date"]
@@ -480,16 +539,8 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
     stop_ok = stop_price is not None
     stop_pct = (stop_price - entry_price) / entry_price * 100 if stop_ok else None
 
-    funding = sizing.funding_qty(event["kind"], entry_price, stop_price if stop_ok else None, fx_rate, cfg)
-    qty = funding["qty"]
-    risk_per_share = sizing.per_share_risk(entry_price, stop_price, cfg) if stop_ok else None
-    amount_krw = round(qty * entry_price * fx_rate) if (qty and fx_rate) else 0
-    max_loss_krw = round(qty * risk_per_share * fx_rate) if (qty and fx_rate and risk_per_share is not None) else 0
-
     idx = df.index.get_loc(date)
     prev_rsi = df.iloc[idx - 1]["rsi"] if idx > 0 else float("nan")
-
-    risk_note = "손절이 멀어 수량 축소" if (funding["risk_capped"] and qty > 0) else ""
 
     base = {
         "ticker": ticker,
@@ -501,11 +552,11 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
         "is_new_position": event["kind"] in _NEW_POSITION_KINDS,
         "limit": entry_price,
         "stop": stop_price if stop_ok else None,
-        "qty": qty,
-        "amount_krw": amount_krw,
-        "max_loss_krw": max_loss_krw,
-        "target_qty": funding["target_qty"],
-        "risk_cap_qty": funding["risk_cap_qty"],
+        "qty": 0,
+        "amount_krw": 0,
+        "max_loss_krw": 0,
+        "target_qty": 0,
+        "risk_cap_qty": 0,
         "stop_pct": round(stop_pct, 1) if stop_pct is not None else None,
         "stop_basis": {"A1": "10일 최저가", "A2": "10일 최저가", "A3": "10일 최저가·구름 하단 중 높은 값", "B": "진입일 10일 최저가"}[
             event["kind"]
@@ -559,7 +610,7 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
         )
 
     stage_note = _buy_stage_summary(event["kind"], base, earnings_date, date)
-    base["note"] = " · ".join(part for part in (base["note"], stage_note, risk_note) if part)
+    base["note"] = " · ".join(part for part in (base["note"], stage_note) if part)
     return base
 
 
@@ -645,7 +696,7 @@ def build_report_summary(
     as_of = max(as_of_by_ticker.values()) if as_of_by_ticker else None
     fx_rate = fx_result.rate if fx_result else None
 
-    # ── 오늘 매수 신호: 지정가·손절가·수량·탭별 조건 열을 붙인다 (P3.6 6-2번: 자금 계획 기준) ──
+    # ── 오늘 매수 신호: 지정가·손절가·탭별 조건 열을 붙인다 (수량은 아직 안 붙인다) ──
     buy_groups: dict[str, list] = {"b1": [], "b2": [], "b3": [], "b9": []}
     earnings_unknown_count = sum(1 for d in earnings_map.values() if d is None)
     for event in today_events:
@@ -653,80 +704,72 @@ def build_report_summary(
             continue
         ticker = event["ticker"]
         df = indicator_map[ticker]
-        row = _build_buy_row(event, df, positions[ticker], cfg, name_map, earnings_map, fx_rate)
+        row = _build_buy_row(event, df, positions[ticker], cfg, name_map, earnings_map)
         buy_groups[row["bucket"]].append(row)
     for bucket in buy_groups:
         buy_groups[bucket].sort(key=lambda r: r["score"], reverse=True)
     buy_count = sum(len(v) for v in buy_groups.values())
+    all_buy_rows = [r for stage_rows in buy_groups.values() for r in stage_rows]
 
-    # ── 자금 계획 (P3.6 6-2·6-3번): 보유+예약 기준선을 넘지 않게 오늘 신규(A1·B,
-    # 새 포지션)만 점수 순으로 남은 한도를 배분한다. A2·A3(기존 포지션 추가 매수)는
-    # 처음 포지션이 열릴 때 이미 슬롯 전체가 한도에 반영돼 있어 다시 차감하지 않는다.
+    # ── 자금 계획 (P3.6 6-2·6-3번 / P5-1 0번): core.sizing.size_buy_signals 하나로
+    # 오늘의 모든 매수 신호 수량을 한 번에 정한다 — 라이브 보고서·paper 가상 체결·
+    # 백테스트가 항상 같은 수량을 내게 하기 위해서다(engine/daily.py 모듈 설명 참고).
+    # positions는 종목마다 기준일이 다를 수 있어(재생성 등) as_of_by_ticker로 종목별 날짜를 쓴다
+    # (_held_signals_snapshot은 날짜 하나만 받아 simulate_since 안에서만 쓴다).
+    held = []
+    for ticker, state_ in positions.items():
+        qty_held = sum(q for q in state_["units"].values() if q > 0)
+        if qty_held <= 0:
+            continue
+        date = as_of_by_ticker.get(ticker)
+        close = None
+        if date is not None and ticker in indicator_map and date in indicator_map[ticker].index:
+            c = indicator_map[ticker].loc[date, "close"]
+            close = float(c) if not pd.isna(c) else None
+        state_label = state_["state"]
+        if state_label == "주문대기" and state_.get("pending"):
+            state_label = state_["pending"].get("prev_state", state_label)
+        held.append({"ticker": ticker, "qty": qty_held, "close": close, "state_label": state_label})
+
+    signals = [
+        {
+            "key": r["key"],
+            "stage": r["stage"],
+            "entry_price": r["limit"],
+            "stop_price": r["stop"],
+            "score": r["score"],
+            "is_new_position": r["is_new_position"],
+        }
+        for r in all_buy_rows
+    ]
+    sized = sizing.size_buy_signals(signals, held, cfg, fx_rate)
+    for r in all_buy_rows:
+        s = sized["rows"].get(r["key"], {"qty": 0, "amount_krw": 0, "max_loss_krw": 0, "risk_capped": False, "limited": False})
+        r["qty"] = s["qty"]
+        r["amount_krw"] = s["amount_krw"]
+        r["max_loss_krw"] = s["max_loss_krw"]
+        extra_notes = []
+        if s["risk_capped"] and s["qty"] > 0:
+            extra_notes.append("손절이 멀어 수량 축소")
+        if s["limited"]:
+            extra_notes.append("남은 한도 부족" if s["qty"] > 0 else "남은 한도 부족 — 매수 보류")
+        if extra_notes:
+            r["note"] = " · ".join(p for p in (r["note"], *extra_notes) if p)
+
     funding_plan = None
-    buy_risk_sum_krw = 0
-    if fx_rate:
+    buy_risk_sum_krw = sum(r.get("max_loss_krw") or 0 for r in all_buy_rows)
+    if sized["funding_plan"] is not None:
         total_krw = cfg["account"]["total_krw"]
-        slot = sizing.slot_krw(cfg)
-        strategy_limit = sizing.strategy_limit_krw(cfg)
-        held_krw = 0.0
-        reserved_krw = 0.0
-        for ticker, state_ in positions.items():
-            qty_held = sum(q for q in state_["units"].values() if q > 0)
-            if qty_held <= 0:
-                continue
-            date = as_of_by_ticker.get(ticker)
-            if date is not None and ticker in indicator_map and date in indicator_map[ticker].index:
-                close = indicator_map[ticker].loc[date, "close"]
-                if not pd.isna(close):
-                    held_krw += qty_held * float(close) * fx_rate
-            state_label = state_["state"]
-            if state_label == "주문대기" and state_.get("pending"):
-                state_label = state_["pending"].get("prev_state", state_label)
-            reserved_krw += sizing.reserved_fraction_for_state(state_label) * slot
-
-        remaining_baseline = strategy_limit - held_krw - reserved_krw
-
-        new_rows = [
-            r for stage_rows in (buy_groups["b1"], buy_groups["b9"]) for r in stage_rows
-            if r["is_new_position"] and r["stop"] is not None
-        ]
-        new_rows.sort(key=lambda r: r["score"], reverse=True)
-        candidates = [
-            {"key": r["key"], "entry_price": r["limit"], "fx_rate": fx_rate, "target_qty": r["target_qty"], "risk_cap_qty": r["risk_cap_qty"]}
-            for r in new_rows
-        ]
-        allocations = {a["key"]: a for a in sizing.allocate_remaining_limit(candidates, remaining_baseline, cfg)}
-        new_commit_krw = sum(a["consumed_krw"] for a in allocations.values())
-        for r in new_rows:
-            alloc = allocations.get(r["key"])
-            if alloc is None or not alloc["limited"]:
-                continue
-            new_qty = alloc["qty"]
-            r["qty"] = new_qty
-            r["amount_krw"] = round(new_qty * r["limit"] * fx_rate) if new_qty else 0
-            risk_per_share = sizing.per_share_risk(r["limit"], r["stop"], cfg)
-            r["max_loss_krw"] = round(new_qty * risk_per_share * fx_rate) if new_qty else 0
-            limit_note = "남은 한도 부족" if new_qty > 0 else "남은 한도 부족 — 매수 보류"
-            r["note"] = " · ".join(p for p in (r["note"], limit_note) if p)
-
-        new_spend_krw = sum(r.get("amount_krw") or 0 for stage_rows in buy_groups.values() for r in stage_rows)
-        remaining_final = max(strategy_limit - held_krw - reserved_krw - new_commit_krw, 0.0)
-        qqqm_target_krw = total_krw * (1 - cfg["plan"]["cash_buffer_pct"] / 100) - held_krw - new_spend_krw
-
+        new_spend_krw = sum(r.get("amount_krw") or 0 for r in all_buy_rows)
+        qqqm_target_krw = total_krw * (1 - cfg["plan"]["cash_buffer_pct"] / 100) - sized["funding_plan"]["held_krw"] - new_spend_krw
         funding_plan = {
+            **sized["funding_plan"],
             "fx_rate": fx_rate,
-            "fx_date": fx_result.rate_date,
-            "fx_is_fallback": fx_result.is_fallback,
+            "fx_date": fx_result.rate_date if fx_result else None,
+            "fx_is_fallback": bool(fx_result and fx_result.is_fallback),
             "total_krw": total_krw,
-            "strategy_limit_krw": strategy_limit,
-            "slot_krw": slot,
-            "held_krw": held_krw,
-            "reserved_krw": reserved_krw,
-            "new_krw": new_commit_krw,
-            "remaining_krw": remaining_final,
             "qqqm_target_krw": qqqm_target_krw,
         }
-        buy_risk_sum_krw = sum(r.get("max_loss_krw") or 0 for stage_rows in buy_groups.values() for r in stage_rows)
 
     # ── 오늘 걸러진 신호 (매매 금지·동시 보유 한도) ────────────────────────────
     filtered_rows = [
@@ -1036,7 +1079,6 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
     if fx_result.warning:
         run_warnings.append(fx_result.warning)
         print(f"[daily] {fx_result.warning}")
-    total_usd = (cfg["account"]["total_krw"] / fx_result.rate) if fx_result.rate else 0.0
 
     gap_dates_by_ticker = {t: {pd.Timestamp(d) for d in price_result.data_gap.get(t, [])} for t in indicator_map}
 
@@ -1049,9 +1091,10 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
             t: positions.get(t) or st.init_state(t, name_map.get(t, "")) for t in indicator_map
         }
         per_ticker_dates = {t: _dates_to_process(df, replay_needed, lookback_days) for t, df in indicator_map.items()}
+        fx_rate_by_date = fx.get_usd_krw_rate_map(sorted({d for dates in per_ticker_dates.values() for d in dates}))
         sim = simulate_since(
             indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker, fills_df,
-            virtual_fill=replay_needed, max_concurrent=max_concurrent, total_usd=total_usd,
+            virtual_fill=replay_needed, max_concurrent=max_concurrent, fx_rate_by_date=fx_rate_by_date,
         )
         events_to_persist = sim["all_events"]
     else:
@@ -1076,9 +1119,10 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
 
         states = {t: st.init_state(t, name_map.get(t, "")) for t in indicator_map}
         per_ticker_dates = {t: _dates_since_start(df, next_start) for t, df in indicator_map.items()}
+        fx_rate_by_date = fx.get_usd_krw_rate_map(sorted({d for dates in per_ticker_dates.values() for d in dates}))
         sim = simulate_since(
             indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker, fills_df,
-            virtual_fill=(mode == "paper"), max_concurrent=max_concurrent, total_usd=total_usd,
+            virtual_fill=(mode == "paper"), max_concurrent=max_concurrent, fx_rate_by_date=fx_rate_by_date,
         )
         replay_needed = False
         events_to_persist = sim["all_events"]  # 건너뛴 거래일이 있어도 모두 기록한다 (누락 방지, P3.2 3번)

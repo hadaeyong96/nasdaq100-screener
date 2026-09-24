@@ -174,6 +174,99 @@ def allocate_remaining_limit(candidates: list[dict], remaining_krw: float, cfg: 
     return out
 
 
+def size_buy_signals(signals: list[dict], held: list[dict], cfg: dict, fx_rate: float | None) -> dict:
+    """자금 계획(슬롯+위험상한+남은한도+예약) 기준으로 오늘 매수 신호들의 수량을 한 번에 정한다.
+
+    라이브 보고서(engine.daily.build_report_summary)와 paper 가상 체결·백테스트
+    (engine.daily.simulate_since, engine.backtest)가 모두 이 함수 하나로 항상 같은
+    수량을 낸다 (P5-1 0번 — 라이브 보고서와 paper 가상 체결 수량이 갈리지 않게 한다).
+
+    입력: signals([{"key"(고유 식별자), "stage"(A1|A2|A3|B), "entry_price", "stop_price"
+         (없으면 그 신호는 수량 0), "score", "is_new_position"(신규 종목 진입이면 True —
+         core.state는 대기 상태에서만 A1·B를 내므로 그 둘만 True)}, ...]),
+         held([{"qty", "close"(없으면 시장가치 0으로 봄), "state_label"(core.state.STATES
+         값 — 정찰·확인이면 예약을 잡는다)}, ...] — 오늘 신호가 나기 전, 현재 보유 중인
+         신호 종목만. QQQM 등 신호 종목이 아닌 보유는 넣지 않는다), cfg, fx_rate(원/달러 —
+         없으면 모든 신호 수량이 0이고 funding_plan은 None)
+    출력: {
+        "rows": {key: {"qty", "target_qty", "risk_cap_qty", "risk_capped"(위험 상한 때문에
+               목표보다 줄었는지), "limited"(남은 한도 부족으로 더 줄었는지), "amount_krw",
+               "max_loss_krw"}},
+        "funding_plan": {strategy_limit_krw, slot_krw, held_krw, reserved_krw, new_krw
+               (오늘 신규 포지션이 한도에서 새로 차지한 금액), remaining_krw} 또는
+               fx_rate가 없으면 None,
+    }
+    """
+    if not fx_rate:
+        rows = {s["key"]: {"qty": 0, "target_qty": 0, "risk_cap_qty": 0, "risk_capped": False, "limited": False, "amount_krw": 0, "max_loss_krw": 0} for s in signals}
+        return {"rows": rows, "funding_plan": None}
+
+    slot = slot_krw(cfg)
+    strategy_limit = strategy_limit_krw(cfg)
+
+    held_krw = 0.0
+    reserved_krw = 0.0
+    for h in held:
+        close = h.get("close")
+        if close is not None:
+            held_krw += h["qty"] * close * fx_rate
+        reserved_krw += reserved_fraction_for_state(h.get("state_label", "")) * slot
+
+    remaining_baseline = strategy_limit - held_krw - reserved_krw
+
+    base_by_key = {}
+    for s in signals:
+        funding = funding_qty(s["stage"], s["entry_price"], s.get("stop_price"), fx_rate, cfg)
+        base_by_key[s["key"]] = {
+            **funding,
+            "entry_price": s["entry_price"],
+            "stop_price": s.get("stop_price"),
+            "is_new_position": bool(s.get("is_new_position")),
+            "score": s.get("score", 0),
+        }
+
+    new_candidates = sorted(
+        (
+            {"key": k, "entry_price": v["entry_price"], "fx_rate": fx_rate, "target_qty": v["target_qty"], "risk_cap_qty": v["risk_cap_qty"]}
+            for k, v in base_by_key.items()
+            if v["is_new_position"] and v["stop_price"] is not None
+        ),
+        key=lambda c: base_by_key[c["key"]]["score"],
+        reverse=True,
+    )
+    allocations = {a["key"]: a for a in allocate_remaining_limit(new_candidates, remaining_baseline, cfg)}
+    new_commit_krw = sum(a["consumed_krw"] for a in allocations.values())
+
+    rows = {}
+    for key, base in base_by_key.items():
+        alloc = allocations.get(key)
+        qty = alloc["qty"] if alloc is not None else base["qty"]
+        limited = alloc["limited"] if alloc is not None else False
+        risk_per_share = per_share_risk(base["entry_price"], base["stop_price"], cfg) if base["stop_price"] is not None else None
+        amount_krw = round(qty * base["entry_price"] * fx_rate) if qty else 0
+        max_loss_krw = round(qty * risk_per_share * fx_rate) if (qty and risk_per_share is not None) else 0
+        rows[key] = {
+            "qty": qty,
+            "target_qty": base["target_qty"],
+            "risk_cap_qty": base["risk_cap_qty"],
+            "risk_capped": base["risk_capped"],
+            "limited": limited,
+            "amount_krw": amount_krw,
+            "max_loss_krw": max_loss_krw,
+        }
+
+    remaining_final = max(strategy_limit - held_krw - reserved_krw - new_commit_krw, 0.0)
+    funding_plan = {
+        "strategy_limit_krw": strategy_limit,
+        "slot_krw": slot,
+        "held_krw": held_krw,
+        "reserved_krw": reserved_krw,
+        "new_krw": new_commit_krw,
+        "remaining_krw": remaining_final,
+    }
+    return {"rows": rows, "funding_plan": funding_plan}
+
+
 _KRW_UNIT = 10_000
 
 

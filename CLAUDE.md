@@ -57,6 +57,7 @@ docs/         전략 문서
 - 텔레그램 토큰, chat_id, 구글 인증 파일은 환경변수나 `.env`로만 읽고, 절대 커밋하지 않는다.
 - `.gitignore`에 `.env`, `*.db`, `data/cache/`, `outputs/`, 인증 JSON을 포함한다.
 - `.env`나 인증 정보의 **값**은 어떤 경우에도 출력·repr·로그하지 않는다. 존재 여부와 길이만 확인한다 (P3.2 0번).
+- `.claude/settings.json`의 `permissions.deny`로 `.env` 직접 읽기를 막아 둔다 (Read 도구, `cat`/`type`/`Get-Content` 등 Bash 명령, P5-1 0번). 이건 마지막 방어선이고, 위 규칙(출력 금지)이 우선이다 — 권한 규칙은 접두사 일치만 지원해 우회 여지가 있다.
 
 ## 테스트 원칙
 

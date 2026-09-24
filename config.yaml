@@ -132,3 +132,25 @@ alerts:
 # ── 주문 안내 문구 (P3.5) ────────────────────────────────────────────────
 orders:
   stop_fallback_type: 시장가 # 손절 예약이 미체결일 때 다음 거래일 안내 문구에 쓸 주문 방식
+
+# ── 백테스트 (P5-1) ────────────────────────────────────────────────────────
+# 라이브 계좌(account.total_krw)와 별도로, 백테스트는 이 총자금으로 시뮬레이션한다.
+# plan.*(전략 한도·현금 버퍼·슬롯 수)는 라이브와 같은 값을 그대로 쓴다(B0 정의).
+backtest:
+  total_krw: 40000000 # 총자금 4,000만 원 (p5_plan.md 3장 B0)
+  benchmark_ticker: QQQ
+  cash_etf_ticker: QQQM # 쉬는 돈. QQQM 상장(2020-12) 전 구간은 QQQ로 대체한다.
+  cash_etf_inception: "2020-12-22" # QQQM 상장일 — 이 날짜 전은 QQQ로 대체
+  warmup_start: "2014-01-01" # 지표 준비용 추가 수집 시작일
+  train_start: "2015-01-01"
+  train_end: "2021-12-31"
+  validation_start: "2022-01-01" # 검증 구간 — 이번 단계(P5-1)는 봉인, 계산·보고하지 않는다
+  costs:
+    commission_buy_pct: 0.07 # 매수 수수료(%)
+    commission_sell_pct: 0.07 # 매도 수수료(%)
+    fx_spread_pct: 0.1 # 환전 스프레드(%, 원↔달러 왕복 각 방향)
+  tax:
+    capital_gains_deduction_krw: 2500000 # 해외주식 양도세 연간 공제
+    capital_gains_rate_pct: 22 # 공제 초과분 세율(%)
+    dividend_withholding_pct: 15 # 배당 원천징수(%)
+    payment_month: 5 # 실현손익 발생 다음 해 이 달에 납부한 것으로 처리

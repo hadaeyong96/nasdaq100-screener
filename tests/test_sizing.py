@@ -143,6 +143,62 @@ def test_allocate_remaining_limit_shrinks_and_prioritizes_by_order(cfg):
     assert 0 < out[1]["qty"] < 50
 
 
+def test_size_buy_signals_matches_funding_qty_and_allocation(cfg):
+    """P5-1 0번: size_buy_signals는 funding_qty + allocate_remaining_limit을 합친 것과 같은 결과를 내야 한다
+    (라이브 보고서·paper 가상 체결·백테스트가 이 함수 하나로 항상 같은 수량을 내게 하는 핵심 계약)."""
+    c = _plan_cfg(cfg)
+    fx = 1_300
+    signals = [
+        {"key": "HIGH-A1", "stage": "A1", "entry_price": 100.0, "stop_price": 94.0, "score": 50, "is_new_position": True},
+        {"key": "LOW-A1", "stage": "A1", "entry_price": 100.0, "stop_price": 94.0, "score": 5, "is_new_position": True},
+    ]
+    out = sizing.size_buy_signals(signals, held=[], cfg=c, fx_rate=fx)
+    assert out["funding_plan"] is not None
+    high_expected = sizing.funding_qty("A1", 100.0, 94.0, fx, c)
+    assert out["rows"]["HIGH-A1"]["qty"] == high_expected["qty"]
+    assert out["rows"]["HIGH-A1"]["limited"] is False
+    # 두 종목의 슬롯을 합치면 전략 한도(6,000만)를 넘지 않는지에 따라 LOW가 줄어들 수 있다.
+    slot = sizing.slot_krw(c)
+    strategy_limit = sizing.strategy_limit_krw(c)
+    if strategy_limit >= slot * 2:
+        assert out["rows"]["LOW-A1"]["qty"] == high_expected["qty"]
+        assert out["rows"]["LOW-A1"]["limited"] is False
+    else:
+        assert out["rows"]["LOW-A1"]["limited"] is True
+
+
+def test_size_buy_signals_accounts_for_held_and_reserved(cfg):
+    """이미 보유 중인 종목(정찰 — 8/9 예약)이 있으면 신규 포지션에 쓸 남은 한도가 줄어든다."""
+    c = _plan_cfg(cfg)
+    c["account"]["total_krw"] = 10_000_000  # 작게 잡아 한도 압박을 쉽게 만든다
+    fx = 1_300
+    held = [{"ticker": "OLD", "qty": 10, "close": 50.0, "state_label": "정찰"}]
+    signals = [{"key": "NEW-A1", "stage": "A1", "entry_price": 100.0, "stop_price": 94.0, "score": 10, "is_new_position": True}]
+    out = sizing.size_buy_signals(signals, held, c, fx)
+    fp = out["funding_plan"]
+    assert fp["held_krw"] == pytest.approx(10 * 50.0 * fx)
+    assert fp["reserved_krw"] == pytest.approx(sizing.slot_krw(c) * 8 / 9)
+
+
+def test_size_buy_signals_existing_position_not_limited(cfg):
+    """A2·A3(기존 포지션 추가 매수)는 남은 한도 배분을 거치지 않는다 — 처음 포지션이 열릴 때 이미 슬롯이 한도에 잡혀 있다."""
+    c = _plan_cfg(cfg)
+    c["account"]["total_krw"] = 1_000_000  # 남은 한도가 0에 가깝도록 아주 작게
+    fx = 1_300
+    held = [{"ticker": "OLD", "qty": 10, "close": 1000.0, "state_label": "정찰"}]  # 예약이 한도를 이미 넘김
+    signals = [{"key": "OLD-A2", "stage": "A2", "entry_price": 100.0, "stop_price": 94.0, "score": 10, "is_new_position": False}]
+    out = sizing.size_buy_signals(signals, held, c, fx)
+    assert out["rows"]["OLD-A2"]["limited"] is False
+
+
+def test_size_buy_signals_no_fx_returns_zero_qty_and_no_plan(cfg):
+    c = _plan_cfg(cfg)
+    signals = [{"key": "A-A1", "stage": "A1", "entry_price": 100.0, "stop_price": 94.0, "score": 10, "is_new_position": True}]
+    out = sizing.size_buy_signals(signals, held=[], cfg=c, fx_rate=None)
+    assert out["rows"]["A-A1"]["qty"] == 0
+    assert out["funding_plan"] is None
+
+
 def test_format_krw_examples():
     assert sizing.format_krw(730_000) == "73만"
     assert sizing.format_krw(123_000_000) == "1억 2,300만"
