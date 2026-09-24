@@ -58,6 +58,7 @@ from core import sizing  # noqa: E402
 from core import signals as sig  # noqa: E402
 from core import state as st  # noqa: E402
 from core.indicators import compute_indicators  # noqa: E402
+from data import fx  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
 from data.fills import fills_for, load_fills, summarize_cash_rows  # noqa: E402
 from data.market_calendar import latest_closed_trading_day  # noqa: E402
@@ -87,6 +88,11 @@ _SELL_RANGE_LABEL = {
 }
 _STAGE_LABEL = {"A1": "1차 · RSI 30 탈출", "A2": "2차 · 골든크로스", "A3": "3차 · 구름 돌파", "B": "추세 재진입"}
 _STAGE_TO_BUCKET = {"A1": "b1", "A2": "b2", "A3": "b3", "B": "b9"}
+# "전체" 매수 탭의 차수 칸 (P3.6 2번).
+_STAGE_FULL_LABEL = {"A1": "1차 정찰", "A2": "2차 확인", "A3": "3차 확정", "B": "재진입"}
+# 새 포지션(보유 중이 아니던 종목의 첫 신호)만 자금 계획의 "남은 한도" 배분을 받는다 —
+# A2·A3는 core/state.py가 대기 상태에서만 A1·B를 판정하므로 항상 기존 포지션의 추가 매수다.
+_NEW_POSITION_KINDS = ("A1", "B")
 
 # ── 손절 예약 알림 (P3.5) ────────────────────────────────────────────────
 # 우선순위: 손절(실제 매도 신호) > 손절 근접 > 손절 예약 변경 > 손절 예약 필요.
@@ -215,21 +221,25 @@ def _held_count(states: dict) -> int:
     return sum(1 for s in states.values() if any(q > 0 for q in s["units"].values()))
 
 
-def _size_and_price(event: dict, df: pd.DataFrame, state_after: dict, cfg: dict) -> dict:
+def _size_and_price(event: dict, df: pd.DataFrame, state_after: dict, cfg: dict, total_usd: float) -> dict:
     """진입 이벤트에 지정가·손절가·추천수량을 붙인다 (매매 금지·한도는 core.state가 이미 판정했다).
 
+    가상 체결(paper 모드·레거시 --replay)에만 쓴다 — 위험 예산 기준(6장)의 단순
+    모델이다. 실제 보고서에 보여줄 수량은 자금 계획 기준(P3.6, build_report_summary의
+    _build_buy_row)을 따로 쓴다.
+
     입력: event({date,kind,unit,price,ticker,score,grade?}), df(그 종목 지표 DataFrame),
-         state_after(이 이벤트가 반영된 뒤의 상태 — stop이 이미 갱신돼 있다), cfg
+         state_after(이 이벤트가 반영된 뒤의 상태 — stop이 이미 갱신돼 있다), cfg,
+         total_usd(총자금을 환율로 환산한 달러 금액)
     출력: {entry_price, stop_price, qty}
     """
-    equity = cfg["account"]["equity_usd"]
     entry_price = sig.entry_limit_price(event["price"], cfg)
     stop_price = state_after.get("stop")
     if stop_price is None:
         qty = 0
     else:
-        qty = sizing.position_size(event["kind"], entry_price, stop_price, equity, cfg)
-        qty = sizing.cap_qty_by_position_limit(qty, entry_price, equity, cfg)
+        qty = sizing.position_size(event["kind"], entry_price, stop_price, total_usd, cfg)
+        qty = sizing.cap_qty_by_position_limit(qty, entry_price, total_usd, cfg)
     return {"entry_price": entry_price, "stop_price": stop_price, "qty": qty}
 
 
@@ -243,6 +253,7 @@ def simulate_since(
     fills_df: pd.DataFrame,
     virtual_fill: bool,
     max_concurrent: int,
+    total_usd: float = 0.0,
 ) -> dict:
     """여러 종목의 날짜별 상태 전이를 한 번에 처리한다 (네트워크·DB 없음, 테스트 가능).
 
@@ -255,7 +266,8 @@ def simulate_since(
          gap_dates_by_ticker({ticker: {data_gap 날짜, ...}}), fills_df(실제 체결 기록),
          virtual_fill(True면 추천대로 체결됐다고 가정하는 가상 체결을 쓴다 — paper 모드·
          레거시 --replay용. False면 fills_df의 실제 체결 기록만 쓴다 — live 모드),
-         max_concurrent(동시 보유 한도)
+         max_concurrent(동시 보유 한도), total_usd(가상 체결 수량 계산용 위험 예산 기준
+         총자금(달러) — virtual_fill이 아니면 쓰지 않는다)
     출력: {states, all_events, today_events, warnings, data_gap_tickers,
           as_of_by_ticker, start_by_ticker}
     """
@@ -303,7 +315,7 @@ def simulate_since(
             if virtual_fill:
                 for event in list(events):
                     if event["kind"] in _BUY_KINDS:
-                        sized = _size_and_price(event, df, states[ticker], cfg)
+                        sized = _size_and_price(event, df, states[ticker], cfg, total_usd)
                         if sized["qty"] > 0:
                             fill = {"unit": event["unit"], "side": "buy", "price": sized["entry_price"], "qty": sized["qty"]}
                             states[ticker] = st.apply_fill(states[ticker], fill, cfg)
@@ -452,27 +464,48 @@ def _buy_stage_summary(kind: str, base: dict, earnings_date, as_of_date) -> str:
     return " · ".join(parts)
 
 
-def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict, name_map, earnings_map) -> dict:
-    """매수 이벤트 하나를 보고서·텔레그램에 쓸 행 dict로 만든다 (탭별 조건 열 포함)."""
+def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict, name_map, earnings_map, fx_rate: float | None) -> dict:
+    """매수 이벤트 하나를 보고서·텔레그램에 쓸 행 dict로 만든다 (탭별 조건 열 포함, P3.6 6-2번).
+
+    수량·투입금액·최대손실은 core.sizing.funding_qty(자금 계획: 슬롯 목표 금액과
+    위험 상한 중 작은 값)로 정한다. 남은 한도 배분(신규 포지션만)은
+    build_report_summary가 이 함수 호출 뒤 별도로 조정한다.
+    """
     ticker = event["ticker"]
     date = event["date"]
     row = df.loc[date]
-    sized = _size_and_price(event, df, states_after, cfg)
+    entry_price = sig.entry_limit_price(event["price"], cfg)
+    stop_price = states_after.get("stop")
     earnings_date = earnings_map.get(ticker)
-    stop_ok = sized["stop_price"] is not None
-    stop_pct = (sized["stop_price"] - sized["entry_price"]) / sized["entry_price"] * 100 if stop_ok else None
+    stop_ok = stop_price is not None
+    stop_pct = (stop_price - entry_price) / entry_price * 100 if stop_ok else None
+
+    funding = sizing.funding_qty(event["kind"], entry_price, stop_price if stop_ok else None, fx_rate, cfg)
+    qty = funding["qty"]
+    risk_per_share = sizing.per_share_risk(entry_price, stop_price, cfg) if stop_ok else None
+    amount_krw = round(qty * entry_price * fx_rate) if (qty and fx_rate) else 0
+    max_loss_krw = round(qty * risk_per_share * fx_rate) if (qty and fx_rate and risk_per_share is not None) else 0
 
     idx = df.index.get_loc(date)
     prev_rsi = df.iloc[idx - 1]["rsi"] if idx > 0 else float("nan")
+
+    risk_note = "손절이 멀어 수량 축소" if (funding["risk_capped"] and qty > 0) else ""
 
     base = {
         "ticker": ticker,
         "kr": name_map.get(ticker, "") or ticker,
         "stage": event["kind"],
         "bucket": _STAGE_TO_BUCKET[event["kind"]],
-        "limit": sized["entry_price"],
-        "stop": sized["stop_price"] if stop_ok else None,
-        "qty": sized["qty"],
+        "stage_label": _STAGE_FULL_LABEL[event["kind"]],
+        "key": f"{ticker}-{event['kind']}",
+        "is_new_position": event["kind"] in _NEW_POSITION_KINDS,
+        "limit": entry_price,
+        "stop": stop_price if stop_ok else None,
+        "qty": qty,
+        "amount_krw": amount_krw,
+        "max_loss_krw": max_loss_krw,
+        "target_qty": funding["target_qty"],
+        "risk_cap_qty": funding["risk_cap_qty"],
         "stop_pct": round(stop_pct, 1) if stop_pct is not None else None,
         "stop_basis": {"A1": "10일 최저가", "A2": "10일 최저가", "A3": "10일 최저가·구름 하단 중 높은 값", "B": "진입일 10일 최저가"}[
             event["kind"]
@@ -526,7 +559,7 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
         )
 
     stage_note = _buy_stage_summary(event["kind"], base, earnings_date, date)
-    base["note"] = " · ".join(part for part in (base["note"], stage_note) if part)
+    base["note"] = " · ".join(part for part in (base["note"], stage_note, risk_note) if part)
     return base
 
 
@@ -570,144 +603,49 @@ def _empty_run_summary(
         "earnings_unknown_count": 0,
         "all_events": [],
         "funnel": {},
+        "funding_plan": None,
+        "buy_risk_sum_krw": 0,
+        "buy_risk_pct": None,
     }
 
 
-def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
-    """엔진을 한 번 실행한다. 결과 요약 dict를 반환한다 (완료 보고·보고서·텔레그램용)."""
-    print(f"[모드: {_MODE_LABEL[mode]} ({mode})]")
-    print(f"[daily] {telegram.env_status()}")  # 값은 절대 출력하지 않는다 (CLAUDE.md 보안, P3.2 0번)
-    print("나스닥 100 구성 종목 목록을 가져오는 중...")
-    universe = get_universe()
-    name_map_df = universe.set_index("ticker")[["name_kr"]]
-    name_map = name_map_df["name_kr"].to_dict()
+def build_report_summary(
+    mode: str,
+    cfg: dict,
+    indicator_map: dict,
+    name_map: dict,
+    earnings_map: dict,
+    positions: dict,
+    today_events: list[dict],
+    as_of_by_ticker: dict,
+    data_gap_tickers: list[str],
+    fills_result,
+    run_warnings: list[str],
+    max_concurrent: int,
+    fx_result,
+    replay_needed: bool = False,
+) -> dict:
+    """오늘 이벤트·현재 상태·시세로 보고서·텔레그램용 summary dict를 만든다 (DB에 쓰지 않는다).
 
-    print("일봉 시세를 받는 중... (캐시가 있으면 재사용)")
-    price_result = fetch_universe_prices(universe["ticker"].tolist(), cfg)
-    print(f"  성공 {len(price_result.prices)}종목 / 실패 {len(price_result.failed)}종목")
+    run()의 라이브 처리 경로와 scripts/regenerate_report.py(상태를 다시 계산하지
+    않고 현재 상태·저장된 이벤트로 보고서만 다시 만들 때) 양쪽이 같은 로직을
+    쓰도록 여기 하나로 모았다 — 둘이 갈라지면 재생성한 보고서가 실제 라이브
+    보고서와 달라질 수 있다.
 
-    print("지표를 계산하는 중...")
-    indicator_map = {t: compute_indicators(df, cfg) for t, df in price_result.prices.items()}
-
-    # ── 데이터 지연 모드 (P3.2 2번): 이번 기준일이 실행 시각 기준 가장 최근에 마감된
-    # 거래일(NYSE 캘린더)보다 오래됐으면 상태 전이·주문대기·이벤트 기록을 하지 않고
-    # 지연 알림만 보낸다. --replay(백테스트 전용 경로)에는 적용하지 않는다.
-    actual_as_of_ts = max((df.index[-1] for df in indicator_map.values()), default=None)
-    if not do_replay and actual_as_of_ts is not None:
-        now_et = datetime.now(US_EASTERN)
-        expected_date = latest_closed_trading_day(now_et)
-        actual_date = actual_as_of_ts.date()
-        if actual_date < expected_date:
-            print(
-                f"[daily] *** 데이터 지연: 기대 기준일 {expected_date.isoformat()}, "
-                f"실제 {actual_date.isoformat()} — 오늘은 매매 신호 없음 ***"
-            )
-            summary = _empty_run_summary(
-                mode,
-                actual_date,
-                [f"데이터 지연: 기대 기준일 {expected_date.isoformat()}, 실제 {actual_date.isoformat()}. 오늘은 매매 신호 없음"],
-                stale=True,
-                expected_date=expected_date,
-                actual_date=actual_date,
-            )
-            summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
-            return summary
-
-    print("실적 발표일을 확인하는 중...")
-    earnings_map = get_earnings_dates(list(indicator_map.keys()))
-
-    fills_result = load_fills()
-    fills_df = fills_result.df
+    입력: mode, cfg, indicator_map({ticker: df}), name_map, earnings_map,
+         positions(현재 상태 — run()이면 방금 계산한 states, 재생성이면
+         db.load_all_positions), today_events(오늘 발생한 이벤트 —
+         run()이면 sim["today_events"], 재생성이면 db에 저장된 이벤트),
+         as_of_by_ticker, data_gap_tickers, fills_result(data.fills.load_fills
+         결과), run_warnings, max_concurrent, fx_result(data.fx.get_usd_krw_rate
+         결과 — 오늘 자금 계획·원화 표기에 쓴다), replay_needed
+    출력: summary dict ("report_path" 제외 — render_report 호출은 호출부 몫)
+    """
     fills_errors = fills_result.errors
-    for line in fills_errors:
-        print(f"  {line}")
-
-    conn = db.connect(db.db_path_for_mode(mode))
-    max_concurrent = cfg["risk"]["max_concurrent_positions"]
-    run_warnings: list[str] = list(fills_errors)
-
-    gap_dates_by_ticker = {t: {pd.Timestamp(d) for d in price_result.data_gap.get(t, [])} for t in indicator_map}
-
-    if do_replay:
-        # ── 레거시 경로(P2): state.db가 비어 있을 때만 가상 체결로 되돌려 본다 ──
-        positions = db.load_all_positions(conn)
-        replay_needed = len(positions) == 0
-        lookback_days = cfg["replay"]["lookback_days"]
-        states = {
-            t: positions.get(t) or st.init_state(t, name_map.get(t, "")) for t in indicator_map
-        }
-        per_ticker_dates = {t: _dates_to_process(df, replay_needed, lookback_days) for t, df in indicator_map.items()}
-        sim = simulate_since(
-            indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker, fills_df,
-            virtual_fill=replay_needed, max_concurrent=max_concurrent,
-        )
-        events_to_persist = sim["all_events"]
-    else:
-        # ── P3 기본 경로: last_processed_date 다음 거래일부터 이번 기준일까지 모든
-        # 거래일을 순서대로 다시 계산한다(P3.2 3번, "처리 날짜 누락 방지"). 이번
-        # 기준일이 last_processed_date 이하이면(같은 날 재실행 등) 아무것도 하지 않는다.
-        last_processed_str = db.get_meta(conn, "last_processed_date")
-        actual_date = actual_as_of_ts.date()
-        if last_processed_str is not None and actual_date <= pd.Timestamp(last_processed_str).date():
-            conn.close()
-            reason = (
-                f"기준일 {actual_date.isoformat()}은 이미 처리됨"
-                f"(last_processed_date={last_processed_str}) — 이번 실행은 아무것도 하지 않습니다."
-            )
-            print(f"[daily] {reason}")
-            return _empty_run_summary(mode, actual_date, [reason], skipped=True)
-
-        next_start = (
-            pd.Timestamp(last_processed_str) + pd.Timedelta(days=1)
-            if last_processed_str is not None
-            else pd.Timestamp(actual_date)  # 이 모드로 처음 실행 — 오늘부터 시작(과거로 replay하지 않는다)
-        )
-
-        states = {t: st.init_state(t, name_map.get(t, "")) for t in indicator_map}
-        per_ticker_dates = {t: _dates_since_start(df, next_start) for t, df in indicator_map.items()}
-        sim = simulate_since(
-            indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker, fills_df,
-            virtual_fill=(mode == "paper"), max_concurrent=max_concurrent,
-        )
-        replay_needed = False
-        events_to_persist = sim["all_events"]  # 건너뛴 거래일이 있어도 모두 기록한다 (누락 방지, P3.2 3번)
-        if not dry_run:
-            db.set_meta(conn, "last_processed_date", str(actual_date))
-
-    states = sim["states"]
-    today_events = sim["today_events"]
-    run_warnings.extend(sim["warnings"])
-    data_gap_tickers = sim["data_gap_tickers"]
-    as_of_by_ticker = sim["as_of_by_ticker"]
-
-    positions = states
-    for ticker, state_ in states.items():
-        if not dry_run:
-            db.save_position(conn, state_)
-
-    if not dry_run:
-        db.record_events(conn, events_to_persist)
-
     as_of = max(as_of_by_ticker.values()) if as_of_by_ticker else None
+    fx_rate = fx_result.rate if fx_result else None
 
-    # ── 재현성 확인용 가격 스냅샷 (P2.1 보완 3번): dry-run에도 남긴다(진단 목적) ──
-    run_at = datetime.now().isoformat(timespec="seconds")
-    snapshot_rows = []
-    for ticker, df in price_result.prices.items():
-        last = df.iloc[-1]
-        snapshot_rows.append(
-            {
-                "ticker": ticker,
-                "date": str(df.index[-1].date()),
-                "close": float(last["close"]) if pd.notna(last["close"]) else None,
-                "close_source": last.get("close_source"),
-                "meta_time": df.attrs.get("close_meta_time"),
-            }
-        )
-    if not dry_run:
-        db.record_price_snapshots(conn, run_at, snapshot_rows)
-
-    # ── 오늘 매수 신호: 지정가·손절가·수량·탭별 조건 열을 붙인다 ──────────────
+    # ── 오늘 매수 신호: 지정가·손절가·수량·탭별 조건 열을 붙인다 (P3.6 6-2번: 자금 계획 기준) ──
     buy_groups: dict[str, list] = {"b1": [], "b2": [], "b3": [], "b9": []}
     earnings_unknown_count = sum(1 for d in earnings_map.values() if d is None)
     for event in today_events:
@@ -715,11 +653,80 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
             continue
         ticker = event["ticker"]
         df = indicator_map[ticker]
-        row = _build_buy_row(event, df, positions[ticker], cfg, name_map, earnings_map)
+        row = _build_buy_row(event, df, positions[ticker], cfg, name_map, earnings_map, fx_rate)
         buy_groups[row["bucket"]].append(row)
     for bucket in buy_groups:
         buy_groups[bucket].sort(key=lambda r: r["score"], reverse=True)
     buy_count = sum(len(v) for v in buy_groups.values())
+
+    # ── 자금 계획 (P3.6 6-2·6-3번): 보유+예약 기준선을 넘지 않게 오늘 신규(A1·B,
+    # 새 포지션)만 점수 순으로 남은 한도를 배분한다. A2·A3(기존 포지션 추가 매수)는
+    # 처음 포지션이 열릴 때 이미 슬롯 전체가 한도에 반영돼 있어 다시 차감하지 않는다.
+    funding_plan = None
+    buy_risk_sum_krw = 0
+    if fx_rate:
+        total_krw = cfg["account"]["total_krw"]
+        slot = sizing.slot_krw(cfg)
+        strategy_limit = sizing.strategy_limit_krw(cfg)
+        held_krw = 0.0
+        reserved_krw = 0.0
+        for ticker, state_ in positions.items():
+            qty_held = sum(q for q in state_["units"].values() if q > 0)
+            if qty_held <= 0:
+                continue
+            date = as_of_by_ticker.get(ticker)
+            if date is not None and ticker in indicator_map and date in indicator_map[ticker].index:
+                close = indicator_map[ticker].loc[date, "close"]
+                if not pd.isna(close):
+                    held_krw += qty_held * float(close) * fx_rate
+            state_label = state_["state"]
+            if state_label == "주문대기" and state_.get("pending"):
+                state_label = state_["pending"].get("prev_state", state_label)
+            reserved_krw += sizing.reserved_fraction_for_state(state_label) * slot
+
+        remaining_baseline = strategy_limit - held_krw - reserved_krw
+
+        new_rows = [
+            r for stage_rows in (buy_groups["b1"], buy_groups["b9"]) for r in stage_rows
+            if r["is_new_position"] and r["stop"] is not None
+        ]
+        new_rows.sort(key=lambda r: r["score"], reverse=True)
+        candidates = [
+            {"key": r["key"], "entry_price": r["limit"], "fx_rate": fx_rate, "target_qty": r["target_qty"], "risk_cap_qty": r["risk_cap_qty"]}
+            for r in new_rows
+        ]
+        allocations = {a["key"]: a for a in sizing.allocate_remaining_limit(candidates, remaining_baseline, cfg)}
+        new_commit_krw = sum(a["consumed_krw"] for a in allocations.values())
+        for r in new_rows:
+            alloc = allocations.get(r["key"])
+            if alloc is None or not alloc["limited"]:
+                continue
+            new_qty = alloc["qty"]
+            r["qty"] = new_qty
+            r["amount_krw"] = round(new_qty * r["limit"] * fx_rate) if new_qty else 0
+            risk_per_share = sizing.per_share_risk(r["limit"], r["stop"], cfg)
+            r["max_loss_krw"] = round(new_qty * risk_per_share * fx_rate) if new_qty else 0
+            limit_note = "남은 한도 부족" if new_qty > 0 else "남은 한도 부족 — 매수 보류"
+            r["note"] = " · ".join(p for p in (r["note"], limit_note) if p)
+
+        new_spend_krw = sum(r.get("amount_krw") or 0 for stage_rows in buy_groups.values() for r in stage_rows)
+        remaining_final = max(strategy_limit - held_krw - reserved_krw - new_commit_krw, 0.0)
+        qqqm_target_krw = total_krw * (1 - cfg["plan"]["cash_buffer_pct"] / 100) - held_krw - new_spend_krw
+
+        funding_plan = {
+            "fx_rate": fx_rate,
+            "fx_date": fx_result.rate_date,
+            "fx_is_fallback": fx_result.is_fallback,
+            "total_krw": total_krw,
+            "strategy_limit_krw": strategy_limit,
+            "slot_krw": slot,
+            "held_krw": held_krw,
+            "reserved_krw": reserved_krw,
+            "new_krw": new_commit_krw,
+            "remaining_krw": remaining_final,
+            "qqqm_target_krw": qqqm_target_krw,
+        }
+        buy_risk_sum_krw = sum(r.get("max_loss_krw") or 0 for stage_rows in buy_groups.values() for r in stage_rows)
 
     # ── 오늘 걸러진 신호 (매매 금지·동시 보유 한도) ────────────────────────────
     filtered_rows = [
@@ -747,6 +754,11 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         close = float(df.loc[date, "close"]) if date in df.index and not pd.isna(df.loc[date, "close"]) else None
         entry_price = event.get("entry_price")
         pnl_pct = round((close - entry_price) / entry_price * 100, 1) if (close and entry_price) else None
+        pnl_krw = (
+            round((close - entry_price) * event["qty"] * fx_rate)
+            if (close is not None and entry_price is not None and fx_rate)
+            else None
+        )
         sell_rows.append(
             {
                 "티커": ticker,
@@ -757,6 +769,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
                 "수량": event["qty"],
                 "평균단가": round(entry_price, 2) if entry_price is not None else None,
                 "종가": round(close, 2) if close is not None else None,
+                "예상손익_krw": pnl_krw,
                 "손익률": pnl_pct,
                 "주문안내": _order_guidance(event["kind"], event["qty"], event.get("stop_price"), cfg),
                 "비고": "",
@@ -806,6 +819,8 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         data_status_rows.append({"티커": "", "종목명": "", "내용": f"실적일 확인불가 종목 {earnings_unknown_count}개"})
     for line in fills_errors:
         data_status_rows.append({"티커": "", "종목명": "", "내용": line})
+    if fx_result is not None and fx_result.warning:
+        data_status_rows.append({"티커": "", "종목명": "", "내용": f"환율: {fx_result.warning}"})
 
     # ── 보유 현황 / 내 보유 종목 (같은 데이터) ──────────────────────────────
     today_signal_by_ticker: dict[str, str] = {}
@@ -848,6 +863,8 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
                 warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": extra_text, "badge_class": extra_class})
 
         badge = hold_alert_by_ticker.get(ticker)
+        value_krw = round(qty * close * fx_rate) if (close is not None and fx_rate) else None
+        pnl_krw = round((close - avg_entry) * qty * fx_rate) if (close is not None and avg_entry is not None and fx_rate) else None
         hold_rows.append(
             {
                 "티커": ticker,
@@ -857,6 +874,8 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
                 "평균단가": round(avg_entry, 2) if avg_entry is not None else None,
                 "종가": round(close, 2) if close is not None else None,
                 "평가금액": round(qty * close, 2) if close is not None else None,
+                "평가금액_krw": value_krw,
+                "평가손익_krw": pnl_krw,
                 "손익률": pnl_pct,
                 "손절가": round(stop, 2) if stop is not None else None,
                 "손절까지": stop_dist_pct,
@@ -923,24 +942,10 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         stage_counts[state_["state"]] = stage_counts.get(state_["state"], 0) + 1
     held_tickers_count = _held_count(positions)
 
-    # ── 통과 현황(5단계 funnel): 보고서에는 안 쓰고 CSV·events에만 남긴다 ───────
+    # ── 통과 현황(5단계 funnel): 순수 계산만 — 파일·DB 기록은 호출부(run()) 몫 ──
     funnel = _compute_funnel(today_events, indicator_map, as_of_by_ticker)
-    if as_of is not None:
-        _write_funnel(funnel, as_of)
-        if not dry_run:
-            db.record_events(conn, [{"date": str(as_of.date()), "ticker": "", "kind": "FUNNEL", **funnel}])
 
-    if not dry_run:
-        db.record_run(
-            conn,
-            run_at=run_at,
-            as_of_date=str(as_of.date()) if as_of is not None else "",
-            ticker_count=len(indicator_map),
-            warning_count=len(run_warnings),
-        )
-    conn.close()
-
-    summary = {
+    return {
         "mode": mode,
         "mode_label": _MODE_LABEL[mode],
         "as_of": as_of,
@@ -962,9 +967,178 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         "warnings": run_warnings,
         "data_gap_tickers": data_gap_tickers,
         "earnings_unknown_count": earnings_unknown_count,
-        "all_events": sim["all_events"],
+        "all_events": today_events,
         "funnel": funnel,
+        "funding_plan": funding_plan,
+        "buy_risk_sum_krw": buy_risk_sum_krw,
+        "buy_risk_pct": (buy_risk_sum_krw / cfg["account"]["total_krw"] * 100) if cfg["account"].get("total_krw") else None,
     }
+
+
+def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
+    """엔진을 한 번 실행한다. 결과 요약 dict를 반환한다 (완료 보고·보고서·텔레그램용)."""
+    print(f"[모드: {_MODE_LABEL[mode]} ({mode})]")
+    print(f"[daily] {telegram.env_status()}")  # 값은 절대 출력하지 않는다 (CLAUDE.md 보안, P3.2 0번)
+    print("나스닥 100 구성 종목 목록을 가져오는 중...")
+    universe = get_universe()
+    name_map_df = universe.set_index("ticker")[["name_kr"]]
+    name_map = name_map_df["name_kr"].to_dict()
+
+    print("일봉 시세를 받는 중... (캐시가 있으면 재사용)")
+    price_result = fetch_universe_prices(universe["ticker"].tolist(), cfg)
+    print(f"  성공 {len(price_result.prices)}종목 / 실패 {len(price_result.failed)}종목")
+
+    print("지표를 계산하는 중...")
+    indicator_map = {t: compute_indicators(df, cfg) for t, df in price_result.prices.items()}
+
+    # ── 데이터 지연 모드 (P3.2 2번): 이번 기준일이 실행 시각 기준 가장 최근에 마감된
+    # 거래일(NYSE 캘린더)보다 오래됐으면 상태 전이·주문대기·이벤트 기록을 하지 않고
+    # 지연 알림만 보낸다. --replay(백테스트 전용 경로)에는 적용하지 않는다.
+    actual_as_of_ts = max((df.index[-1] for df in indicator_map.values()), default=None)
+    actual_date = actual_as_of_ts.date() if actual_as_of_ts is not None else None
+    if not do_replay and actual_as_of_ts is not None:
+        now_et = datetime.now(US_EASTERN)
+        expected_date = latest_closed_trading_day(now_et)
+        if actual_date < expected_date:
+            print(
+                f"[daily] *** 데이터 지연: 기대 기준일 {expected_date.isoformat()}, "
+                f"실제 {actual_date.isoformat()} — 오늘은 매매 신호 없음 ***"
+            )
+            summary = _empty_run_summary(
+                mode,
+                actual_date,
+                [f"데이터 지연: 기대 기준일 {expected_date.isoformat()}, 실제 {actual_date.isoformat()}. 오늘은 매매 신호 없음"],
+                stale=True,
+                expected_date=expected_date,
+                actual_date=actual_date,
+            )
+            summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
+            return summary
+
+    print("실적 발표일을 확인하는 중...")
+    earnings_map = get_earnings_dates(list(indicator_map.keys()))
+
+    fills_result = load_fills()
+    fills_df = fills_result.df
+    fills_errors = fills_result.errors
+    for line in fills_errors:
+        print(f"  {line}")
+
+    conn = db.connect(db.db_path_for_mode(mode))
+    max_concurrent = cfg["risk"]["max_concurrent_positions"]
+    run_warnings: list[str] = list(fills_errors)
+
+    # ── 환율 (P3.6 6-4번): 기준일 종가 환율을 받는다. 못 받으면 직전 캐시 값 + 경고 ──
+    if actual_date is not None:
+        fx_result = fx.get_usd_krw_rate(actual_date)
+    else:
+        fx_result = fx.FxRateResult(None, None, True, "기준일을 확인할 수 없어 환율 조회를 생략했습니다")
+    if fx_result.warning:
+        run_warnings.append(fx_result.warning)
+        print(f"[daily] {fx_result.warning}")
+    total_usd = (cfg["account"]["total_krw"] / fx_result.rate) if fx_result.rate else 0.0
+
+    gap_dates_by_ticker = {t: {pd.Timestamp(d) for d in price_result.data_gap.get(t, [])} for t in indicator_map}
+
+    if do_replay:
+        # ── 레거시 경로(P2): state.db가 비어 있을 때만 가상 체결로 되돌려 본다 ──
+        positions = db.load_all_positions(conn)
+        replay_needed = len(positions) == 0
+        lookback_days = cfg["replay"]["lookback_days"]
+        states = {
+            t: positions.get(t) or st.init_state(t, name_map.get(t, "")) for t in indicator_map
+        }
+        per_ticker_dates = {t: _dates_to_process(df, replay_needed, lookback_days) for t, df in indicator_map.items()}
+        sim = simulate_since(
+            indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker, fills_df,
+            virtual_fill=replay_needed, max_concurrent=max_concurrent, total_usd=total_usd,
+        )
+        events_to_persist = sim["all_events"]
+    else:
+        # ── P3 기본 경로: last_processed_date 다음 거래일부터 이번 기준일까지 모든
+        # 거래일을 순서대로 다시 계산한다(P3.2 3번, "처리 날짜 누락 방지"). 이번
+        # 기준일이 last_processed_date 이하이면(같은 날 재실행 등) 아무것도 하지 않는다.
+        last_processed_str = db.get_meta(conn, "last_processed_date")
+        if last_processed_str is not None and actual_date <= pd.Timestamp(last_processed_str).date():
+            conn.close()
+            reason = (
+                f"기준일 {actual_date.isoformat()}은 이미 처리됨"
+                f"(last_processed_date={last_processed_str}) — 이번 실행은 아무것도 하지 않습니다."
+            )
+            print(f"[daily] {reason}")
+            return _empty_run_summary(mode, actual_date, [reason], skipped=True)
+
+        next_start = (
+            pd.Timestamp(last_processed_str) + pd.Timedelta(days=1)
+            if last_processed_str is not None
+            else pd.Timestamp(actual_date)  # 이 모드로 처음 실행 — 오늘부터 시작(과거로 replay하지 않는다)
+        )
+
+        states = {t: st.init_state(t, name_map.get(t, "")) for t in indicator_map}
+        per_ticker_dates = {t: _dates_since_start(df, next_start) for t, df in indicator_map.items()}
+        sim = simulate_since(
+            indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker, fills_df,
+            virtual_fill=(mode == "paper"), max_concurrent=max_concurrent, total_usd=total_usd,
+        )
+        replay_needed = False
+        events_to_persist = sim["all_events"]  # 건너뛴 거래일이 있어도 모두 기록한다 (누락 방지, P3.2 3번)
+        if not dry_run:
+            db.set_meta(conn, "last_processed_date", str(actual_date))
+
+    states = sim["states"]
+    today_events = sim["today_events"]
+    run_warnings.extend(sim["warnings"])
+    data_gap_tickers = sim["data_gap_tickers"]
+    as_of_by_ticker = sim["as_of_by_ticker"]
+
+    positions = states
+    for ticker, state_ in states.items():
+        if not dry_run:
+            db.save_position(conn, state_)
+
+    if not dry_run:
+        db.record_events(conn, events_to_persist)
+
+    # ── 재현성 확인용 가격 스냅샷 (P2.1 보완 3번): dry-run에도 남긴다(진단 목적) ──
+    run_at = datetime.now().isoformat(timespec="seconds")
+    snapshot_rows = []
+    for ticker, df in price_result.prices.items():
+        last = df.iloc[-1]
+        snapshot_rows.append(
+            {
+                "ticker": ticker,
+                "date": str(df.index[-1].date()),
+                "close": float(last["close"]) if pd.notna(last["close"]) else None,
+                "close_source": last.get("close_source"),
+                "meta_time": df.attrs.get("close_meta_time"),
+            }
+        )
+    if not dry_run:
+        db.record_price_snapshots(conn, run_at, snapshot_rows)
+
+    summary = build_report_summary(
+        mode, cfg, indicator_map, name_map, earnings_map, positions, today_events,
+        as_of_by_ticker, data_gap_tickers, fills_result, run_warnings, max_concurrent,
+        fx_result, replay_needed=replay_needed,
+    )
+    as_of = summary["as_of"]
+    funnel = summary["funnel"]
+
+    # ── 통과 현황(5단계 funnel): 보고서에는 안 쓰고 CSV·events에만 남긴다 ───────
+    if as_of is not None:
+        _write_funnel(funnel, as_of)
+        if not dry_run:
+            db.record_events(conn, [{"date": str(as_of.date()), "ticker": "", "kind": "FUNNEL", **funnel}])
+
+    if not dry_run:
+        db.record_run(
+            conn,
+            run_at=run_at,
+            as_of_date=str(as_of.date()) if as_of is not None else "",
+            ticker_count=len(indicator_map),
+            warning_count=len(run_warnings),
+        )
+    conn.close()
 
     _write_outputs(summary)
     report_path = report_html.render_report(summary, cfg, OUTPUT_DIR)

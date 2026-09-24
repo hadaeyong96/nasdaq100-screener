@@ -57,7 +57,7 @@ def test_paper_mode_auto_fills_at_recommended_qty(cfg):
     # 가상 체결은 core/sizing.py로 수량을 계산해야 해서 account·risk 설정도 필요하다.
     cfg = {
         **cfg,
-        "account": {"equity_usd": 100000},
+        "account": {"total_krw": 130_000_000},
         "risk": {
             "a1_budget_pct": 0.2222222222222222,
             "a2_budget_pct": 0.4444444444444444,
@@ -74,7 +74,7 @@ def test_paper_mode_auto_fills_at_recommended_qty(cfg):
 
     result = simulate_since(
         indicator_map, per_ticker_dates, states, cfg, earnings_map, gap_dates_by_ticker,
-        empty_fills, virtual_fill=True, max_concurrent=8,
+        empty_fills, virtual_fill=True, max_concurrent=8, total_usd=100_000,
     )
 
     final_state = result["states"]["TEST"]

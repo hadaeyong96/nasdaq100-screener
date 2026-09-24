@@ -23,26 +23,41 @@ html,body{margin:0;background:var(--paper);color:var(--ink)}
 body{font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
   font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;
   padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
-.wrap{max-width:1180px;margin:0 auto;padding:24px 16px 50px}
+.wrap{max-width:1560px;margin:0 auto;padding:24px 16px 50px}
 header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;
   border-bottom:3px solid var(--ink);padding-bottom:12px;margin-bottom:16px}
 h1{font-size:24px;font-weight:800;margin:0;letter-spacing:-0.02em}
+.mode-badge{display:inline-block;margin-left:8px;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:700;
+  background:var(--info-bg);color:var(--info);vertical-align:middle}
 .lead{color:var(--sub);font-size:13px;margin-top:4px}
 .meta{color:var(--sub);font-size:13px;text-align:right}
 .meta b{color:var(--ink)}
-.strip{display:flex;flex-wrap:wrap;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
-.strip .it{display:flex;align-items:baseline;gap:6px;padding:7px 14px;border-right:1px solid var(--grid);font-size:13px;color:var(--sub)}
-.strip .it:last-child{border-right:none}
-.strip .it b{font-size:15px;color:var(--ink)}
-.strip .it.buy b{color:var(--buy)}.strip .it.sell b{color:var(--sell)}
-.acct{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;background:var(--info-bg);border-radius:8px;padding:7px 12px;margin-bottom:16px;font-size:13px;color:var(--sub)}
-.acct label{font-weight:700;color:var(--ink)}
-.acct .in{display:inline-flex;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 8px}
-.acct input{font:inherit;font-weight:700;width:120px;border:none;background:transparent;color:var(--ink);padding:4px 0;text-align:right;outline:none}
-.acct .plan span{margin-right:10px;white-space:nowrap}
-.acct .plan b{color:var(--ink)}
-.acct .hint{font-size:12px;color:var(--mute)}
-td.calc{background:var(--info-bg)}
+.fx-warn{color:var(--warn)}
+
+/* ── 자금 계획 줄 (P3.6 6-3번) ───────────────────────────────── */
+.plan{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px}
+.plan .items{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:13px;color:var(--sub);margin-bottom:8px}
+.plan .items b{color:var(--ink);font-size:14px}
+.plan .items .qqqm b{color:var(--info)}
+.bar{height:10px;border-radius:6px;overflow:hidden;display:flex;background:var(--grid)}
+.bar span{height:100%}
+.bar .b-held{background:var(--buy)}
+.bar .b-reserved{background:#6fae8c}
+.bar .b-new{background:var(--warn)}
+.bar .b-remaining{background:var(--grid)}
+.bar-legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:11px;color:var(--mute);margin-top:6px}
+.bar-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
+
+/* ── 규칙 탭 계산기 (P3.6 4번: 강조 배경 없음) ───────────────────── */
+.calc-box{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--sub)}
+.calc-box .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-bottom:6px}
+.calc-box label{font-weight:700;color:var(--ink)}
+.calc-box .in{display:inline-flex;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 8px}
+.calc-box input{font:inherit;font-weight:700;width:130px;border:none;background:transparent;color:var(--ink);padding:4px 0;text-align:right;outline:none}
+.calc-box .plan-out span{margin-right:10px;white-space:nowrap}
+.calc-box .plan-out b{color:var(--ink)}
+.calc-box .hint{font-size:12px;color:var(--mute)}
+td.calc{color:var(--info);font-weight:700}
 .pf{margin-bottom:8px}
 .pf h2{font-size:15px;font-weight:700;margin:4px 0 6px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .pf h2 small{font-size:12px;font-weight:400;color:var(--mute)}
@@ -61,10 +76,13 @@ td.calc{background:var(--info-bg)}
 .subtabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 8px}
 .subtabs button{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--sub);
   border-radius:999px;padding:5px 12px;cursor:pointer}
+.subtabs button.has{border-color:var(--buy)}
+.subtabs button.empty{opacity:.55}
 .subtabs button[aria-selected="true"]{background:var(--buy);border-color:var(--buy);color:#fff}
 .panel{display:none;padding-top:12px}.panel.on{display:block}
 .sub{display:none}.sub.on{display:block}
 .desc{color:var(--sub);font-size:13px;margin:0 0 10px}
+.risk-line{font-weight:700;color:var(--ink)}
 
 /* 시트 표 */
 .sheet{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
@@ -76,7 +94,12 @@ th.asc::after{content:" ▲";color:var(--ink)}th.desc::after{content:" ▼";colo
 th.nosort{cursor:default}th.nosort::after{content:""}
 td.num,th.num{text-align:right}
 td.note{white-space:normal;min-width:200px;color:var(--sub)}
-.tk{font-weight:700}.kr{color:var(--sub);font-size:12px;margin-left:4px}
+.tk{font-weight:700}
+.nm{font-weight:700}
+a.tk{font-weight:600;color:var(--ink);text-decoration:none;border-bottom:1px dashed var(--mute)}
+a.tk:hover{color:var(--info);border-bottom-color:var(--info)}
+a.tk::after{content:" ↗";font-size:11px;color:var(--mute);font-weight:400}
+.kr{color:var(--sub);font-size:12px;margin-left:4px}
 .ok{color:var(--buy);font-weight:700}.no{color:var(--sell);font-weight:700}.na{color:var(--mute)}
 .badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
 .b-buy{background:var(--buy-bg);color:var(--buy)}.b-sell{background:var(--sell-bg);color:var(--sell)}
@@ -89,9 +112,46 @@ td.note{white-space:normal;min-width:200px;color:var(--sub)}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .two table{min-width:0}
 footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var(--line);padding-top:10px}
+.stale-banner{background:var(--sell);color:#fff;font-weight:700;font-size:14px;
+  border-radius:8px;padding:10px 14px;margin-bottom:16px}
+
+/* ── 휴대폰 화면: 표를 카드로 ───────────────── */
+.tabs{position:sticky;top:0;z-index:5;background:var(--paper);padding-top:env(safe-area-inset-top,0)}
+@media (max-width:640px){
+  body{font-size:15px}
+  .wrap{padding:14px 12px 40px}
+  header{flex-direction:column;align-items:flex-start;gap:6px}
+  h1{font-size:21px}
+  .meta{text-align:left}
+  .plan .items{flex-direction:column;gap:2px}
+  .calc-box .row{flex-direction:column;align-items:flex-start}
+  .tabs button{padding:9px 12px;font-size:14px}
+  .subtabs button{font-size:14px;padding:7px 12px}
+  .sheet{background:transparent;border:none;overflow:visible}
+  .sheet table,.pf table{min-width:0}
+  .sheet table,.sheet tbody,.sheet tfoot{display:block;width:100%}
+  .sheet thead{display:none}
+  .sheet tr{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;
+    display:grid;grid-template-columns:1fr 1fr 1fr;column-gap:10px;row-gap:8px}
+  .sheet td{border:none;padding:0;white-space:normal;text-align:left;min-width:0}
+  .sheet td::before{content:attr(data-label);display:block;color:var(--sub);font-size:11px;line-height:1.3;margin-bottom:1px}
+  .sheet td.num{text-align:left}
+  .sheet td:first-child{grid-column:1/-1;font-size:17px;padding-bottom:8px;border-bottom:1px solid var(--grid)}
+  .sheet td:first-child::before{content:none}
+  .sheet td:nth-child(2){grid-column:1/-1;margin-top:-6px;padding-bottom:6px}
+  .sheet td.note{grid-column:1/-1;color:var(--sub);font-size:13px}
+  .sheet td.note:empty{display:none}
+  .sheet td.empty{grid-column:1/-1;text-align:center}
+  .sheet td.empty::before{content:none}
+  .sheet tr:has(td.empty){display:block}
+  .sheet td.calc{color:var(--info);font-weight:700}
+  .sheet tfoot tr{background:var(--soft)}
+  .sheet tfoot td:empty{display:none}
+  .two{grid-template-columns:1fr}
+}
 </style>
 </head>
-<body>
+<body data-fx="1380" data-date="2026-09-22" data-total="100000000" data-limit-pct="60" data-used="18400000" data-reserved="8300000" data-slot="7500000">
 <div class="wrap">
 
 <header>
@@ -102,68 +162,84 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <div class="meta">
     기준일 <b>2026-09-22 (화) 종가</b><br>
     주문 가능일 <b>2026-09-23 (수) 미국장</b><br>
-    계좌 기준 $100,000 · 생성 2026-09-23 07:30 KST
+    총자금 <b>1억 원</b> · 환율 <b>₩1,380/$</b> (9/22) · 생성 2026-09-23 07:30 KST
   </div>
 </header>
 
-<div class="strip">
-  <div class="it buy">신규 매수 <b>4건</b></div>
-  <div class="it sell">매도·손절 <b>1건</b></div>
-  <div class="it">보유 <b>5 / 8</b></div>
-  <div class="it">신규 위험 <b id="riskSum">$1,637</b> <span id="riskPct">(1.6%)</span></div>
-  <div class="it">걸러진 신호 <b>3건</b></div>
-</div>
-
-<div class="acct">
-  <label for="equity">계좌 금액</label>
-  <span class="in">$<input id="equity" type="text" inputmode="numeric" value="100,000"></span>
-  <span class="plan" id="plan"></span>
-  <span class="hint">금액을 바꾸면 신규 매수 수량·금액이 다시 계산됩니다 (파란 칸)</span>
+<div class="plan">
+  <div class="items">
+    <span>전략 한도 <b>6,000만</b> (60%)</span>
+    <span>종목당 슬롯 <b>750만</b></span>
+    <span>보유 <b>1,840만</b></span>
+    <span>2·3차 예약 <b>830만</b></span>
+    <span>오늘 신규 <b>750만</b></span>
+    <span>남은 한도 <b>2,580만</b></span>
+    <span class="qqqm">QQQM 목표 <b>3,500만</b></span>
+  </div>
+  <div class="bar">
+    <span class="b-held" style="width:30.7%"></span>
+    <span class="b-reserved" style="width:13.8%"></span>
+    <span class="b-new" style="width:12.5%"></span>
+    <span class="b-remaining" style="width:43%"></span>
+  </div>
+  <div class="bar-legend">
+    <span><i style="background:var(--buy)"></i>보유</span>
+    <span><i style="background:#6fae8c"></i>2·3차 예약</span>
+    <span><i style="background:var(--warn)"></i>오늘 신규</span>
+    <span><i style="background:var(--grid)"></i>남은 한도</span>
+  </div>
 </div>
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="buy" aria-selected="true">신규 매수<span class="n">4</span></button>
-  <button role="tab" data-tab="sell" aria-selected="false">매도·손절<span class="n">1</span></button>
-  <button role="tab" data-tab="hold" aria-selected="false">보유 현황<span class="n">5</span></button>
+  <button role="tab" data-tab="sell" aria-selected="false">매도·손절<span class="n">2</span></button>
+  <button role="tab" data-tab="hold" aria-selected="false">보유 현황<span class="n">5/8</span></button>
   <button role="tab" data-tab="watch" aria-selected="false">관찰 목록<span class="n">2</span></button>
   <button role="tab" data-tab="filtered" aria-selected="false">걸러진 신호<span class="n">3</span></button>
   <button role="tab" data-tab="warn" aria-selected="false">경고<span class="n">2</span></button>
   <button role="tab" data-tab="rules" aria-selected="false">규칙</button>
 </nav>
 
-<!-- 통과 현황 -->
-
-
 <!-- 신규 매수 -->
 <section class="panel on" id="buy">
-  <p class="desc">다음 거래일에 지정가(종가 × 1.01) 이하로 주문하고, 체결되지 않으면 취소합니다. 체결 후 손절 예약 주문을 바로 겁니다.</p>
+  <p class="desc"><span class="risk-line">오늘 신규 위험 750만 (계좌의 0.75%)</span> · 다음 거래일에 지정가(종가 × 1.01) 이하로 주문하고, 체결되지 않으면 취소합니다. 체결 후 손절 예약 주문을 바로 겁니다.</p>
   <div class="subtabs" role="tablist">
-    <button data-sub="b1" aria-selected="true">1차 정찰 · 11% (3)</button>
-    <button data-sub="b2" aria-selected="false">2차 확인 · 22% (0)</button>
-    <button data-sub="b3" aria-selected="false">3차 확정 · 67% (0)</button>
-    <button data-sub="b9" aria-selected="false">재진입 · 1회 (1)</button>
+    <button data-sub="all" aria-selected="true" class="has">전체 (4)</button>
+    <button data-sub="b1" aria-selected="false" class="has">1차 정찰 · 슬롯의 1/9 (3)</button>
+    <button data-sub="b2" aria-selected="false" class="empty">2차 확인 · 2/9 (0)</button>
+    <button data-sub="b3" aria-selected="false" class="empty">3차 확정 · 6/9 (0)</button>
+    <button data-sub="b9" aria-selected="false" class="has">재진입 · 슬롯 전체 (1)</button>
   </div>
 
-  <div class="sub on" id="b1"><div class="sheet"><table>
-  <thead><tr><th>종목</th><th>RSI 30 돌파</th><th>MACD</th><th>구름</th><th class="num">거래량</th><th class="num">점수</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">계좌%</th><th class="num">손절가</th><th class="num">손절폭</th><th>손절 기준</th><th class="num">위험금액</th><th>실적일</th><th>결정</th><th class="nosort">비고</th></tr></thead>
+  <div class="sub on" id="all"><div class="sheet"><table>
+  <thead><tr><th>종목</th><th>티커</th><th class="nosort">차수</th><th class="nosort">결정</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">손절가</th><th class="num">손절폭</th><th class="num">점수</th><th class="nosort">비고</th></tr></thead>
   <tbody>
-  <tr class="sig" data-stage="b1" data-limit="132.50" data-stop="127.98"><td><span class="tk">PEP</span><span class="kr">펩시코</span></td><td><span class="ok">✔</span> 25.1 → 31.2</td><td class="na">2차 대기</td><td class="na">아래</td><td class="num" data-v="1.3">1.3배</td><td class="num">20</td><td class="num" data-v="132.50">$132.50</td><td class="num calc q">34</td><td class="num calc amt" data-v="4505">$4,505</td><td class="num calc pct" data-v="4.5">4.5%</td><td class="num" data-v="127.98">$127.98</td><td class="num" data-v="-3.4">−3.4%</td><td>10일 최저가</td><td class="num calc rk" data-v="221">$221</td><td>10/07</td><td><span class="badge b-buy">매수</span></td><td class="note">2차는 10/06까지 골든크로스 필요</td></tr>
-  <tr class="sig" data-stage="b1" data-limit="47.06" data-stop="45.79"><td><span class="tk">CSX</span><span class="kr">CSX</span></td><td><span class="ok">✔</span> 25.2 → 30.8</td><td class="na">2차 대기</td><td class="na">아래</td><td class="num" data-v="1.1">1.1배</td><td class="num">10</td><td class="num" data-v="47.06">$47.06</td><td class="num calc q">112</td><td class="num calc amt" data-v="5271">$5,271</td><td class="num calc pct" data-v="5.3">5.3%</td><td class="num" data-v="45.79">$45.79</td><td class="num" data-v="-2.7">−2.7%</td><td>10일 최저가</td><td class="num calc rk" data-v="221">$221</td><td>10/15</td><td><span class="badge b-buy">매수</span></td><td class="note"></td></tr>
-  <tr class="sig" data-stage="b1" data-limit="179.08" data-stop="169.65"><td><span class="tk">ODFL</span><span class="kr">올드도미니언</span></td><td><span class="ok">✔</span> 28.2 → 30.4</td><td class="na">2차 대기</td><td class="na">아래</td><td class="num" data-v="0.9">0.9배</td><td class="num">0</td><td class="num" data-v="179.08">$179.08</td><td class="num calc q">18</td><td class="num calc amt" data-v="3223">$3,223</td><td class="num calc pct" data-v="3.2">3.2%</td><td class="num" data-v="169.65">$169.65</td><td class="num" data-v="-5.3">−5.3%</td><td>10일 최저가</td><td class="num calc rk" data-v="218">$218</td><td>10/22</td><td><span class="badge b-buy">매수</span></td><td class="note">거래량 부족, 점수 최하</td></tr>
+  <tr class="sig" data-key="NVDA-B" data-stage="B" data-new="1" data-score="75" data-limit="231.16" data-stop="208.93"><td class="nm">엔비디아</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=NVDA&p=d" target="_blank" rel="noopener" title="NVDA 차트 (Finviz)">NVDA</a></td><td>재진입</td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="231.16">$231.16</td><td class="num calc q">38</td><td class="num calc amt" data-v="12123000">1,212만</td><td class="num" data-v="208.93">$208.93</td><td class="num" data-v="-9.6">−9.6%</td><td class="num">75</td><td class="note">S등급 · 1회에 전부 매수 (위험 1%)</td></tr>
+  <tr class="sig" data-key="PEP-A1" data-stage="A1" data-new="1" data-score="20" data-limit="132.50" data-stop="127.98"><td class="nm">펩시코</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=PEP&p=d" target="_blank" rel="noopener" title="PEP 차트 (Finviz)">PEP</a></td><td>1차 정찰</td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="132.50">$132.50</td><td class="num calc q">34</td><td class="num calc amt" data-v="6221000">622만</td><td class="num" data-v="127.98">$127.98</td><td class="num" data-v="-3.4">−3.4%</td><td class="num">20</td><td class="note">RSI 25.1 → 31.2 돌파 · 2차는 10/06까지 골든크로스 필요</td></tr>
+  <tr class="sig" data-key="CSX-A1" data-stage="A1" data-new="1" data-score="10" data-limit="47.06" data-stop="45.79"><td class="nm">CSX</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=CSX&p=d" target="_blank" rel="noopener" title="CSX 차트 (Finviz)">CSX</a></td><td>1차 정찰</td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="47.06">$47.06</td><td class="num calc q">0</td><td class="num calc amt" data-v="0">0원</td><td class="num" data-v="45.79">$45.79</td><td class="num" data-v="-2.7">−2.7%</td><td class="num">10</td><td class="note">RSI 25.2 → 30.8 돌파 · 남은 한도 부족 — 매수 보류</td></tr>
+  <tr class="sig" data-key="ODFL-A1" data-stage="A1" data-new="1" data-score="0" data-limit="179.08" data-stop="169.65"><td class="nm">올드도미니언</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=ODFL&p=d" target="_blank" rel="noopener" title="ODFL 차트 (Finviz)">ODFL</a></td><td>1차 정찰</td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="179.08">$179.08</td><td class="num calc q">0</td><td class="num calc amt" data-v="0">0원</td><td class="num" data-v="169.65">$169.65</td><td class="num" data-v="-5.3">−5.3%</td><td class="num">0</td><td class="note">RSI 28.2 → 30.4 돌파 · 거래량 부족 · 남은 한도 부족 — 매수 보류</td></tr>
+  </tbody></table></div></div>
+
+  <div class="sub" id="b1"><div class="sheet"><table>
+  <thead><tr><th>종목</th><th>티커</th><th class="nosort">결정</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">손절가</th><th class="num">손절폭</th><th class="num">최대손실</th><th class="num">점수</th><th class="nosort">비고</th></tr></thead>
+  <tbody>
+  <tr class="sig" data-key="PEP-A1" data-stage="A1" data-new="1" data-score="20" data-limit="132.50" data-stop="127.98"><td class="nm">펩시코</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=PEP&p=d" target="_blank" rel="noopener" title="PEP 차트 (Finviz)">PEP</a></td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="132.50">$132.50</td><td class="num calc q">34</td><td class="num calc amt" data-v="6221000">622만</td><td class="num" data-v="127.98">$127.98</td><td class="num" data-v="-3.4">−3.4%</td><td class="num calc ml" data-v="221000">22만</td><td class="num">20</td><td class="note">RSI 25.1 → 31.2 돌파 · 2차는 10/06까지 골든크로스 필요</td></tr>
+  <tr class="sig" data-key="CSX-A1" data-stage="A1" data-new="1" data-score="10" data-limit="47.06" data-stop="45.79"><td class="nm">CSX</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=CSX&p=d" target="_blank" rel="noopener" title="CSX 차트 (Finviz)">CSX</a></td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="47.06">$47.06</td><td class="num calc q">0</td><td class="num calc amt" data-v="0">0원</td><td class="num" data-v="45.79">$45.79</td><td class="num" data-v="-2.7">−2.7%</td><td class="num calc ml" data-v="0">0원</td><td class="num">10</td><td class="note">RSI 25.2 → 30.8 돌파 · 남은 한도 부족 — 매수 보류</td></tr>
+  <tr class="sig" data-key="ODFL-A1" data-stage="A1" data-new="1" data-score="0" data-limit="179.08" data-stop="169.65"><td class="nm">올드도미니언</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=ODFL&p=d" target="_blank" rel="noopener" title="ODFL 차트 (Finviz)">ODFL</a></td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="179.08">$179.08</td><td class="num calc q">0</td><td class="num calc amt" data-v="0">0원</td><td class="num" data-v="169.65">$169.65</td><td class="num" data-v="-5.3">−5.3%</td><td class="num calc ml" data-v="0">0원</td><td class="num">0</td><td class="note">RSI 28.2 → 30.4 돌파 · 거래량 부족 · 남은 한도 부족 — 매수 보류</td></tr>
   </tbody></table></div></div>
 
   <div class="sub" id="b2"><div class="sheet"><table>
-  <thead><tr><th>종목</th><th>1차 날짜</th><th>MACD 골든크로스</th><th>RSI</th><th>등급</th><th class="num">점수</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">계좌%</th><th class="num">손절가</th><th class="num">손절폭</th><th>손절 기준</th><th class="num">위험금액</th><th>실적일</th><th>결정</th><th class="nosort">비고</th></tr></thead>
-  <tbody><tr><td colspan="17" class="empty">오늘 해당 종목 없음</td></tr></tbody></table></div></div>
+  <thead><tr><th>종목</th><th>티커</th><th class="nosort">결정</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">손절가</th><th class="num">손절폭</th><th class="num">최대손실</th><th class="num">점수</th><th class="nosort">비고</th></tr></thead>
+  <tbody><tr><td colspan="11" class="empty">오늘 해당 종목 없음</td></tr></tbody></table></div></div>
 
   <div class="sub" id="b3"><div class="sheet"><table>
-  <thead><tr><th>종목</th><th>구름 위</th><th>앞구름 양운</th><th>후행스팬 돌파</th><th>모멘텀</th><th class="num">시가 갭</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">계좌%</th><th class="num">손절가</th><th class="num">손절폭</th><th>손절 기준</th><th class="num">위험금액</th><th>실적일</th><th>결정</th><th class="nosort">비고</th></tr></thead>
-  <tbody><tr><td colspan="17" class="empty">오늘 해당 종목 없음</td></tr></tbody></table></div></div>
+  <thead><tr><th>종목</th><th>티커</th><th class="nosort">결정</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">손절가</th><th class="num">손절폭</th><th class="num">최대손실</th><th class="num">점수</th><th class="nosort">비고</th></tr></thead>
+  <tbody><tr><td colspan="11" class="empty">오늘 해당 종목 없음</td></tr></tbody></table></div></div>
 
   <div class="sub" id="b9"><div class="sheet"><table>
-  <thead><tr><th>종목</th><th>구름 위 · 양운</th><th>MACD 골든크로스</th><th>RSI 50~70</th><th>등급</th><th class="num">점수</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">계좌%</th><th class="num">손절가</th><th class="num">손절폭</th><th>손절 기준</th><th class="num">위험금액</th><th>실적일</th><th>결정</th><th class="nosort">비고</th></tr></thead>
+  <thead><tr><th>종목</th><th>티커</th><th class="nosort">결정</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th><th class="num">손절가</th><th class="num">손절폭</th><th class="num">최대손실</th><th class="num">점수</th><th class="nosort">비고</th></tr></thead>
   <tbody>
-  <tr class="sig" data-stage="b9" data-limit="231.16" data-stop="208.93"><td><span class="tk">NVDA</span><span class="kr">엔비디아</span></td><td><span class="ok">✔</span></td><td><span class="ok">✔</span> 정규화 +0.6%</td><td><span class="ok">✔</span> 59.8</td><td><span class="badge b-buy">S</span></td><td class="num">75</td><td class="num" data-v="231.16">$231.16</td><td class="num calc q">38</td><td class="num calc amt" data-v="8784">$8,784</td><td class="num calc pct" data-v="8.8">8.8%</td><td class="num" data-v="208.93">$208.93</td><td class="num" data-v="-9.6">−9.6%</td><td>진입일 10일 최저가</td><td class="num calc rk" data-v="977">$977</td><td>11/19</td><td><span class="badge b-buy">매수</span></td><td class="note">재진입 · 1회 전량 · 위험 1% (1차의 약 4배 규모)</td></tr>
+  <tr class="sig" data-key="NVDA-B" data-stage="B" data-new="1" data-score="75" data-limit="231.16" data-stop="208.93"><td class="nm">엔비디아</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=NVDA&p=d" target="_blank" rel="noopener" title="NVDA 차트 (Finviz)">NVDA</a></td><td><span class="badge b-buy">매수</span></td><td class="num" data-v="231.16">$231.16</td><td class="num calc q">38</td><td class="num calc amt" data-v="12123000">1,212만</td><td class="num" data-v="208.93">$208.93</td><td class="num" data-v="-9.6">−9.6%</td><td class="num calc ml" data-v="750000">75만</td><td class="num">75</td><td class="note">S등급 · 1회에 전부 매수 (위험 1%)</td></tr>
   </tbody></table></div></div>
 </section>
 
@@ -171,9 +247,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="sell">
   <p class="desc">손절이 모든 신호보다 우선합니다. 추세가 약해지는 정도에 따라 1차분 → 2차분 → 3차분 순으로 나눠 팝니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th>종목</th><th>신호</th><th>매도 범위</th><th class="num">매도 수량</th><th class="num">보유 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">예상 손익</th><th class="num">손익률</th><th>결정</th><th class="nosort">비고 · 지표 근거</th></tr></thead>
+  <thead><tr><th>종목</th><th>티커</th><th>신호</th><th>매도 범위</th><th class="num">매도 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">예상 손익</th><th class="num">손익률</th><th>결정</th><th class="nosort">주문 안내</th><th class="nosort">비고 · 지표 근거</th></tr></thead>
   <tbody>
-  <tr><td><span class="tk">ROP</span><span class="kr">로퍼</span></td><td><span class="badge b-sell">E3 구조 붕괴</span></td><td>전량</td><td class="num">14</td><td class="num">14</td><td class="num" data-v="441.20">$441.20</td><td class="num" data-v="412.30">$412.30</td><td class="num no" data-v="-405">−$405</td><td class="num no" data-v="-6.6">−6.6%</td><td><span class="badge b-sell">매도</span></td><td class="note">종가 $412.30 &lt; 구름 하단 $418.90 · 재진입 보유분</td></tr>
+  <tr><td class="nm">로퍼</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=ROP&p=d" target="_blank" rel="noopener" title="ROP 차트 (Finviz)">ROP</a></td><td><span class="badge b-sell">E3 구조 붕괴</span></td><td>전량</td><td class="num">14</td><td class="num">14</td><td class="num" data-v="441.20">$441.20</td><td class="num" data-v="412.30">$412.30</td><td class="num no" data-v="-558600">−56만</td><td class="num no" data-v="-6.6">−6.6%</td><td><span class="badge b-sell">매도</span></td><td class="note">다음 거래일 장 시작 시 14주 매도 주문 예약</td><td class="note">종가 $412.30 &lt; 구름 하단 $418.90 · 재진입 보유분</td></tr>
+  <tr><td class="nm">아마존</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=AMZN&p=d" target="_blank" rel="noopener" title="AMZN 차트 (Finviz)">AMZN</a></td><td><span class="badge b-sell">손절</span></td><td>전량</td><td class="num">12</td><td class="num">12</td><td class="num" data-v="221.40">$221.40</td><td class="num" data-v="217.90">$217.90</td><td class="num no" data-v="-57960">−6만</td><td class="num no" data-v="-1.6">−1.6%</td><td><span class="badge b-sell">손절</span></td><td class="note"><b>손절 예약 확인</b> · 증권사 손절 예약($218.70)이 오늘 체결됐으면 체결 기록만 입력. 체결 안 됐으면 다음 거래일 장 시작 시 12주 전량 시장가 매도 예약</td><td class="note">종가 $217.90 &lt; 손절가 $218.70</td></tr>
   </tbody></table></div>
 </section>
 
@@ -181,10 +258,11 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="hold">
   <p class="desc">진행 칸은 1차·2차·3차 매수 여부입니다. 손절가는 증권사 예약 주문과 같아야 합니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th>종목</th><th>단계</th><th class="nosort">진행</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">평가금액</th><th class="num">손익률</th><th class="num">손절가</th><th>손절 기준</th><th class="num">손절까지</th><th class="nosort">비고 · 다음 매도 신호</th></tr></thead>
+  <thead><tr><th>종목</th><th>티커</th><th>단계</th><th class="nosort">진행</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">평가금액</th><th class="num">평가손익</th><th class="num">손익률</th><th class="num">손절가</th><th class="num">손절까지</th><th class="nosort">비고 · 다음 매도 신호</th></tr></thead>
   <tbody>
-  <tr><td><span class="tk">AAPL</span><span class="kr">애플</span></td><td>3차 확정</td><td><span class="stage"><span class="on">1</span><span class="on">2</span><span class="on">3</span></span></td><td class="num">70</td><td class="num" data-v="318.40">$318.40</td><td class="num" data-v="339.75">$339.75</td><td class="num" data-v="23783">$23,783</td><td class="num ok" data-v="6.7">+6.7%</td><td class="num" data-v="315.36">$315.36</td><td>구름 하단</td><td class="num" data-v="-7.2">−7.2%</td><td class="note">E1 MACD 데드크로스 시 1차분</td></tr>
-  <tr><td><span class="tk">TSLA</span><span class="kr">테슬라</span></td><td>2차 확인</td><td><span class="stage"><span class="on">1</span><span class="on">2</span><span>3</span></span></td><td class="num">41</td><td class="num" data-v="361.10">$361.10</td><td class="num" data-v="375.30">$375.30</td><td class="num" data-v="15387">$15,387</td><td class="num ok" data-v="3.9">+3.9%</td><td class="num" data-v="342.10">$342.10</td><td>10일 최저가</td><td class="num" data-v="-8.8">−8.8%</td><td class="note">3차 조건 3/4 충족</td></tr>
+  <tr><td class="nm">애플</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=AAPL&p=d" target="_blank" rel="noopener" title="AAPL 차트 (Finviz)">AAPL</a></td><td>3차 확정</td><td><span class="stage"><span class="on">1</span><span class="on">2</span><span class="on">3</span></span></td><td class="num">70</td><td class="num" data-v="318.40">$318.40</td><td class="num" data-v="339.75">$339.75</td><td class="num" data-v="22824000">2,282만</td><td class="num ok" data-v="1428300">143만</td><td class="num ok" data-v="6.7">+6.7%</td><td class="num" data-v="315.36">$315.36</td><td class="num" data-v="-7.2">−7.2%</td><td class="note">E1 MACD 데드크로스 시 1차분</td></tr>
+  <tr><td class="nm">테슬라</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=TSLA&p=d" target="_blank" rel="noopener" title="TSLA 차트 (Finviz)">TSLA</a></td><td>2차 확인</td><td><span class="stage"><span class="on">1</span><span class="on">2</span><span>3</span></span></td><td class="num">41</td><td class="num" data-v="361.10">$361.10</td><td class="num" data-v="375.30">$375.30</td><td class="num" data-v="21229740">2,123만</td><td class="num ok" data-v="805620">81만</td><td class="num ok" data-v="3.9">+3.9%</td><td class="num" data-v="342.10">$342.10</td><td class="num" data-v="-8.8">−8.8%</td><td class="note">3차 조건 3/4 충족</td></tr>
+  <tr><td class="nm">QQQM (대기자금)</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=QQQM&p=d" target="_blank" rel="noopener" title="QQQM 차트 (Finviz)">QQQM</a></td><td>대기자금</td><td><span class="na">–</span></td><td class="num">180</td><td class="num" data-v="215.30">$215.30</td><td class="num na">–</td><td class="num na">–</td><td class="num na">–</td><td class="num na">–</td><td class="num na">–</td><td class="num na">–</td><td class="note"></td></tr>
   </tbody></table></div>
 </section>
 
@@ -192,10 +270,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="watch">
   <p class="desc">다음 매수 신호를 기다리는 종목입니다. 남은 기간 안에 조건이 안 오면 1차분은 만료 매도됩니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th>종목</th><th>현재 단계</th><th>기다리는 신호</th><th class="num">남은 거래일</th><th>기한</th><th class="nosort">비고 · 현재 지표</th></tr></thead>
+  <thead><tr><th>종목</th><th>티커</th><th>현재 단계</th><th>기다리는 신호</th><th class="num">남은 거래일</th><th>기한</th><th class="nosort">비고 · 현재 지표</th></tr></thead>
   <tbody>
-  <tr><td><span class="tk">PEP</span><span class="kr">펩시코</span></td><td>1차 (체결 시)</td><td>2차 · MACD 골든크로스</td><td class="num">10</td><td>10/06</td><td class="note">MACD − 시그널 = −0.42, 간격 좁혀지는 중</td></tr>
-  <tr><td><span class="tk">TSLA</span><span class="kr">테슬라</span></td><td>2차 확인</td><td>3차 · 구름 4요소</td><td class="num" data-v="999">–</td><td class="na">제한 없음</td><td class="note">구름 위 ✔ · 양운 ✔ · 후행스팬 ✔ · RSI 50 ✘ (47.2)</td></tr>
+  <tr><td class="nm">펩시코</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=PEP&p=d" target="_blank" rel="noopener" title="PEP 차트 (Finviz)">PEP</a></td><td>1차 (체결 시)</td><td>2차 · MACD 골든크로스</td><td class="num">10</td><td>10/06</td><td class="note">MACD − 시그널 = −0.42, 간격 좁혀지는 중</td></tr>
+  <tr><td class="nm">테슬라</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=TSLA&p=d" target="_blank" rel="noopener" title="TSLA 차트 (Finviz)">TSLA</a></td><td>2차 확인</td><td>3차 · 구름 4요소</td><td class="num" data-v="999">–</td><td class="na">제한 없음</td><td class="note">구름 위 ✔ · 양운 ✔ · 후행스팬 ✔ · RSI 50 ✘ (47.2)</td></tr>
   </tbody></table></div>
 </section>
 
@@ -203,11 +281,11 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="filtered">
   <p class="desc">조건은 맞았지만 매매 금지 규칙이나 한도에 걸려 추천하지 않은 종목입니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th>종목</th><th>원래 신호</th><th>걸린 규칙</th><th class="nosort">비고 · 세부</th></tr></thead>
+  <thead><tr><th>종목</th><th>티커</th><th>원래 신호</th><th>걸린 규칙</th><th class="nosort">비고 · 세부</th></tr></thead>
   <tbody>
-  <tr><td><span class="tk">MU</span><span class="kr">마이크론</span></td><td>재진입</td><td><span class="badge b-warn">실적 3거래일 이내</span></td><td class="note">실적 발표 09/24</td></tr>
-  <tr><td><span class="tk">AMD</span><span class="kr">AMD</span></td><td>재진입</td><td><span class="badge b-warn">과열</span></td><td class="note">골든크로스 당일 RSI 72.4</td></tr>
-  <tr><td><span class="tk">LRCX</span><span class="kr">램리서치</span></td><td>2차 확인</td><td><span class="badge b-warn">잦은 교차 (횡보)</span></td><td class="note">최근 20일 MACD 교차 5회</td></tr>
+  <tr><td class="nm">마이크론</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=MU&p=d" target="_blank" rel="noopener" title="MU 차트 (Finviz)">MU</a></td><td>재진입</td><td><span class="badge b-warn">실적 3거래일 이내</span></td><td class="note">실적 발표 09/24</td></tr>
+  <tr><td class="nm">AMD</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=AMD&p=d" target="_blank" rel="noopener" title="AMD 차트 (Finviz)">AMD</a></td><td>재진입</td><td><span class="badge b-warn">과열</span></td><td class="note">골든크로스 당일 RSI 72.4</td></tr>
+  <tr><td class="nm">램리서치</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=LRCX&p=d" target="_blank" rel="noopener" title="LRCX 차트 (Finviz)">LRCX</a></td><td>2차 확인</td><td><span class="badge b-warn">잦은 교차 (횡보)</span></td><td class="note">최근 20일 MACD 교차 5회</td></tr>
   </tbody></table></div>
 </section>
 
@@ -215,23 +293,33 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="warn">
   <p class="desc">보유 종목에만 표시합니다. 매도 신호는 아닙니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th>종목</th><th>경고</th><th class="nosort">비고 · 의미</th></tr></thead>
+  <thead><tr><th>종목</th><th>티커</th><th>경고</th><th class="nosort">비고 · 의미</th></tr></thead>
   <tbody>
-  <tr><td><span class="tk">QCOM</span><span class="kr">퀄컴</span></td><td><span class="badge b-info">목표 도달</span></td><td class="note">평균단가 대비 손익비 2배. 일부 익절은 직접 판단</td></tr>
-  <tr><td><span class="tk">TSLA</span><span class="kr">테슬라</span></td><td><span class="badge b-warn">기준선 이탈</span></td><td class="note">E3 전 조기 경보</td></tr>
+  <tr><td class="nm">퀄컴</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=QCOM&p=d" target="_blank" rel="noopener" title="QCOM 차트 (Finviz)">QCOM</a></td><td><span class="badge b-info">목표 도달</span></td><td class="note">평균단가 대비 손익비 2배. 일부 익절은 직접 판단</td></tr>
+  <tr><td class="nm">테슬라</td><td><a class="tk" href="https://finviz.com/quote.ashx?t=TSLA&p=d" target="_blank" rel="noopener" title="TSLA 차트 (Finviz)">TSLA</a></td><td><span class="badge b-warn">기준선 이탈</span></td><td class="note">E3 전 조기 경보</td></tr>
   </tbody></table></div>
 </section>
 
 <!-- 규칙 -->
 <section class="panel" id="rules">
+  <div class="calc-box">
+    <div class="row">
+      <label for="totalWon">계좌 금액 계산기 · 총자금</label>
+      <span class="in">₩<input id="totalWon" type="text" inputmode="numeric" value="100,000,000"></span>
+      <label for="limitPct">전략 한도</label>
+      <span class="in"><input id="limitPct" type="text" inputmode="numeric" value="60" style="width:60px">%</span>
+    </div>
+    <div class="row plan-out" id="calcPlan"></div>
+    <div class="hint">화면 확인용입니다. 기준값은 config.yaml의 account.total_krw·plan.strategy_limit_pct이고, 바꾸면 위 자금 계획 줄과 신규 매수 수량이 함께 다시 계산됩니다.</div>
+  </div>
   <div class="two">
     <div class="sheet"><table>
     <thead><tr><th class="nosort">매수 차수</th><th class="nosort">비중</th><th class="nosort">조건</th><th class="nosort">손절 기준</th></tr></thead>
     <tbody>
-    <tr><td>1차 정찰</td><td>11%</td><td>RSI 30 상향 돌파</td><td>10일 최저가</td></tr>
-    <tr><td>2차 확인</td><td>22%</td><td>1차 후 10일 내 MACD 골든크로스</td><td>10일 최저가</td></tr>
-    <tr><td>3차 확정</td><td>67%</td><td>일목 구름 4요소</td><td>10일 최저가·구름 하단 중 높은 값</td></tr>
-    <tr><td>재진입</td><td>1회 전량</td><td>구름 위 + 0선 근처 골든크로스 + RSI 50~70</td><td>진입일 10일 최저가</td></tr>
+    <tr><td>1차 정찰</td><td>슬롯의 1/9</td><td>RSI 30 상향 돌파</td><td>10일 최저가</td></tr>
+    <tr><td>2차 확인</td><td>슬롯의 2/9</td><td>1차 후 10일 내 MACD 골든크로스</td><td>10일 최저가</td></tr>
+    <tr><td>3차 확정</td><td>슬롯의 6/9</td><td>일목 구름 4요소</td><td>10일 최저가·구름 하단 중 높은 값</td></tr>
+    <tr><td>재진입</td><td>슬롯 전체</td><td>구름 위 + 0선 근처 골든크로스 + RSI 50~70</td><td>진입일 10일 최저가</td></tr>
     </tbody></table></div>
     <div class="sheet"><table>
     <thead><tr><th class="nosort">매도 신호</th><th class="nosort">지표 조건</th><th class="nosort">매도 범위</th></tr></thead>
@@ -244,70 +332,109 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   </div>
 </section>
 
-<div class="pf" style="margin-top:22px">
-  <h2>내 보유 종목 <small>체결 기록 기준 · 종가 2026-09-22</small></h2>
-  <div class="sheet"><table>
-  <thead><tr><th>종목</th><th>단계</th><th class="num">수량</th><th class="num">진입가</th><th class="num">현재가</th><th class="num">수익률</th><th class="num">평가손익</th><th class="num">평가금액</th><th class="num">손절가</th><th class="num">손절까지</th><th>오늘 신호</th></tr></thead>
-  <tbody>
-  <tr><td><span class="tk">AAPL</span><span class="kr">애플</span></td><td>3차 확정</td><td class="num">70</td><td class="num" data-v="318.40">$318.40</td><td class="num" data-v="339.75">$339.75</td><td class="num ok" data-v="6.7">+6.7%</td><td class="num ok" data-v="1495">+$1,495</td><td class="num" data-v="23783">$23,783</td><td class="num" data-v="315.36">$315.36</td><td class="num" data-v="-7.2">−7.2%</td><td class="na">–</td></tr>
-  <tr><td><span class="tk">TSLA</span><span class="kr">테슬라</span></td><td>2차 확인</td><td class="num">41</td><td class="num" data-v="361.10">$361.10</td><td class="num" data-v="375.30">$375.30</td><td class="num ok" data-v="3.9">+3.9%</td><td class="num ok" data-v="582">+$582</td><td class="num" data-v="15387">$15,387</td><td class="num" data-v="342.10">$342.10</td><td class="num" data-v="-8.8">−8.8%</td><td><span class="badge b-warn">기준선 이탈</span></td></tr>
-  <tr><td><span class="tk">QCOM</span><span class="kr">퀄컴</span></td><td>재진입</td><td class="num">25</td><td class="num" data-v="152.20">$152.20</td><td class="num" data-v="171.60">$171.60</td><td class="num ok" data-v="12.7">+12.7%</td><td class="num ok" data-v="485">+$485</td><td class="num" data-v="4290">$4,290</td><td class="num" data-v="143.10">$143.10</td><td class="num" data-v="-16.6">−16.6%</td><td><span class="badge b-info">목표 도달</span></td></tr>
-  <tr><td><span class="tk">ROP</span><span class="kr">로퍼</span></td><td>재진입</td><td class="num">14</td><td class="num" data-v="441.20">$441.20</td><td class="num" data-v="412.30">$412.30</td><td class="num no" data-v="-6.6">−6.6%</td><td class="num no" data-v="-405">−$405</td><td class="num" data-v="5772">$5,772</td><td class="num" data-v="405.00">$405.00</td><td class="num" data-v="-1.8">−1.8%</td><td><span class="badge b-sell">전량 매도 (E3)</span></td></tr>
-  <tr><td><span class="tk">AMZN</span><span class="kr">아마존</span></td><td>1차 정찰</td><td class="num">12</td><td class="num" data-v="221.40">$221.40</td><td class="num" data-v="224.10">$224.10</td><td class="num ok" data-v="1.2">+1.2%</td><td class="num ok" data-v="32">+$32</td><td class="num" data-v="2689">$2,689</td><td class="num" data-v="212.80">$212.80</td><td class="num" data-v="-5.0">−5.0%</td><td class="na">2차 대기 (6일 남음)</td></tr>
-  </tbody>
-  <tfoot><tr><td>합계 5종목</td><td></td><td></td><td></td><td></td><td class="num ok">+4.4%</td><td class="num ok">+$2,190</td><td class="num">$51,921</td><td></td><td></td><td>계좌 대비 투자 51.9%</td></tr></tfoot>
-  </table></div>
-  <div class="todo"><b>체결 기록 필요</b> · 오늘 주문할 PEP · CSX · ODFL · NVDA는 체결 후 아래 파일에 한 줄씩 기록하세요. 기록이 없으면 내일 보고서에 "미체결"로 표시됩니다.<br>
-<code style="font-size:12px">C:\projects\nasdaq100-screener\data\fills.csv</code> · 형식: 날짜, 종목, 차수, 매수/매도, 체결가, 수량 (예: 2026-09-23, PEP, 1차, 매수, 131.80, 34) · 체결 안 되면 수량 0</div>
-</div>
-
-
+<div style="margin-top:18px"><div class="todo"><b>체결 기록 필요</b> · 오늘 주문할 NVDA · PEP는 체결 후 엑셀 파일에 한 줄씩 기록하세요. 기록이 없으면 내일 보고서에 "미체결"로 표시됩니다.<br>
+<code style="font-size:12px">C:\projects\nasdaq100-screener\data\fills.xlsx</code> → <b>체결기록</b> 시트의 노란 칸에 입력 · 차수와 매수매도는 목록에서 선택 · 체결 안 되면 수량 0 · 입력 후 저장하고 엑셀을 닫아 주세요</div></div>
 <footer>
-데이터: yfinance 일봉(분할 반영) · 종가 보완 101종목 · 구성 종목 출처 Nasdaq 공식 · 일목 이동 26 · 종목당 위험 2%(재진입 1%), 갭 여유 1.5%<br>
+데이터: yfinance 일봉(분할 반영) · 종가 보완 101종목 · 구성 종목 출처 Nasdaq 공식 · 일목 이동 26 · 종목당 위험 2%(재진입 1%), 갭 여유 1.5% · 원/달러 환율 yfinance KRW=X<br>
 전략 규칙에 따른 계산 결과이며 투자 권유가 아닙니다. 최종 판단과 주문은 직접 확인 후 하세요.
 </footer>
 </div>
 
 <script>
-// 전략 설정값 (보고서 생성 시 config.yaml에서 채움)
-const CFG={riskTotal:0.02, stageShare:{b1:1/9,b2:2/9,b3:6/9}, riskB:0.01, gap:0.015, minRisk:0.01, maxAlloc:0.25};
-const fmt=n=>'$'+Math.round(n).toLocaleString('en-US');
+// 전략·자금 설정값 (보고서 생성 시 config.yaml에서 채움)
+const CFG={
+  maxSlots:8,
+  stageFrac:{A1:1/9, A2:2/9, A3:6/9, B:1},
+  stageRiskPct:{A1:0.2222222222222222, A2:0.4444444444444444, A3:1.3333333333333333, B:1.0},
+  gap:0.015, minRisk:0.01,
+  fx:+document.body.dataset.fx, usedWon:+document.body.dataset.used,
+  baseReserved:+document.body.dataset.reserved, baseSlot:+document.body.dataset.slot,
+};
+const fmtUsd=n=>'$'+n.toLocaleString('en-US',{maximumFractionDigits:2,minimumFractionDigits:2});
+function fmtWon(n){
+  n=Math.round(n||0);
+  const neg=n<0; n=Math.abs(n);
+  const man=Math.round(n/10000);
+  if(man===0) return '0원';
+  const eok=Math.floor(man/10000), rest=man%10000;
+  let s = eok ? (eok+'억'+(rest?(' '+rest.toLocaleString('en-US')+'만'):'')) : (rest.toLocaleString('en-US')+'만');
+  return (neg?'-':'')+s;
+}
 function recalc(){
-  const el=document.getElementById('equity');
-  const eq=parseFloat(el.value.replace(/[^0-9.]/g,''))||0;
-  const r=eq*CFG.riskTotal;
-  document.getElementById('plan').innerHTML=
-    `종목당 최대 손실 <b>${fmt(r)}</b> → `+
-    `<span>1차 <b>${fmt(r*CFG.stageShare.b1)}</b></span>`+
-    `<span>2차 <b>${fmt(r*CFG.stageShare.b2)}</b></span>`+
-    `<span>3차 <b>${fmt(r*CFG.stageShare.b3)}</b></span>`+
-    `<span>재진입 <b>${fmt(eq*CFG.riskB)}</b></span>`;
-  let sum=0;
-  document.querySelectorAll('tr.sig').forEach(tr=>{
-    const st=tr.dataset.stage, lim=+tr.dataset.limit, stop=+tr.dataset.stop;
-    const budget= st==='b9' ? eq*CFG.riskB : r*CFG.stageShare[st];
-    let ps=(lim-stop)+lim*CFG.gap; if(ps<lim*CFG.minRisk) ps=lim*CFG.minRisk;
-    let q=Math.floor(budget/ps);
-    const capQ=Math.floor(eq*CFG.maxAlloc/lim); if(q>capQ) q=capQ;
-    const amt=q*lim, risk=q*ps; sum+=risk;
-    const set=(c,t,v)=>{const td=tr.querySelector('.'+c); td.textContent=t; td.dataset.v=v;};
-    set('q',q.toLocaleString('en-US'),q);
-    set('amt',fmt(amt),amt);
-    set('pct',(eq?amt/eq*100:0).toFixed(1)+'%',eq?amt/eq*100:0);
-    set('rk',fmt(risk),risk);
+  const totalWon=parseFloat(document.getElementById('totalWon').value.replace(/[^0-9.]/g,''))||0;
+  const limitPct=parseFloat(document.getElementById('limitPct').value.replace(/[^0-9.]/g,''))||0;
+  const slot=totalWon*limitPct/100/CFG.maxSlots;
+  const strategyLimit=totalWon*limitPct/100;
+  const reserved=CFG.baseSlot>0 ? CFG.baseReserved/CFG.baseSlot*slot : 0;
+  const used=CFG.usedWon;
+  const fx=CFG.fx;
+  const totalUsd=fx? totalWon/fx : 0;
+  let remaining=Math.max(strategyLimit-used-reserved,0);
+
+  document.getElementById('calcPlan').innerHTML=
+    `<span>전략 한도 <b>${fmtWon(strategyLimit)}</b></span>`+
+    `<span>종목당 슬롯 <b>${fmtWon(slot)}</b></span>`+
+    `<span>보유+예약 <b>${fmtWon(used+reserved)}</b></span>`+
+    `<span>남은 한도(오늘 신규 전) <b>${fmtWon(remaining)}</b></span>`;
+
+  // 전체 탭의 행을 점수 내림차순으로 훑어 목표수량·위험상한·남은 한도를 다시 계산한다.
+  const rows=[...document.querySelectorAll('#buy .sub#all tr.sig')]
+    .sort((a,b)=>(+b.dataset.score)-(+a.dataset.score));
+
+  let riskSum=0;
+  rows.forEach(tr=>{
+    const stageKey=tr.dataset.stage, limit=+tr.dataset.limit;
+    const stopAttr=tr.dataset.stop;
+    const stop=stopAttr===''||stopAttr===undefined?null:+stopAttr;
+    let qty=0, riskPerShare=0;
+    if(stop!==null && fx){
+      const targetWon=slot*CFG.stageFrac[stageKey];
+      const targetUsd=targetWon/fx;
+      const targetQty=Math.floor(targetUsd/limit);
+      riskPerShare=(limit-stop)+limit*CFG.gap; if(riskPerShare<limit*CFG.minRisk) riskPerShare=limit*CFG.minRisk;
+      const riskBudgetUsd=totalUsd*CFG.stageRiskPct[stageKey]/100;
+      const riskCapQty=Math.floor(riskBudgetUsd/riskPerShare);
+      qty=Math.min(targetQty, riskCapQty);
+      if(tr.dataset.new==='1'){
+        const needed=slot;
+        if(remaining>=needed){ remaining-=needed; }
+        else if(remaining<=0){ qty=0; }
+        else { const availUsd=remaining/fx; qty=Math.min(qty, Math.max(Math.floor(availUsd/limit),0)); remaining=0; }
+      }
+    }
+    const amt=qty*limit*fx, maxLoss=qty*riskPerShare*fx;
+    riskSum+=maxLoss;
+    document.querySelectorAll('tr.sig[data-key="'+CSS.escape(tr.dataset.key)+'"]').forEach(t=>{
+      const q=t.querySelector('.q'); if(q){ q.textContent=qty.toLocaleString('en-US'); }
+      const amtCell=t.querySelector('.amt'); if(amtCell){ amtCell.textContent=fmtWon(amt); amtCell.dataset.v=Math.round(amt); }
+      const mlCell=t.querySelector('.ml'); if(mlCell){ mlCell.textContent=fmtWon(maxLoss); mlCell.dataset.v=Math.round(maxLoss); }
+    });
   });
-  document.getElementById('riskSum').textContent=fmt(sum);
-  document.getElementById('riskPct').textContent='('+(eq?sum/eq*100:0).toFixed(1)+'%)';
-  try{localStorage.setItem('equity',String(eq));}catch(e){}
+
+  const riskLine=document.querySelector('.risk-line');
+  if(riskLine) riskLine.textContent=`오늘 신규 위험 ${fmtWon(riskSum)} (계좌의 ${(totalWon?riskSum/totalWon*100:0).toFixed(2)}%)`;
+
+  try{localStorage.setItem('totalWon',String(totalWon)); localStorage.setItem('limitPct',String(limitPct));}catch(e){}
 }
 (function(){
-  const el=document.getElementById('equity');
-  try{const s=localStorage.getItem('equity'); if(s) el.value=Number(s).toLocaleString('en-US');}catch(e){}
-  el.addEventListener('input',recalc);
-  el.addEventListener('blur',()=>{const n=parseFloat(el.value.replace(/[^0-9.]/g,''))||0; el.value=n.toLocaleString('en-US');});
+  const totalEl=document.getElementById('totalWon'), limitEl=document.getElementById('limitPct');
+  try{
+    const t=localStorage.getItem('totalWon'); if(t) totalEl.value=Number(t).toLocaleString('en-US');
+    const l=localStorage.getItem('limitPct'); if(l) limitEl.value=l;
+  }catch(e){}
+  totalEl.addEventListener('input',recalc);
+  limitEl.addEventListener('input',recalc);
+  totalEl.addEventListener('blur',()=>{const n=parseFloat(totalEl.value.replace(/[^0-9.]/g,''))||0; totalEl.value=n.toLocaleString('en-US');});
   recalc();
 })();
 
+// 휴대폰 카드 보기용: 각 칸에 머리글 이름을 붙인다
+document.querySelectorAll('.sheet table').forEach(tbl=>{
+  const heads=[...tbl.querySelectorAll('thead th')].map(th=>th.textContent.trim());
+  tbl.querySelectorAll('tbody tr, tfoot tr').forEach(tr=>{
+    [...tr.cells].forEach((td,i)=>{ if(heads[i] && !td.hasAttribute('colspan')) td.dataset.label=heads[i]; });
+  });
+});
 // 상위 탭
 document.querySelectorAll('.tabs button').forEach(b=>{
   b.addEventListener('click',()=>{
@@ -316,7 +443,7 @@ document.querySelectorAll('.tabs button').forEach(b=>{
     document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id===b.dataset.tab));
   });
 });
-// 신규 매수 하위 탭
+// 신규 매수 하위 탭 ("전체"가 기본 선택 — 서버 렌더 시 이미 aria-selected="true")
 document.querySelectorAll('.subtabs button').forEach(b=>{
   b.addEventListener('click',()=>{
     b.parentElement.querySelectorAll('button').forEach(x=>x.setAttribute('aria-selected','false'));
@@ -335,7 +462,7 @@ document.querySelectorAll('table').forEach(tbl=>{
       th.parentElement.querySelectorAll('th').forEach(x=>x.classList.remove('asc','desc'));
       th.classList.add(asc?'asc':'desc');
       const val=c=>{const d=c.dataset.v; if(d!==undefined) return parseFloat(d);
-        const t=c.textContent.replace(/[$,%배\s]/g,'').replace('−','-'); const n=parseFloat(t);
+        const t=c.textContent.replace(/[$,%배원만억\s]/g,'').replace('−','-'); const n=parseFloat(t);
         return isNaN(n)?c.textContent.trim():n;};
       rows.sort((a,b)=>{const x=val(a.cells[i]),y=val(b.cells[i]);
         const r=(typeof x==='number'&&typeof y==='number')?x-y:String(x).localeCompare(String(y),'ko');

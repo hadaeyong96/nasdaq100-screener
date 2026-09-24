@@ -71,3 +71,127 @@ def stop_price_a3(df: pd.DataFrame, a1_date, a3_date) -> float:
 def stop_price_b(df: pd.DataFrame, entry_date) -> float:
     """B형 손절가: 진입일 기준 swing_low."""
     return float(df.loc[entry_date, "swing_low"])
+
+
+# ── 자금 계획 (P3.6 6-2번) ────────────────────────────────────────────────
+# 종목별 금액 입력칸 대신, 총자금(원)·전략 한도·슬롯에서 차수별 목표 금액을
+# 자동으로 정한다. 위 position_size류(위험 예산 기준)는 그대로 두고, 여기서는
+# "목표 금액 ÷ 환율 ÷ 지정가"로 구한 수량과 위험 상한 수량 중 작은 값을 쓴다.
+
+STAGE_SLOT_FRACTION = {"A1": 1 / 9, "A2": 2 / 9, "A3": 6 / 9, "B": 1.0}
+# 이 상태면 아직 안 산 남은 차수를 위해 슬롯의 이만큼을 예약해 둔다 (그 외 상태는 0).
+_RESERVE_BY_STATE = {"정찰": 8 / 9, "확인": 6 / 9}
+
+
+def slot_krw(cfg: dict) -> float:
+    """종목당 슬롯(원) = 총자금 × 전략 한도 ÷ 최대 보유 종목 수."""
+    plan = cfg["plan"]
+    total_krw = cfg["account"]["total_krw"]
+    return total_krw * plan["strategy_limit_pct"] / 100 / plan["max_slots"]
+
+
+def strategy_limit_krw(cfg: dict) -> float:
+    """전략 한도(원) = 총자금 × 전략 한도 비율."""
+    return cfg["account"]["total_krw"] * cfg["plan"]["strategy_limit_pct"] / 100
+
+
+def stage_target_krw(stage: str, cfg: dict) -> float:
+    """차수별 목표 금액(원) = 슬롯 × 차수 비중(1차 1/9, 2차 2/9, 3차 6/9, 재진입 1)."""
+    return slot_krw(cfg) * STAGE_SLOT_FRACTION[stage]
+
+
+def reserved_fraction_for_state(state_label: str) -> float:
+    """이 상태(정찰·확인)면 아직 안 산 차수를 위해 슬롯의 얼마를 예약해 둬야 하는지.
+
+    1차만 보유 중(정찰)이면 8/9, 2차까지 보유 중(확인)이면 6/9. 그 외(확정·추세보유·
+    청산중·대기)는 더 살 차수가 없거나 아직 아무것도 안 샀으므로 0.
+    """
+    return _RESERVE_BY_STATE.get(state_label, 0.0)
+
+
+def funding_qty(stage: str, entry_price: float, stop_price: float | None, fx_rate: float | None, cfg: dict) -> dict:
+    """자금 계획 기준 추천 수량. 목표 금액(슬롯 기준) 수량과 위험 상한 수량 중 작은 값.
+
+    입력: stage(A1|A2|A3|B), entry_price(지정가, 달러), stop_price(손절가, 달러 또는
+         None), fx_rate(원/달러 환율, 구하지 못했으면 None), cfg
+    출력: {"qty", "target_qty"(목표 금액 기준 수량), "risk_cap_qty"(위험 상한 수량),
+          "risk_capped"(위험 상한 때문에 줄었는지), "target_krw"(차수별 목표 금액, 원)}
+    """
+    target_krw = stage_target_krw(stage, cfg)
+    empty = {"qty": 0, "target_qty": 0, "risk_cap_qty": 0, "risk_capped": False, "target_krw": target_krw}
+    if stop_price is None or entry_price is None or entry_price <= 0 or not fx_rate or fx_rate <= 0:
+        return empty
+    total_usd = cfg["account"]["total_krw"] / fx_rate
+    target_usd = target_krw / fx_rate
+    target_qty = max(int(math.floor(target_usd / entry_price)), 0)
+    risk_cap_qty = position_size(stage, entry_price, stop_price, total_usd, cfg)
+    qty = min(target_qty, risk_cap_qty)
+    return {
+        "qty": qty,
+        "target_qty": target_qty,
+        "risk_cap_qty": risk_cap_qty,
+        "risk_capped": risk_cap_qty < target_qty,
+        "target_krw": target_krw,
+    }
+
+
+def allocate_remaining_limit(candidates: list[dict], remaining_krw: float, cfg: dict) -> list[dict]:
+    """오늘 새로 생기는 포지션(A1·B, 신규 종목만) 후보를 점수 순으로 남은 한도에서 차감한다.
+
+    이미 보유 중인 종목의 2·3차 매수(A2·A3)는 처음 포지션이 열릴 때 이미 슬롯
+    전체(보유+예약)가 한도에 잡혀 있어 이 함수를 거치지 않는다 — engine이 신규
+    종목(A1·B)만 candidates로 넘긴다.
+
+    입력: candidates([{"key", "entry_price", "fx_rate", "target_qty", "risk_cap_qty"}, ...],
+         점수 내림차순으로 이미 정렬됨), remaining_krw(남은 한도, 원), cfg
+    출력: [{"key", "qty", "limited"(한도 부족으로 줄었는지), "consumed_krw"(이 종목이
+          오늘 한도에서 새로 차지한 금액, 원 — 남은 한도 부족이면 남은 만큼만)}, ...]
+          candidates와 같은 순서
+    """
+    slot = slot_krw(cfg)
+    remaining = max(remaining_krw, 0.0)
+    out = []
+    for c in candidates:
+        base_qty = min(c["target_qty"], c["risk_cap_qty"])
+        if remaining >= slot:
+            qty = base_qty
+            limited = False
+            consumed = slot
+            remaining -= slot
+        elif remaining <= 0:
+            qty = 0
+            limited = base_qty > 0
+            consumed = 0.0
+        else:
+            fx_rate = c["fx_rate"]
+            entry_price = c["entry_price"]
+            reduced_qty = int(remaining / fx_rate // entry_price) if (fx_rate and entry_price) else 0
+            qty = min(base_qty, max(reduced_qty, 0))
+            limited = qty < base_qty
+            consumed = remaining
+            remaining = 0.0
+        out.append({"key": c["key"], "qty": qty, "limited": limited, "consumed_krw": consumed})
+    return out
+
+
+_KRW_UNIT = 10_000
+
+
+def format_krw(amount: float | None) -> str:
+    """금액(원)을 "73만"·"1억 2,300만" 형식으로 바꾼다 (만 단위로 반올림, P3.6 6-3번).
+
+    입력: amount(원) 또는 None
+    출력: 문자열. None이면 "-". 반올림 결과가 0이면 "0원".
+    """
+    if amount is None:
+        return "-"
+    sign = "-" if amount < 0 else ""
+    man_total = round(abs(amount) / _KRW_UNIT)
+    if man_total == 0:
+        return "0원"
+    eok, man = divmod(man_total, 10_000)
+    if eok and man:
+        return f"{sign}{eok}억 {man:,}만"
+    if eok:
+        return f"{sign}{eok}억"
+    return f"{sign}{man:,}만"

@@ -30,7 +30,8 @@ def _empty_summary(mode="live"):
 @pytest.fixture
 def cfg():
     return {
-        "account": {"equity_usd": 100000},
+        "account": {"total_krw": 100_000_000},
+        "plan": {"strategy_limit_pct": 60, "cash_buffer_pct": 5, "max_slots": 8},
         "risk": {
             "a1_budget_pct": 0.2222222222222222,
             "a2_budget_pct": 0.4444444444444444,
@@ -85,7 +86,8 @@ def test_buy_rows_carry_data_stage_limit_stop_attributes(tmp_path, cfg):
     summary["buy_count"] = 1
     path = report_html.render_report(summary, cfg, tmp_path)
     html = path.read_text(encoding="utf-8")
-    assert 'data-stage="b1"' in html
+    assert 'data-stage="A1"' in html
+    assert 'data-key="PEP-A1"' in html
     assert 'data-limit="132.5"' in html
     assert 'data-stop="127.98"' in html
     assert "PEP" in html and "펩시코" in html
@@ -140,17 +142,100 @@ def test_non_stale_summary_has_no_banner(tmp_path, cfg):
     assert 'class="stale-banner"' not in html
 
 
-def test_buy_table_header_is_simplified_to_9_columns(tmp_path, cfg):
-    """P3.4 1번: 신규 매수 표는 종목·결정·지정가·수량·투입금액·손절가·손절폭·점수·비고 9칸이다."""
+def test_buy_table_header_has_max_loss_column(tmp_path, cfg):
+    """P3.6 6-3번: 차수별 매수 표는 종목·티커·결정·지정가·수량·투입금액·손절가·손절폭·최대손실·점수·비고 11칸이다."""
     path = report_html.render_report(_empty_summary(), cfg, tmp_path)
     html = path.read_text(encoding="utf-8")
-    for header in ("종목", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "점수", "비고"):
+    for header in ("종목", "티커", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "최대손실", "점수", "비고"):
         assert f"<th" in html and header in html
     # 이전 버전의 조건 열(탭별로 달랐던 헤더)은 더 이상 없어야 한다.
     assert "RSI 30 돌파" not in html
     assert "앞구름 양운" not in html
     assert "계좌%" not in html
     assert "위험금액" not in html
+
+
+def test_buy_tabs_include_all_tab_selected_by_default(tmp_path, cfg):
+    """P3.6 2번: "전체" 탭이 하위 버튼 맨 앞에 있고 기본 선택돼야 한다."""
+    path = report_html.render_report(_empty_summary(), cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert '<div class="sub on" id="all">' in html
+    assert 'data-sub="all" aria-selected="true"' in html
+    all_pos = html.index('data-sub="all"')
+    b1_pos = html.index('data-sub="b1"')
+    assert all_pos < b1_pos
+
+
+def test_empty_subtab_button_is_dimmed_and_nonempty_is_highlighted(tmp_path, cfg):
+    """P3.6 2번: 종목이 있는 하위 버튼은 초록 테두리(has), 0건인 버튼은 흐리게(empty) 표시된다."""
+    summary = _empty_summary()
+    summary["buy_groups"]["b1"] = [
+        {
+            "ticker": "PEP", "kr": "펩시코", "stage": "A1", "bucket": "b1", "stage_label": "1차 정찰",
+            "key": "PEP-A1", "is_new_position": True, "limit": 132.5, "stop": 127.98, "qty": 34,
+            "amount_krw": 4_500_000, "max_loss_krw": 220_000, "target_qty": 34, "risk_cap_qty": 40,
+            "stop_pct": -3.4, "decision": "매수", "note": "", "score": 20, "grade": "",
+        }
+    ]
+    summary["buy_count"] = 1
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert '<button data-sub="b1" aria-selected="false" class="has">' in html
+    assert '<button data-sub="b2" aria-selected="false" class="empty">' in html
+
+
+def test_all_tab_row_count_equals_sum_of_stage_tabs(tmp_path, cfg):
+    """P3.6 2번: "전체" 표 행 수는 차수별 표 행 수의 합과 같아야 한다(중복 집계 없음)."""
+
+    def _row(ticker, stage, bucket, score):
+        return {
+            "ticker": ticker,
+            "kr": ticker,
+            "stage": stage,
+            "bucket": bucket,
+            "stage_label": "1차 정찰",
+            "key": f"{ticker}-{stage}",
+            "is_new_position": stage in ("A1", "B"),
+            "limit": 100.0,
+            "stop": 94.0,
+            "qty": 10,
+            "amount_krw": 1_000_000,
+            "max_loss_krw": 100_000,
+            "target_qty": 10,
+            "risk_cap_qty": 20,
+            "stop_pct": -6.0,
+            "decision": "매수",
+            "note": "",
+            "score": score,
+            "grade": "",
+        }
+
+    summary = _empty_summary()
+    summary["buy_groups"] = {
+        "b1": [_row("AAA", "A1", "b1", 20), _row("BBB", "A1", "b1", 5)],
+        "b2": [],
+        "b3": [_row("CCC", "A3", "b3", 15)],
+        "b9": [_row("DDD", "B", "b9", 75)],
+    }
+    context = report_html.build_context(summary, cfg)
+    all_tab = next(t for t in context["buy_tabs"] if t["key"] == "all")
+    stage_total = sum(t["count"] for t in context["buy_tabs"] if t["key"] != "all")
+    assert all_tab["count"] == 4 == stage_total
+    scores = [r["score"] for r in all_tab["rows"]]
+    assert scores == sorted(scores, reverse=True)  # 전체 표는 점수 내림차순
+
+
+def test_finviz_link_href_format(tmp_path, cfg):
+    """P3.6 1번: 티커는 Finviz 종목 페이지로 새 창 링크가 걸린다."""
+    summary = _empty_summary()
+    summary["watch_rows"] = [
+        {"티커": "BRK-B", "종목명": "버크셔", "현재단계": "1차", "기다리는신호": "2차", "남은거래일": 5}
+    ]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert 'href="https://finviz.com/quote.ashx?t=BRK-B&p=d"' in html
+    assert 'target="_blank"' in html
+    assert 'rel="noopener"' in html
 
 
 def test_bottom_hold_table_is_removed_but_fills_notice_remains(tmp_path, cfg):

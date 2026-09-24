@@ -1,0 +1,116 @@
+"""원/달러 환율(yfinance `KRW=X`)을 받아 캐시한다 (P3.6 6-4번).
+
+기준일 종가 환율을 쓴다. `data/cache/fx_krw.json`에 {날짜: 환율} 이력을 캐시해
+두고, 그날 값을 새로 못 받으면(네트워크 실패 등) 캐시에 남아 있는 가장 최근
+값을 대신 쓰고 경고를 남긴다.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parent
+CACHE_PATH = DATA_DIR / "cache" / "fx_krw.json"
+
+
+@dataclass
+class FxRateResult:
+    """환율 조회 결과.
+
+    rate: 원/달러 환율 (구하지 못했으면 None)
+    rate_date: 실제로 쓴 환율의 날짜(YYYY-MM-DD) — 기준일과 다르면 캐시 대체값
+    is_fallback: 기준일 값을 새로 못 받아 캐시의 예전 값을 대신 썼으면 True
+    warning: 확인이 필요한 메시지 (없으면 None)
+    """
+
+    rate: float | None
+    rate_date: str | None
+    is_fallback: bool
+    warning: str | None = None
+
+
+def _load_cache() -> dict[str, float]:
+    if not CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_cache(history: dict[str, float]) -> None:
+    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CACHE_PATH.write_text(json.dumps(history, ensure_ascii=False), encoding="utf-8")
+
+
+def pick_rate_for_date(history: dict[str, float], target_date: str) -> tuple[float, str] | None:
+    """history({날짜: 환율}) 중 target_date 이하에서 가장 최근 날짜의 값을 고른다 (순수 함수).
+
+    입력: history, target_date(YYYY-MM-DD)
+    출력: (환율, 그 날짜) 또는 골라 쓸 값이 없으면 None
+    """
+    candidates = [d for d in history if d <= target_date]
+    if not candidates:
+        return None
+    picked_date = max(candidates)
+    return history[picked_date], picked_date
+
+
+def fetch_usd_krw_history(period: str = "15d") -> dict[str, float]:
+    """yfinance `KRW=X`의 최근 일별 종가를 {날짜: 환율} dict로 받는다.
+
+    입력: period(yfinance period 문자열)
+    출력: {"YYYY-MM-DD": 환율, ...}. 응답이 비어 있으면 빈 dict.
+    예외: 네트워크·응답 형식 오류는 그대로 올린다 (호출부가 경고로 모은다)
+    """
+    import yfinance as yf  # 테스트 환경에서 네트워크 모듈 import를 늦춘다
+
+    raw = yf.Ticker("KRW=X").history(period=period, auto_adjust=False)
+    if raw.empty:
+        return {}
+    out: dict[str, float] = {}
+    for ts, row in raw.iterrows():
+        close = row.get("Close")
+        if close is None or close != close:  # NaN
+            continue
+        out[ts.date().isoformat()] = float(close)
+    return out
+
+
+def get_usd_krw_rate(as_of_date, fetch_provider=fetch_usd_krw_history) -> FxRateResult:
+    """기준일의 원/달러 종가 환율을 구한다 (매번 새로 받고, 실패하면 캐시로 대체).
+
+    입력: as_of_date(date 또는 "YYYY-MM-DD" 문자열), fetch_provider(테스트 주입용 —
+         기본은 fetch_usd_krw_history. 인자 없이 불러 {날짜: 환율}을 돌려줘야 한다)
+    출력: FxRateResult
+    """
+    target = as_of_date.isoformat() if hasattr(as_of_date, "isoformat") else str(as_of_date)
+    stored = _load_cache()
+
+    try:
+        fresh = fetch_provider()
+    except Exception as exc:
+        fresh = {}
+        fetch_error = str(exc)
+    else:
+        fetch_error = None
+
+    merged = {**stored, **fresh}
+    if fresh:
+        _save_cache(merged)
+
+    picked = pick_rate_for_date(merged, target)
+    if picked is None:
+        warning = "환율을 구할 수 없습니다 (캐시도 없음)" + (f" — {fetch_error}" if fetch_error else "")
+        return FxRateResult(rate=None, rate_date=None, is_fallback=True, warning=warning)
+
+    rate, rate_date = picked
+    if rate_date == target:
+        return FxRateResult(rate=rate, rate_date=rate_date, is_fallback=False)
+
+    warning = f"{target} 환율을 새로 받지 못해 직전 캐시 값({rate_date})을 씁니다"
+    if fetch_error:
+        warning += f" — {fetch_error}"
+    return FxRateResult(rate=rate, rate_date=rate_date, is_fallback=True, warning=warning)

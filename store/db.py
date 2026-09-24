@@ -11,6 +11,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pandas as pd
+
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data" / "state.db"
 PAPER_DB_PATH = ROOT / "data" / "paper_state.db"
@@ -204,6 +206,37 @@ def load_position(conn: sqlite3.Connection, ticker: str) -> dict | None:
 def load_all_positions(conn: sqlite3.Connection) -> dict[str, dict]:
     cur = conn.execute(f"SELECT {', '.join(_POSITION_FIELDS)} FROM positions")
     return {row[0]: _deserialize(dict(zip(_POSITION_FIELDS, row))) for row in cur.fetchall()}
+
+
+def get_events_for_date(conn: sqlite3.Connection, date_str: str) -> list[dict]:
+    """그 날짜에 기록된 이벤트를 모두 읽는다 (상태를 다시 계산하지 않고 보고서만
+    다시 만들 때 씀 — engine.daily.build_report_summary가 today_events로 받는
+    형태와 같은 dict 목록을 돌려준다: {date, ticker, kind, ...detail}).
+
+    record_events가 event["date"]를 str()로 그대로 저장해, pd.Timestamp였던 값은
+    "2026-09-23 00:00:00"처럼 시각까지 붙어 저장되고 순수 날짜 문자열("FUNNEL"
+    이벤트 등)은 "2026-09-23"로 저장된다 — 두 표기가 섞여 있어 SQLite의 date()로
+    날짜 부분만 비교한다 (== 로는 시각이 붙은 쪽을 놓친다).
+    FUNNEL 이벤트(ticker="")는 보고서 조립에 쓰이지 않으므로 뺀다.
+    """
+    cur = conn.execute(
+        "SELECT date, ticker, kind, detail FROM events WHERE date(date) = ? AND kind != 'FUNNEL' ORDER BY id",
+        (date_str,),
+    )
+    events = []
+    seen: set[str] = set()
+    for date, ticker, kind, detail in cur.fetchall():
+        # 같은 날짜를 실수로 두 번 실제 처리했을 때(가드를 우회한 --replay 재실행 등)
+        # 완전히 같은 내용의 행이 중복 기록될 수 있다 — 보고서에 두 번 나오지 않도록 접는다.
+        # detail의 값(reasons 리스트 등)이 해시 불가능할 수 있어 JSON 문자열로 비교한다.
+        dedup_key = f"{ticker}|{kind}|{detail}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        event = {"date": pd.Timestamp(date), "ticker": ticker, "kind": kind}
+        event.update(json.loads(detail) if detail else {})
+        events.append(event)
+    return events
 
 
 def record_events(conn: sqlite3.Connection, events: list[dict]) -> None:

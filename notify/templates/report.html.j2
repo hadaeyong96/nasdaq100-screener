@@ -23,7 +23,7 @@ html,body{margin:0;background:var(--paper);color:var(--ink)}
 body{font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
   font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;
   padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
-.wrap{max-width:1180px;margin:0 auto;padding:24px 16px 50px}
+.wrap{max-width:1560px;margin:0 auto;padding:24px 16px 50px}
 header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;
   border-bottom:3px solid var(--ink);padding-bottom:12px;margin-bottom:16px}
 h1{font-size:24px;font-weight:800;margin:0;letter-spacing:-0.02em}
@@ -32,19 +32,32 @@ h1{font-size:24px;font-weight:800;margin:0;letter-spacing:-0.02em}
 .lead{color:var(--sub);font-size:13px;margin-top:4px}
 .meta{color:var(--sub);font-size:13px;text-align:right}
 .meta b{color:var(--ink)}
-.strip{display:flex;flex-wrap:wrap;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
-.strip .it{display:flex;align-items:baseline;gap:6px;padding:7px 14px;border-right:1px solid var(--grid);font-size:13px;color:var(--sub)}
-.strip .it:last-child{border-right:none}
-.strip .it b{font-size:15px;color:var(--ink)}
-.strip .it.buy b{color:var(--buy)}.strip .it.sell b{color:var(--sell)}
-.acct{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;background:var(--info-bg);border-radius:8px;padding:7px 12px;margin-bottom:16px;font-size:13px;color:var(--sub)}
-.acct label{font-weight:700;color:var(--ink)}
-.acct .in{display:inline-flex;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 8px}
-.acct input{font:inherit;font-weight:700;width:120px;border:none;background:transparent;color:var(--ink);padding:4px 0;text-align:right;outline:none}
-.acct .plan span{margin-right:10px;white-space:nowrap}
-.acct .plan b{color:var(--ink)}
-.acct .hint{font-size:12px;color:var(--mute)}
-td.calc{background:var(--info-bg)}
+.fx-warn{color:var(--warn)}
+
+/* ── 자금 계획 줄 (P3.6 6-3번) ───────────────────────────────── */
+.plan{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px}
+.plan .items{display:flex;flex-wrap:wrap;gap:4px 18px;font-size:13px;color:var(--sub);margin-bottom:8px}
+.plan .items b{color:var(--ink);font-size:14px}
+.plan .items .qqqm b{color:var(--info)}
+.bar{height:10px;border-radius:6px;overflow:hidden;display:flex;background:var(--grid)}
+.bar span{height:100%}
+.bar .b-held{background:var(--buy)}
+.bar .b-reserved{background:#6fae8c}
+.bar .b-new{background:var(--warn)}
+.bar .b-remaining{background:var(--grid)}
+.bar-legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:11px;color:var(--mute);margin-top:6px}
+.bar-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle}
+
+/* ── 규칙 탭 계산기 (P3.6 4번: 강조 배경 없음) ───────────────────── */
+.calc-box{border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:var(--sub)}
+.calc-box .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-bottom:6px}
+.calc-box label{font-weight:700;color:var(--ink)}
+.calc-box .in{display:inline-flex;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:0 8px}
+.calc-box input{font:inherit;font-weight:700;width:130px;border:none;background:transparent;color:var(--ink);padding:4px 0;text-align:right;outline:none}
+.calc-box .plan-out span{margin-right:10px;white-space:nowrap}
+.calc-box .plan-out b{color:var(--ink)}
+.calc-box .hint{font-size:12px;color:var(--mute)}
+td.calc{color:var(--info);font-weight:700}
 .pf{margin-bottom:8px}
 .pf h2{font-size:15px;font-weight:700;margin:4px 0 6px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .pf h2 small{font-size:12px;font-weight:400;color:var(--mute)}
@@ -62,10 +75,13 @@ td.calc{background:var(--info-bg)}
 .subtabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 8px}
 .subtabs button{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--card);color:var(--sub);
   border-radius:999px;padding:5px 12px;cursor:pointer}
+.subtabs button.has{border-color:var(--buy)}
+.subtabs button.empty{opacity:.55}
 .subtabs button[aria-selected="true"]{background:var(--buy);border-color:var(--buy);color:#fff}
 .panel{display:none;padding-top:12px}.panel.on{display:block}
 .sub{display:none}.sub.on{display:block}
 .desc{color:var(--sub);font-size:13px;margin:0 0 10px}
+.risk-line{font-weight:700;color:var(--ink)}
 
 /* 시트 표 */
 .sheet{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
@@ -77,7 +93,12 @@ th.asc::after{content:" ▲";color:var(--ink)}th.desc::after{content:" ▼";colo
 th.nosort{cursor:default}th.nosort::after{content:""}
 td.num,th.num{text-align:right}
 td.note{white-space:normal;min-width:200px;color:var(--sub)}
-.tk{font-weight:700}.kr{color:var(--sub);font-size:12px;margin-left:4px}
+.tk{font-weight:700}
+.nm{font-weight:700}
+a.tk{font-weight:600;color:var(--ink);text-decoration:none;border-bottom:1px dashed var(--mute)}
+a.tk:hover{color:var(--info);border-bottom-color:var(--info)}
+a.tk::after{content:" ↗";font-size:11px;color:var(--mute);font-weight:400}
+.kr{color:var(--sub);font-size:12px;margin-left:4px}
 .ok{color:var(--buy);font-weight:700}.no{color:var(--sell);font-weight:700}.na{color:var(--mute)}
 .badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:12px;font-weight:600}
 .b-buy{background:var(--buy-bg);color:var(--buy)}.b-sell{background:var(--sell-bg);color:var(--sell)}
@@ -101,12 +122,8 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   header{flex-direction:column;align-items:flex-start;gap:6px}
   h1{font-size:21px}
   .meta{text-align:left}
-  .strip{display:grid;grid-template-columns:1fr 1fr}
-  .strip .it{border-right:none;border-bottom:1px solid var(--grid);justify-content:space-between}
-  .strip .it:nth-child(odd){border-right:1px solid var(--grid)}
-  .strip .it:last-child{grid-column:1/-1;border-right:none;border-bottom:none}
-  .acct{flex-direction:column;align-items:flex-start}
-  .acct .plan span{display:inline-block;margin:2px 10px 2px 0}
+  .plan .items{flex-direction:column;gap:2px}
+  .calc-box .row{flex-direction:column;align-items:flex-start}
   .tabs button{padding:9px 12px;font-size:14px}
   .subtabs button{font-size:14px;padding:7px 12px}
   .sheet{background:transparent;border:none;overflow:visible}
@@ -120,20 +137,25 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   .sheet td.num{text-align:left}
   .sheet td:first-child{grid-column:1/-1;font-size:17px;padding-bottom:8px;border-bottom:1px solid var(--grid)}
   .sheet td:first-child::before{content:none}
+  .sheet td:nth-child(2){grid-column:1/-1;margin-top:-6px;padding-bottom:6px}
   .sheet td.note{grid-column:1/-1;color:var(--sub);font-size:13px}
   .sheet td.note:empty{display:none}
   .sheet td.empty{grid-column:1/-1;text-align:center}
   .sheet td.empty::before{content:none}
   .sheet tr:has(td.empty){display:block}
-  .sheet td.calc{background:transparent;color:var(--info);font-weight:700}
+  .sheet td.calc{color:var(--info);font-weight:700}
   .sheet tfoot tr{background:var(--soft)}
   .sheet tfoot td:empty{display:none}
   .two{grid-template-columns:1fr}
 }
 </style>
 </head>
-<body>
+<body data-fx="{{ data_fx }}" data-date="{{ as_of_str }}" data-total="{{ total_krw }}" data-limit-pct="{{ strategy_limit_pct }}" data-used="{{ data_used }}" data-reserved="{{ data_reserved }}" data-slot="{{ data_slot }}">
 <div class="wrap">
+
+{% macro finviz(ticker) -%}
+<a class="tk" href="https://finviz.com/quote.ashx?t={{ ticker }}&p=d" target="_blank" rel="noopener" title="{{ ticker }} 차트 (Finviz)">{{ ticker }}</a>
+{%- endmacro %}
 
 {% if stale %}
 <div class="stale-banner">
@@ -149,29 +171,40 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <div class="meta">
     기준일 <b>{{ as_of_str }} 종가</b><br>
     주문 가능일 <b>{{ order_date_str }}</b><br>
-    계좌 기준 ${{ equity_str }} · 생성 {{ generated_str }}
+    총자금 <b>{{ total_krw_str }} 원</b> · 환율 <b>₩{{ fx_rate_str }}/$</b>{% if fx_date_str %} ({{ fx_date_str }}){% endif %}{% if fx_is_fallback %} <span class="fx-warn">캐시값</span>{% endif %} · 생성 {{ generated_str }}
   </div>
 </header>
 
-<div class="strip">
-  <div class="it buy">신규 매수 <b>{{ buy_count }}건</b></div>
-  <div class="it sell">매도·손절 <b>{{ sell_count }}건</b></div>
-  <div class="it">보유 <b>{{ held_count }} / {{ max_concurrent }}</b></div>
-  <div class="it">걸러진 신호 <b>{{ filtered_count }}건</b></div>
-  <div class="it">신규 위험 <b id="riskSum">$0</b> <span id="riskPct">(0.0%)</span></div>
+{% if funding %}
+<div class="plan">
+  <div class="items">
+    <span>전략 한도 <b>{{ strategy_limit_str }}</b> ({{ strategy_limit_pct }}%)</span>
+    <span>종목당 슬롯 <b>{{ slot_str }}</b></span>
+    <span>보유 <b>{{ held_str }}</b></span>
+    <span>2·3차 예약 <b>{{ reserved_str }}</b></span>
+    <span>오늘 신규 <b>{{ new_str }}</b></span>
+    <span>남은 한도 <b>{{ remaining_str }}</b></span>
+    <span class="qqqm">QQQM 목표 <b>{{ qqqm_str }}</b></span>
+  </div>
+  <div class="bar">
+    <span class="b-held" style="width:{{ '%.2f'|format(held_pct) }}%"></span>
+    <span class="b-reserved" style="width:{{ '%.2f'|format(reserved_pct) }}%"></span>
+    <span class="b-new" style="width:{{ '%.2f'|format(new_pct) }}%"></span>
+    <span class="b-remaining" style="width:{{ '%.2f'|format(remaining_pct) }}%"></span>
+  </div>
+  <div class="bar-legend">
+    <span><i style="background:var(--buy)"></i>보유</span>
+    <span><i style="background:#6fae8c"></i>2·3차 예약</span>
+    <span><i style="background:var(--warn)"></i>오늘 신규</span>
+    <span><i style="background:var(--grid)"></i>남은 한도</span>
+  </div>
 </div>
-
-<div class="acct">
-  <label for="equity">계좌 금액</label>
-  <span class="in">$<input id="equity" type="text" inputmode="numeric" value="{{ equity_str }}"></span>
-  <span class="plan" id="plan"></span>
-  <span class="hint">금액을 바꾸면 신규 매수 수량·금액이 다시 계산됩니다 (파란 칸)</span>
-</div>
+{% endif %}
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="buy" aria-selected="true">신규 매수<span class="n">{{ buy_count }}</span></button>
   <button role="tab" data-tab="sell" aria-selected="false">매도·손절<span class="n">{{ sell_count }}</span></button>
-  <button role="tab" data-tab="hold" aria-selected="false">보유 현황<span class="n">{{ held_count }}</span></button>
+  <button role="tab" data-tab="hold" aria-selected="false">보유 현황<span class="n">{{ held_count }}/{{ max_concurrent }}</span></button>
   <button role="tab" data-tab="watch" aria-selected="false">관찰 목록<span class="n">{{ watch_count }}</span></button>
   <button role="tab" data-tab="filtered" aria-selected="false">걸러진 신호<span class="n">{{ filtered_count }}</span></button>
   <button role="tab" data-tab="warn" aria-selected="false">경고<span class="n">{{ warn_count }}</span></button>
@@ -180,29 +213,39 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 <!-- 신규 매수 -->
 <section class="panel on" id="buy">
-  <p class="desc">다음 거래일에 지정가(종가 × 1.01) 이하로 주문하고, 체결되지 않으면 취소합니다. 체결 후 손절 예약 주문을 바로 겁니다.</p>
+  <p class="desc"><span class="risk-line">오늘 신규 위험 {{ buy_risk_sum_str }} (계좌의 {{ buy_risk_pct }}%)</span> · 다음 거래일에 지정가(종가 × 1.01) 이하로 주문하고, 체결되지 않으면 취소합니다. 체결 후 손절 예약 주문을 바로 겁니다.</p>
   <div class="subtabs" role="tablist">
   {% for tab in buy_tabs %}
-    <button data-sub="{{ tab.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ tab.title }} ({{ tab.count }})</button>
+    <button data-sub="{{ tab.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" class="{{ 'has' if tab.count else 'empty' }}">{{ tab.title }} ({{ tab.count }})</button>
   {% endfor %}
   </div>
 
   {% for tab in buy_tabs %}
   <div class="sub{{ ' on' if loop.first else '' }}" id="{{ tab.key }}"><div class="sheet"><table>
-  <thead><tr>{% for h in tab.headers %}<th{{ ' class="nosort"' if h in ('종목','결정','비고') else (' class="num"' if h in ('지정가','수량','투입금액','손절가','손절폭','점수') else '') }}>{{ h }}</th>{% endfor %}</tr></thead>
+  <thead><tr>
+    <th class="nosort">종목</th><th class="nosort">티커</th>
+    {% if tab.key == 'all' %}<th class="nosort">차수</th>{% endif %}
+    <th class="nosort">결정</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th>
+    <th class="num">손절가</th><th class="num">손절폭</th>
+    {% if tab.key != 'all' %}<th class="num">최대손실</th>{% endif %}
+    <th class="num">점수</th><th class="nosort">비고</th>
+  </tr></thead>
   <tbody>
   {% if not tab.rows %}
   <tr><td colspan="{{ tab.headers|length }}" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in tab.rows %}
-  <tr class="sig" data-stage="{{ tab.key }}" data-limit="{{ row.limit }}" data-stop="{{ row.stop if row.stop is not none else '' }}">
-    <td><span class="tk">{{ row.ticker }}</span><span class="kr">{{ row.kr }}</span></td>
+  <tr class="sig" data-key="{{ row.key }}" data-stage="{{ row.stage }}" data-new="{{ '1' if row.is_new_position else '0' }}" data-score="{{ row.score }}" data-limit="{{ row.limit }}" data-stop="{{ row.stop if row.stop is not none else '' }}">
+    <td class="nm">{{ row.kr }}</td>
+    <td>{{ finviz(row.ticker) }}</td>
+    {% if tab.key == 'all' %}<td>{{ row.stage_label }}</td>{% endif %}
     <td><span class="badge {{ 'b-buy' if row.decision == '매수' else 'b-warn' }}">{{ row.decision }}</span></td>
     <td class="num" data-v="{{ row.limit }}">${{ '%.2f'|format(row.limit) }}</td>
-    <td class="num calc q">-</td>
-    <td class="num calc amt">-</td>
+    <td class="num calc q">{{ row.qty }}</td>
+    <td class="num calc amt" data-v="{{ row.amount_krw }}">{{ row.amount_krw_str }}</td>
     <td class="num">{{ '$%.2f'|format(row.stop) if row.stop is not none else '미확정' }}</td>
     <td class="num">{{ '%+.1f%%'|format(row.stop_pct) if row.stop_pct is not none else '-' }}</td>
+    {% if tab.key != 'all' %}<td class="num calc ml">{{ row.max_loss_krw_str }}</td>{% endif %}
     <td class="num">{{ row.score }}</td>
     <td class="note">{{ row.note }}</td>
   </tr>
@@ -216,20 +259,23 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="sell">
   <p class="desc">손절이 모든 신호보다 우선합니다. 추세가 약해지는 정도에 따라 1차분 → 2차분 → 3차분 순으로 나눠 팝니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">신호</th><th class="nosort">매도 범위</th><th class="num">매도 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">손익률</th><th class="nosort">주문 안내</th><th class="nosort">비고</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">신호</th><th class="nosort">매도 범위</th><th class="num">매도 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">예상 손익</th><th class="num">손익률</th><th class="nosort">결정</th><th class="nosort">주문 안내</th><th class="nosort">비고</th></tr></thead>
   <tbody>
   {% if not sell_rows %}
-  <tr><td colspan="9" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="12" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in sell_rows %}
   <tr>
-    <td><span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span></td>
+    <td class="nm">{{ row['종목명'] }}</td>
+    <td>{{ finviz(row['티커']) }}</td>
     <td><span class="badge b-sell">{{ row['신호'] }}</span></td>
     <td>{{ row['매도범위'] }}</td>
     <td class="num">{{ row['수량'] }}</td>
     <td class="num">{{ '$%.2f'|format(row['평균단가']) if row['평균단가'] is not none else '-' }}</td>
     <td class="num">{{ '$%.2f'|format(row['종가']) if row['종가'] is not none else '-' }}</td>
+    <td class="num {{ 'ok' if (row['손익률'] or 0) >= 0 else 'no' }}">{{ row['예상손익_krw_str'] }}</td>
     <td class="num {{ 'ok' if (row['손익률'] or 0) >= 0 else 'no' }}">{{ '%+.1f%%'|format(row['손익률']) if row['손익률'] is not none else '-' }}</td>
+    <td><span class="badge b-sell">매도</span></td>
     <td class="note">{{ row['주문안내'] }}</td>
     <td class="note">{{ row['비고'] }}</td>
   </tr>
@@ -242,20 +288,22 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="hold">
   <p class="desc">진행 칸은 1차·2차·3차 매수 여부입니다. 손절가는 증권사 예약 주문과 같아야 합니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">단계</th><th class="nosort">진행</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">평가금액</th><th class="num">손익률</th><th class="num">손절가</th><th class="num">손절까지</th><th class="nosort">비고</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">단계</th><th class="nosort">진행</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">평가금액</th><th class="num">평가손익</th><th class="num">손익률</th><th class="num">손절가</th><th class="num">손절까지</th><th class="nosort">비고</th></tr></thead>
   <tbody>
   {% if not hold_rows %}
-  <tr><td colspan="11" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="13" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in hold_rows %}
   <tr>
-    <td><span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span></td>
+    <td class="nm">{{ row['종목명'] }}</td>
+    <td>{{ finviz(row['티커']) }}</td>
     <td>{{ row['단계_표시'] }}</td>
     <td><span class="stage">{% for on in row.flags %}<span class="{{ 'on' if on else '' }}">{{ loop.index }}</span>{% endfor %}</span></td>
     <td class="num">{{ row['수량'] }}</td>
     <td class="num">{{ '$%.2f'|format(row['평균단가']) if row['평균단가'] is not none else '-' }}</td>
     <td class="num">{{ '$%.2f'|format(row['종가']) if row['종가'] is not none else '-' }}</td>
-    <td class="num">{{ '$%.2f'|format(row['평가금액']) if row['평가금액'] is not none else '-' }}</td>
+    <td class="num">{{ row['평가금액_krw_str'] }}</td>
+    <td class="num {{ 'ok' if (row['손익률'] or 0) >= 0 else 'no' }}">{{ row['평가손익_krw_str'] }}</td>
     <td class="num {{ 'ok' if (row['손익률'] or 0) >= 0 else 'no' }}">{{ '%+.1f%%'|format(row['손익률']) if row['손익률'] is not none else '-' }}</td>
     <td class="num">{{ '$%.2f'|format(row['손절가']) if row['손절가'] is not none else '-' }}</td>
     <td class="num">{{ '%+.1f%%'|format(row['손절까지']) if row['손절까지'] is not none else '-' }}</td>
@@ -267,9 +315,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   {% if hold_totals %}
   <tfoot><tr>
     <td>합계 {{ hold_totals.count }}종목</td><td></td><td></td><td></td><td></td><td></td><td></td>
+    <td class="num">{{ hold_totals.value_krw_str }}</td>
+    <td class="num {{ 'ok' if hold_totals.pnl_pct is not none and hold_totals.pnl_pct >= 0 else 'no' }}">{{ hold_totals.pnl_krw_str }}</td>
     <td class="num {{ 'ok' if hold_totals.pnl_pct is not none and hold_totals.pnl_pct >= 0 else 'no' }}">{{ '%+.1f%%'|format(hold_totals.pnl_pct) if hold_totals.pnl_pct is not none else '-' }}</td>
-    <td></td><td></td>
-    <td class="note">평가금액 ${{ '%.2f'|format(hold_totals.value) }} · 계좌 대비 투자 {{ '%.1f'|format(account_pct) if account_pct is not none else '-' }}%</td>
+    <td></td><td></td><td></td>
   </tr></tfoot>
   {% endif %}
   </table></div>
@@ -279,14 +328,15 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="watch">
   <p class="desc">다음 매수 신호를 기다리는 종목입니다. 남은 기간 안에 조건이 안 오면 1차분은 만료 매도됩니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">현재 단계</th><th class="nosort">기다리는 신호</th><th class="num">남은 거래일</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">현재 단계</th><th class="nosort">기다리는 신호</th><th class="num">남은 거래일</th></tr></thead>
   <tbody>
   {% if not watch_rows %}
-  <tr><td colspan="4" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="5" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in watch_rows %}
   <tr>
-    <td><span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span></td>
+    <td class="nm">{{ row['종목명'] }}</td>
+    <td>{{ finviz(row['티커']) }}</td>
     <td>{{ row['현재단계'] }}</td>
     <td>{{ row['기다리는신호'] }}</td>
     <td class="num">{{ row['남은거래일'] if row['남은거래일'] is not none else '제한 없음' }}</td>
@@ -300,14 +350,15 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="filtered">
   <p class="desc">조건은 맞았지만 매매 금지 규칙이나 한도에 걸려 추천하지 않은 종목입니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">원래 신호</th><th class="nosort">걸린 규칙</th><th class="nosort">비고 · 세부</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">원래 신호</th><th class="nosort">걸린 규칙</th><th class="nosort">비고 · 세부</th></tr></thead>
   <tbody>
   {% if not filtered_rows %}
-  <tr><td colspan="4" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="5" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in filtered_rows %}
   <tr>
-    <td><span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span></td>
+    <td class="nm">{{ row['종목명'] }}</td>
+    <td>{{ finviz(row['티커']) }}</td>
     <td>{{ row['단계'] }}</td>
     <td><span class="badge b-warn">{{ row['유형'] }}</span></td>
     <td class="note">{{ row['사유'] }}</td>
@@ -321,14 +372,15 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="warn">
   <p class="desc">보유 종목에만 표시합니다. 매도 신호는 아닙니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">경고</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">경고</th></tr></thead>
   <tbody>
   {% if not warn_rows %}
-  <tr><td colspan="2" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="3" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in warn_rows %}
   <tr>
-    <td><span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span></td>
+    <td class="nm">{{ row['종목명'] }}</td>
+    <td>{{ finviz(row['티커']) }}</td>
     <td><span class="badge {{ row.get('badge_class', 'b-info') }}">{{ row['내용'] }}</span></td>
   </tr>
   {% endfor %}
@@ -336,16 +388,17 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   </tbody></table></div>
 
   <div class="pf" style="margin-top:16px">
-    <h2>데이터 상태 <small>지연·구멍, 실적일 확인불가, 체결 기록 오류</small></h2>
+    <h2>데이터 상태 <small>지연·구멍, 실적일 확인불가, 환율, 체결 기록 오류</small></h2>
     <div class="sheet"><table>
-    <thead><tr><th class="nosort">종목</th><th class="nosort">내용</th></tr></thead>
+    <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">내용</th></tr></thead>
     <tbody>
     {% if not data_status_rows %}
-    <tr><td colspan="2" class="empty">오늘 해당 없음</td></tr>
+    <tr><td colspan="3" class="empty">오늘 해당 없음</td></tr>
     {% else %}
     {% for row in data_status_rows %}
     <tr>
-      <td>{% if row['티커'] %}<span class="tk">{{ row['티커'] }}</span><span class="kr">{{ row['종목명'] }}</span>{% else %}<span class="na">–</span>{% endif %}</td>
+      <td class="nm">{{ row['종목명'] if row['티커'] else '' }}</td>
+      <td>{% if row['티커'] %}{{ finviz(row['티커']) }}{% else %}<span class="na">–</span>{% endif %}</td>
       <td>{{ row['내용'] }}</td>
     </tr>
     {% endfor %}
@@ -356,14 +409,24 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 <!-- 규칙 -->
 <section class="panel" id="rules">
+  <div class="calc-box">
+    <div class="row">
+      <label for="totalWon">계좌 금액 계산기 · 총자금</label>
+      <span class="in">₩<input id="totalWon" type="text" inputmode="numeric" value="{{ '{:,}'.format(total_krw) }}"></span>
+      <label for="limitPct">전략 한도</label>
+      <span class="in"><input id="limitPct" type="text" inputmode="numeric" value="{{ strategy_limit_pct }}" style="width:60px">%</span>
+    </div>
+    <div class="row plan-out" id="calcPlan"></div>
+    <div class="hint">화면 확인용입니다. 기준값은 config.yaml의 account.total_krw·plan.strategy_limit_pct이고, 바꾸면 위 자금 계획 줄과 신규 매수 수량이 함께 다시 계산됩니다.</div>
+  </div>
   <div class="two">
     <div class="sheet"><table>
     <thead><tr><th class="nosort">매수 차수</th><th class="nosort">비중</th><th class="nosort">조건</th><th class="nosort">손절 기준</th></tr></thead>
     <tbody>
-    <tr><td>1차 정찰</td><td>11%</td><td>RSI 30 상향 돌파</td><td>10일 최저가</td></tr>
-    <tr><td>2차 확인</td><td>22%</td><td>1차 후 10일 내 MACD 골든크로스</td><td>10일 최저가</td></tr>
-    <tr><td>3차 확정</td><td>67%</td><td>일목 구름 4요소 (이동 {{ ichimoku_shift }}칸)</td><td>10일 최저가·구름 하단 중 높은 값</td></tr>
-    <tr><td>재진입</td><td>1회 전량</td><td>구름 위 + 0선 근처 골든크로스 + RSI 50~70</td><td>진입일 10일 최저가</td></tr>
+    <tr><td>1차 정찰</td><td>슬롯의 1/9</td><td>RSI 30 상향 돌파</td><td>10일 최저가</td></tr>
+    <tr><td>2차 확인</td><td>슬롯의 2/9</td><td>1차 후 10일 내 MACD 골든크로스</td><td>10일 최저가</td></tr>
+    <tr><td>3차 확정</td><td>슬롯의 6/9</td><td>일목 구름 4요소 (이동 {{ ichimoku_shift }}칸)</td><td>10일 최저가·구름 하단 중 높은 값</td></tr>
+    <tr><td>재진입</td><td>슬롯 전체</td><td>구름 위 + 0선 근처 골든크로스 + RSI 50~70</td><td>진입일 10일 최저가</td></tr>
     </tbody></table></div>
     <div class="sheet"><table>
     <thead><tr><th class="nosort">매도 신호</th><th class="nosort">지표 조건</th><th class="nosort">매도 범위</th></tr></thead>
@@ -374,7 +437,6 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <tr><td>E3 구조 붕괴</td><td>구름 하단 이탈 · 후행스팬 &lt; 선행 B</td><td>3차분(67%) 또는 잔량</td></tr>
     </tbody></table></div>
   </div>
-  <p class="desc" style="margin-top:10px">종목당 투입 금액 한도: 계좌의 {{ max_position_pct }}% 이하. 동시 보유 종목: 최대 {{ max_concurrent }}개.</p>
 </section>
 
 <div class="todo" style="margin-top:16px">
@@ -384,52 +446,99 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <code style="font-size:12px">{{ fills_path }}</code> · 형식: 날짜, 종목, 차수, 매수매도, 체결가, 수량 (예: {{ as_of_str }}, PEP, 1차, 매수, 131.80, 34)</div>
 
 <footer>
-데이터: yfinance 일봉(분할 반영) · 구성 종목 출처 Nasdaq 공식 · 일목 이동 {{ ichimoku_shift }} · 종목당 위험 2%(재진입 1%), 갭 여유 1.5% · 운용 모드: {{ mode_label }}<br>
+데이터: yfinance 일봉(분할 반영) · 구성 종목 출처 Nasdaq 공식 · 일목 이동 {{ ichimoku_shift }} · 원/달러 환율 yfinance KRW=X · 운용 모드: {{ mode_label }}<br>
 전략 규칙에 따른 계산 결과이며 투자 권유가 아닙니다. 최종 판단과 주문은 직접 확인 후 하세요.
 </footer>
 </div>
 
 <script>
 const CFG={
-  riskTotal:{{ cfg_js.riskTotal }},
-  stageShare:{b1:{{ cfg_js.stageShare.b1 }}, b2:{{ cfg_js.stageShare.b2 }}, b3:{{ cfg_js.stageShare.b3 }}},
-  riskB:{{ cfg_js.riskB }}, gap:{{ cfg_js.gap }}, minRisk:{{ cfg_js.minRisk }}, maxAlloc:{{ cfg_js.maxAlloc }}
+  maxSlots:{{ cfg_js.maxSlots }},
+  stageFrac:{A1:{{ cfg_js.stageFrac.A1 }}, A2:{{ cfg_js.stageFrac.A2 }}, A3:{{ cfg_js.stageFrac.A3 }}, B:{{ cfg_js.stageFrac.B }}},
+  stageRiskPct:{A1:{{ cfg_js.stageRiskPct.A1 }}, A2:{{ cfg_js.stageRiskPct.A2 }}, A3:{{ cfg_js.stageRiskPct.A3 }}, B:{{ cfg_js.stageRiskPct.B }}},
+  gap:{{ cfg_js.gap }}, minRisk:{{ cfg_js.minRisk }},
+  fx:+document.body.dataset.fx, usedWon:+document.body.dataset.used,
+  baseReserved:+document.body.dataset.reserved, baseSlot:+document.body.dataset.slot,
 };
-const fmt=n=>'$'+Math.round(n).toLocaleString('en-US');
+function fmtWon(n){
+  n=Math.round(n||0);
+  const neg=n<0; n=Math.abs(n);
+  const man=Math.round(n/10000);
+  if(man===0) return '0원';
+  const eok=Math.floor(man/10000), rest=man%10000;
+  let s = eok ? (eok+'억'+(rest?(' '+rest.toLocaleString('en-US')+'만'):'')) : (rest.toLocaleString('en-US')+'만');
+  return (neg?'-':'')+s;
+}
 function recalc(){
-  const el=document.getElementById('equity');
-  const eq=parseFloat(el.value.replace(/[^0-9.]/g,''))||0;
-  const r=eq*CFG.riskTotal;
-  document.getElementById('plan').innerHTML=
-    `종목당 최대 손실 <b>${fmt(r)}</b> → `+
-    `<span>1차 <b>${fmt(r*CFG.stageShare.b1)}</b></span>`+
-    `<span>2차 <b>${fmt(r*CFG.stageShare.b2)}</b></span>`+
-    `<span>3차 <b>${fmt(r*CFG.stageShare.b3)}</b></span>`+
-    `<span>재진입 <b>${fmt(eq*CFG.riskB)}</b></span>`;
-  let sum=0;
-  document.querySelectorAll('tr.sig').forEach(tr=>{
-    const st=tr.dataset.stage, lim=+tr.dataset.limit, stop=tr.dataset.stop===''?null:+tr.dataset.stop;
-    if(stop===null){ return; }
-    const budget= st==='b9' ? eq*CFG.riskB : r*CFG.stageShare[st];
-    let ps=(lim-stop)+lim*CFG.gap; if(ps<lim*CFG.minRisk) ps=lim*CFG.minRisk;
-    let q=Math.floor(budget/ps);
-    const capQ=Math.floor(eq*CFG.maxAlloc/lim); if(q>capQ) q=capQ;
-    const amt=q*lim, risk=q*ps; sum+=risk;
-    const set=(c,t,v)=>{const td=tr.querySelector('.'+c); if(!td) return; td.textContent=t; td.dataset.v=v;};
-    set('q',q.toLocaleString('en-US'),q);
-    set('amt',fmt(amt),amt);
-    set('pct',(eq?amt/eq*100:0).toFixed(1)+'%',eq?amt/eq*100:0);
-    set('rk',fmt(risk),risk);
+  const totalEl=document.getElementById('totalWon'), limitEl=document.getElementById('limitPct');
+  if(!totalEl || !limitEl) return;
+  const totalWon=parseFloat(totalEl.value.replace(/[^0-9.]/g,''))||0;
+  const limitPct=parseFloat(limitEl.value.replace(/[^0-9.]/g,''))||0;
+  const slot=totalWon*limitPct/100/CFG.maxSlots;
+  const strategyLimit=totalWon*limitPct/100;
+  const reserved=CFG.baseSlot>0 ? CFG.baseReserved/CFG.baseSlot*slot : 0;
+  const used=CFG.usedWon;
+  const fx=CFG.fx;
+  const totalUsd=fx? totalWon/fx : 0;
+  let remaining=Math.max(strategyLimit-used-reserved,0);
+
+  const calcPlan=document.getElementById('calcPlan');
+  if(calcPlan){
+    calcPlan.innerHTML=
+      `<span>전략 한도 <b>${fmtWon(strategyLimit)}</b></span>`+
+      `<span>종목당 슬롯 <b>${fmtWon(slot)}</b></span>`+
+      `<span>보유+예약 <b>${fmtWon(used+reserved)}</b></span>`+
+      `<span>남은 한도(오늘 신규 전) <b>${fmtWon(remaining)}</b></span>`;
+  }
+
+  const rows=[...document.querySelectorAll('#buy .sub#all tr.sig')]
+    .sort((a,b)=>(+b.dataset.score)-(+a.dataset.score));
+
+  let riskSum=0;
+  rows.forEach(tr=>{
+    const stageKey=tr.dataset.stage, limit=+tr.dataset.limit;
+    const stopAttr=tr.dataset.stop;
+    const stop=stopAttr===''||stopAttr===undefined?null:+stopAttr;
+    let qty=0, riskPerShare=0;
+    if(stop!==null && fx){
+      const targetWon=slot*CFG.stageFrac[stageKey];
+      const targetUsd=targetWon/fx;
+      const targetQty=Math.floor(targetUsd/limit);
+      riskPerShare=(limit-stop)+limit*CFG.gap; if(riskPerShare<limit*CFG.minRisk) riskPerShare=limit*CFG.minRisk;
+      const riskBudgetUsd=totalUsd*CFG.stageRiskPct[stageKey]/100;
+      const riskCapQty=Math.floor(riskBudgetUsd/riskPerShare);
+      qty=Math.min(targetQty, riskCapQty);
+      if(tr.dataset.new==='1'){
+        const needed=slot;
+        if(remaining>=needed){ remaining-=needed; }
+        else if(remaining<=0){ qty=0; }
+        else { const availUsd=remaining/fx; qty=Math.min(qty, Math.max(Math.floor(availUsd/limit),0)); remaining=0; }
+      }
+    }
+    const amt=qty*limit*fx, maxLoss=qty*riskPerShare*fx;
+    riskSum+=maxLoss;
+    document.querySelectorAll('tr.sig[data-key="'+CSS.escape(tr.dataset.key)+'"]').forEach(t=>{
+      const q=t.querySelector('.q'); if(q){ q.textContent=qty.toLocaleString('en-US'); }
+      const amtCell=t.querySelector('.amt'); if(amtCell){ amtCell.textContent=fmtWon(amt); amtCell.dataset.v=Math.round(amt); }
+      const mlCell=t.querySelector('.ml'); if(mlCell){ mlCell.textContent=fmtWon(maxLoss); mlCell.dataset.v=Math.round(maxLoss); }
+    });
   });
-  document.getElementById('riskSum').textContent=fmt(sum);
-  document.getElementById('riskPct').textContent='('+(eq?sum/eq*100:0).toFixed(1)+'%)';
-  try{localStorage.setItem('equity',String(eq));}catch(e){}
+
+  const riskLine=document.querySelector('.risk-line');
+  if(riskLine) riskLine.textContent=`오늘 신규 위험 ${fmtWon(riskSum)} (계좌의 ${(totalWon?riskSum/totalWon*100:0).toFixed(2)}%)`;
+
+  try{localStorage.setItem('totalWon',String(totalWon)); localStorage.setItem('limitPct',String(limitPct));}catch(e){}
 }
 (function(){
-  const el=document.getElementById('equity');
-  try{const s=localStorage.getItem('equity'); if(s) el.value=Number(s).toLocaleString('en-US');}catch(e){}
-  el.addEventListener('input',recalc);
-  el.addEventListener('blur',()=>{const n=parseFloat(el.value.replace(/[^0-9.]/g,''))||0; el.value=n.toLocaleString('en-US');});
+  const totalEl=document.getElementById('totalWon'), limitEl=document.getElementById('limitPct');
+  if(!totalEl || !limitEl) return;
+  try{
+    const t=localStorage.getItem('totalWon'); if(t) totalEl.value=Number(t).toLocaleString('en-US');
+    const l=localStorage.getItem('limitPct'); if(l) limitEl.value=l;
+  }catch(e){}
+  totalEl.addEventListener('input',recalc);
+  limitEl.addEventListener('input',recalc);
+  totalEl.addEventListener('blur',()=>{const n=parseFloat(totalEl.value.replace(/[^0-9.]/g,''))||0; totalEl.value=n.toLocaleString('en-US');});
   recalc();
 })();
 
@@ -464,7 +573,7 @@ document.querySelectorAll('table').forEach(tbl=>{
       th.parentElement.querySelectorAll('th').forEach(x=>x.classList.remove('asc','desc'));
       th.classList.add(asc?'asc':'desc');
       const val=c=>{const d=c.dataset.v; if(d!==undefined) return parseFloat(d);
-        const t=c.textContent.replace(/[$,%배\s]/g,'').replace('−','-'); const n=parseFloat(t);
+        const t=c.textContent.replace(/[$,%배원만억\s]/g,'').replace('−','-'); const n=parseFloat(t);
         return isNaN(n)?c.textContent.trim():n;};
       rows.sort((a,b)=>{const x=val(a.cells[i]),y=val(b.cells[i]);
         const r=(typeof x==='number'&&typeof y==='number')?x-y:String(x).localeCompare(String(y),'ko');
