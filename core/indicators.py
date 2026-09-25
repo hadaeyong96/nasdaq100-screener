@@ -105,6 +105,31 @@ def compute_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     return out
 
 
+def compute_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Wilder ATR(Average True Range) — 순수 함수 (P5-3 E1 실험용, compute_indicators엔 없음).
+
+    입력: df(open/high/low/close), period(기본 14)
+    출력: True Range를 alpha=1/period로 지수평활한 Series (df와 같은 인덱스)
+    """
+    high, low, close = df["high"], df["low"], df["close"]
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+    return tr.ewm(alpha=1 / period, adjust=False).mean()
+
+
+def compute_obv(df: pd.DataFrame) -> pd.Series:
+    """OBV(On-Balance Volume) — 순수 함수 (P5-3 C3 실험용).
+
+    입력: df(close, volume)
+    출력: 종가가 전일보다 오르면 +거래량, 내리면 -거래량을 누적한 Series
+    """
+    close, volume = df["close"], df["volume"]
+    direction = np.sign(close.diff().fillna(0.0))
+    return (direction * volume).cumsum()
+
+
 def last_cross_date(series_bool: pd.Series) -> pd.Timestamp | None:
     """불리언 시리즈(gc 또는 dc)에서 가장 최근 True의 날짜(인덱스)를 구한다.
 

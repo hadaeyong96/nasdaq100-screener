@@ -428,3 +428,221 @@ def test_compute_topN_excluded_cagr_reduces_final_equity():
     assert out["cagr_pct"] < full_cagr * 100
     assert out["excluded_sum_pnl_krw"] > 0
     assert len(out["excluded_tickers"]) == 10
+
+
+# ── P5-3 테스트 ──────────────────────────────────────────────────────────
+
+
+def _synthetic_universe(tickers: list, n: int = 500, seed_base: int = 200) -> dict:
+    out = {}
+    for i, t in enumerate(tickers):
+        r = np.random.default_rng(seed_base + i)
+        steps = r.normal(0.05, 1.2, size=n)
+        close = np.clip(100 + np.cumsum(steps), 5, None)
+        high = close + r.uniform(0.1, 1.5, size=n)
+        low = np.minimum(close - r.uniform(0.1, 1.5, size=n), close - 0.01)
+        open_ = low + r.uniform(0, 1, size=n) * (high - low)
+        volume = r.integers(1_000_000, 5_000_000, size=n)
+        idx = pd.bdate_range("2015-01-02", periods=n, name="date")
+        out[t] = pd.DataFrame({"open": open_, "high": high, "low": low, "close": close, "volume": volume}, index=idx)
+    return out
+
+
+def test_compute_relative_strength_top_half_ranks_by_trailing_return():
+    idx = pd.bdate_range("2015-01-02", periods=200, name="date")
+    flat = pd.Series(100.0, index=idx)
+    rising = pd.Series(100.0 + np.arange(200) * 0.5, index=idx)
+    indicator_map = {
+        "FLAT": pd.DataFrame({"open": flat, "high": flat, "low": flat, "close": flat, "volume": 1_000_000}, index=idx),
+        "RISE": pd.DataFrame({"open": rising, "high": rising, "low": rising, "close": rising, "volume": 1_000_000}, index=idx),
+    }
+    out = bt.compute_relative_strength_top_half(indicator_map, [d.date() for d in idx[150:151]], months=6)
+    key = idx[150].date().isoformat()
+    assert "RISE" in out[key]
+    assert "FLAT" not in out[key]
+
+
+def test_compute_rsi_whipsaw_block_flags_after_second_cross():
+    idx = pd.bdate_range("2015-01-02", periods=10, name="date")
+    rsi = [20, 35, 20, 35, 20, 20, 20, 20, 20, 20]
+    df = pd.DataFrame({"rsi": rsi}, index=idx)
+    out = bt.compute_rsi_whipsaw_block({"AAA": df}, lookback=15, max_crosses=2)
+    assert out[("AAA", idx[3].date().isoformat())] is True
+    assert out[("AAA", idx[1].date().isoformat())] is False
+
+
+def test_compute_volume_entry_filter_volume_mode():
+    idx = pd.bdate_range("2015-01-02", periods=3, name="date")
+    df = pd.DataFrame({"vol_ratio": [1.0, 2.0, 1.6]}, index=idx)
+    out = bt.compute_volume_entry_filter({"AAA": df}, mode="volume")
+    assert out[("AAA", idx[0].date().isoformat())] is False
+    assert out[("AAA", idx[1].date().isoformat())] is True
+    assert out[("AAA", idx[2].date().isoformat())] is True
+
+
+def test_compute_volume_entry_filter_obv_mode_rises_with_up_trend():
+    idx = pd.bdate_range("2015-01-02", periods=25, name="date")
+    close = pd.Series(100.0 + np.arange(25) * 0.3, index=idx)
+    df = pd.DataFrame({"close": close, "volume": 1_000_000}, index=idx)
+    out = bt.compute_volume_entry_filter({"AAA": df}, mode="obv")
+    assert out[("AAA", idx[24].date().isoformat())] is True
+
+
+def test_entry_type_allowed_empty_blocks_all_new_entries(full_cfg):
+    from tests.test_state import make_df as make_signal_df
+
+    rows = [{"close": 100, "rsi": 20}, {"close": 100, "rsi": 32, "swing_low": 94}]
+    df = make_signal_df(rows)
+    indicator_map = {"AAA": df}
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in df.index}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={"AAA": pd.Series(dtype=float)}, checkpoints=[], fx_by_date=fx_by_date,
+        universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=df, qqq_dividends=pd.Series(dtype=float), cash_etf_df=df, cash_etf_dividends=pd.Series(dtype=float),
+    )
+    result = bt.simulate_portfolio(data, full_cfg, df.index[0].date(), df.index[-1].date(), entry_type_allowed=set())
+    assert not any(t["side"] == "진입" for t in result.trades)
+
+
+def test_blocked_new_entries_prevents_that_specific_fill():
+    tickers = ["AAA", "BBB", "CCC", "DDD"]
+    raw = _synthetic_universe(tickers)
+    cfg = _plan_cfg_base()
+    indicator_map = {t: compute_indicators(df, cfg) for t, df in raw.items()}
+    idx = raw["AAA"].index
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in idx}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={t: pd.Series(dtype=float) for t in tickers}, checkpoints=[],
+        fx_by_date=fx_by_date, universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=indicator_map["AAA"], qqq_dividends=pd.Series(dtype=float),
+        cash_etf_df=indicator_map["AAA"], cash_etf_dividends=pd.Series(dtype=float),
+    )
+    baseline = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date())
+    first_entry = next(t for t in baseline.trades if t["side"] == "진입" and t.get("initial_risk_krw"))
+    blocked = {(first_entry["ticker"], first_entry["date"])}
+    result = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date(), blocked_new_entries=blocked)
+    still_present = any(
+        t["side"] == "진입" and t["ticker"] == first_entry["ticker"] and t["date"] == first_entry["date"] and t.get("initial_risk_krw")
+        for t in result.trades
+    )
+    assert not still_present
+
+
+def test_atr_trail_mult_runs_and_does_not_widen_worst_loss():
+    """P5-3 E1: 스모크 테스트 — 에러 없이 돌고, 청산 완료 포지션의 최대 손실(R)이
+    기본(swing_low 손절만)보다 더 나빠지지는 않아야 한다(추적 손절은 손절가를
+    더 타이트하게만 만든다)."""
+    from core.indicators import compute_atr
+
+    tickers = ["AAA", "BBB", "CCC"]
+    raw = _synthetic_universe(tickers, seed_base=300)
+    cfg = _plan_cfg_base()
+    indicator_map = {}
+    for t, df in raw.items():
+        ind = compute_indicators(df, cfg)
+        ind["atr"] = compute_atr(df, period=14)
+        indicator_map[t] = ind
+    idx = raw["AAA"].index
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in idx}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={t: pd.Series(dtype=float) for t in tickers}, checkpoints=[],
+        fx_by_date=fx_by_date, universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=indicator_map["AAA"], qqq_dividends=pd.Series(dtype=float),
+        cash_etf_df=indicator_map["AAA"], cash_etf_dividends=pd.Series(dtype=float),
+    )
+    baseline = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date())
+    trailed = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date(), atr_trail_mult=2.5)
+
+    base_positions = bt.aggregate_positions(baseline.trades, baseline.still_open_position_ids)
+    trail_positions = bt.aggregate_positions(trailed.trades, trailed.still_open_position_ids)
+    base_worst = min((p["r"] for p in base_positions), default=0.0)
+    trail_worst = min((p["r"] for p in trail_positions), default=0.0)
+    assert trail_worst >= base_worst - 1e-6
+
+
+def test_partial_tp_r_mult_sells_half_once_per_position():
+    tickers = ["AAA", "BBB", "CCC"]
+    raw = _synthetic_universe(tickers, seed_base=400)
+    cfg = _plan_cfg_base()
+    indicator_map = {t: compute_indicators(df, cfg) for t, df in raw.items()}
+    idx = raw["AAA"].index
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in idx}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={t: pd.Series(dtype=float) for t in tickers}, checkpoints=[],
+        fx_by_date=fx_by_date, universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=indicator_map["AAA"], qqq_dividends=pd.Series(dtype=float),
+        cash_etf_df=indicator_map["AAA"], cash_etf_dividends=pd.Series(dtype=float),
+    )
+    result = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date(), partial_tp_r_mult=2.0)
+    partials = [t for t in result.trades if t.get("stage") == "PARTIAL_TP"]
+    seen_ids = set()
+    for t in partials:
+        assert t["side"] == "청산"
+        assert t["qty"] > 0
+        assert t["position_id"] not in seen_ids
+        seen_ids.add(t["position_id"])
+
+
+def test_compute_stock_sleeve_twr_usd_ignores_days_with_no_exposure_and_cashflow():
+    """진입일의 순매수만큼은 수익률에서 빠지고, 보유 가치가 0인 날은 건너뛰어야 한다."""
+    equity_rows = [
+        {"date": "2020-01-01", "positions_value_krw": 0, "total_krw": 100_000},
+        {"date": "2020-01-02", "positions_value_krw": 10_000, "total_krw": 100_000},  # 진입(순매수 10,000원어치) — 수익률 계산 제외 대상
+        {"date": "2020-01-03", "positions_value_krw": 11_000, "total_krw": 100_000},  # +10% (10,000 -> 11,000, 매매 없음)
+    ]
+    trades = [{"date": "2020-01-02", "side": "진입", "price": 100.0, "qty": 100}]  # 10,000 KRW/1300 = ~7.69 USD 무시(간단화: fx=1)
+    fx_by_date = {"2020-01-01": 1.0, "2020-01-02": 1.0, "2020-01-03": 1.0}
+    out = bt.compute_stock_sleeve_twr_usd(equity_rows, trades, fx_by_date, annualize_basis=252)
+    assert out["invested_days"] == 1  # 01-02(순매수 있어 prev_v=0으로 스킵)는 제외, 01-03만 포함
+    assert "2020-01-03" in out["daily_returns"]
+    assert out["daily_returns"]["2020-01-03"] == pytest.approx(0.1, abs=1e-6)
+
+
+def test_compute_qqq_twr_over_days_usd_filters_to_given_days():
+    idx = pd.bdate_range("2020-01-01", periods=5, name="date")
+    close = pd.Series([100.0, 110.0, 121.0, 100.0, 90.0], index=idx)
+    qqq_df = pd.DataFrame({"close": close}, index=idx)
+    invested_days = {idx[2].date().isoformat()}  # 01-02 -> 01-03 구간(+10%)만 포함
+    out = bt.compute_qqq_twr_over_days_usd(qqq_df, pd.Series(dtype=float), invested_days, annualize_basis=252)
+    assert out["days"] == 1
+    assert out["twr_annualized_pct"] is not None
+
+
+def test_compute_position_weight_stats_basic():
+    equity_rows = [
+        {"date": "2020-01-01", "positions_value_krw": 0, "total_krw": 100},
+        {"date": "2020-01-02", "positions_value_krw": 50, "total_krw": 100},
+        {"date": "2020-01-03", "positions_value_krw": 20, "total_krw": 100},
+    ]
+    out = bt.compute_position_weight_stats(equity_rows)
+    assert out["max_weight_pct"] == 50.0
+    assert out["min_weight_pct"] == 0.0
+    assert out["avg_weight_pct"] == pytest.approx((0 + 50 + 20) / 3, abs=0.01)
+
+
+def test_compute_entry_type_breakdown_splits_a_and_b():
+    trades = [
+        {"position_id": 1, "side": "진입", "stage": "A1", "initial_risk_krw": 1000},
+        {"position_id": 2, "side": "진입", "stage": "B", "initial_risk_krw": 2000},
+    ]
+    positions = [
+        {"position_id": 1, "ticker": "AAA", "pnl_krw": 500, "r": 0.5},
+        {"position_id": 2, "ticker": "BBB", "pnl_krw": -400, "r": -0.2},
+    ]
+    out = bt.compute_entry_type_breakdown(positions, trades)
+    assert out["A형"]["count"] == 1
+    assert out["A형"]["total_pnl_krw"] == 500
+    assert out["B형"]["count"] == 1
+    assert out["B형"]["total_pnl_krw"] == -400
+
+
+def test_compute_exit_type_breakdown_averages_r_per_kind():
+    trades = [
+        {"position_id": 1, "side": "진입", "stage": "A1", "initial_risk_krw": 1000},
+        {"position_id": 1, "side": "청산", "stage": "STOP", "pnl_krw": -1000},
+        {"position_id": 2, "side": "진입", "stage": "A1", "initial_risk_krw": 2000},
+        {"position_id": 2, "side": "청산", "stage": "STOP", "pnl_krw": -3000},
+    ]
+    out = bt.compute_exit_type_breakdown(trades)
+    assert out["STOP"]["count"] == 2
+    assert out["STOP"]["avg_r"] == pytest.approx((-1.0 + -1.5) / 2, abs=1e-6)
