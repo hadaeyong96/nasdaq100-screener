@@ -292,3 +292,139 @@ def test_simulate_portfolio_produces_closeable_positions_with_initial_risk(full_
     for p in positions:
         assert p["initial_risk_krw"]
         assert p["r"] is not None
+
+
+# ── P5-2 테스트 ──────────────────────────────────────────────────────────
+
+
+def test_compute_sma_regime_flags_above_and_below():
+    idx = pd.bdate_range("2015-01-02", periods=250)
+    # 앞 절반은 평평하게(이평선과 같음), 급등 직후 며칠은 확실히 이평선 위가 되게 만든다.
+    close = pd.Series([100.0] * 125 + [200.0] * 125, index=idx)
+    qqq_df = pd.DataFrame({"close": close}, index=idx)
+    regime = bt.compute_sma_regime(qqq_df, window=50)
+    assert regime[idx[100].date().isoformat()] is False  # 평평한 구간: 종가 == 이평선
+    assert regime[idx[130].date().isoformat()] is True  # 급등 직후: 이평선이 아직 100대라 종가(200) > 이평선
+    assert idx[10].date().isoformat() not in regime  # 워밍업 구간(이평선 계산 불가)은 빠진다
+
+
+def test_compute_cloud_regime_requires_close_above_cloud_and_future_yang():
+    idx = pd.bdate_range("2015-01-02", periods=5)
+    qqq_df = pd.DataFrame(
+        {
+            "close": [110.0, 90.0, 110.0, 110.0, float("nan")],
+            "cloud_top": [100.0, 100.0, 100.0, 100.0, 100.0],
+            "future_yang": [True, True, False, True, True],
+        },
+        index=idx,
+    )
+    regime = bt.compute_cloud_regime(qqq_df)
+    assert regime[idx[0].date().isoformat()] is True  # 종가>구름, 양운
+    assert regime[idx[1].date().isoformat()] is False  # 종가<구름
+    assert regime[idx[2].date().isoformat()] is False  # 음운
+    assert idx[4].date().isoformat() not in regime  # close가 NaN이면 판정 불가로 뺀다
+
+
+def test_simulate_portfolio_max_slots_override_reduces_new_positions():
+    """P5-2 A1: max_slots를 좁히면(cfg의 plan.max_slots 대신) 동시 보유 한도 초과로
+    막히는 신규 진입이 늘어(또는 최소 줄지 않아)야 한다."""
+    n = 500
+    tickers = {}
+    for i, t in enumerate(["AAA", "BBB", "CCC", "DDD"]):
+        r = np.random.default_rng(100 + i)
+        steps = r.normal(0.05, 1.2, size=n)
+        close = np.clip(100 + np.cumsum(steps), 5, None)
+        high = close + r.uniform(0.1, 1.5, size=n)
+        low = np.minimum(close - r.uniform(0.1, 1.5, size=n), close - 0.01)
+        open_ = low + r.uniform(0, 1, size=n) * (high - low)
+        volume = r.integers(1_000_000, 5_000_000, size=n)
+        idx = pd.bdate_range("2015-01-02", periods=n, name="date")
+        tickers[t] = pd.DataFrame({"open": open_, "high": high, "low": low, "close": close, "volume": volume}, index=idx)
+    idx = tickers["AAA"].index
+
+    cfg = _plan_cfg_base()
+    indicator_map = {t: compute_indicators(df, cfg) for t, df in tickers.items()}
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in idx}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={t: pd.Series(dtype=float) for t in tickers}, checkpoints=[],
+        fx_by_date=fx_by_date, universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=indicator_map["AAA"], qqq_dividends=pd.Series(dtype=float),
+        cash_etf_df=indicator_map["AAA"], cash_etf_dividends=pd.Series(dtype=float),
+    )
+    result_wide = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date(), max_slots=4)
+    result_narrow = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date(), max_slots=1)
+    entries_wide = sum(1 for t in result_wide.trades if t["side"] == "진입" and t.get("initial_risk_krw"))
+    entries_narrow = sum(1 for t in result_narrow.trades if t["side"] == "진입" and t.get("initial_risk_krw"))
+    limit_rejections_narrow = sum(1 for r in result_narrow.rejected if "한도 초과" in r["reason"])
+    assert entries_narrow <= entries_wide
+    assert limit_rejections_narrow > 0
+
+
+def _plan_cfg_base() -> dict:
+    import yaml
+
+    with open(bt.ROOT / "config.yaml", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    cfg = dict(cfg)
+    cfg["account"] = {"total_krw": 100_000_000}
+    cfg["plan"] = {"strategy_limit_pct": 60, "cash_buffer_pct": 5, "max_slots": 8}
+    cfg["backtest"] = dict(cfg["backtest"])
+    cfg["backtest"]["total_krw"] = 40_000_000
+    return cfg
+
+
+def test_regime_ok_blocks_new_entries_but_not_exits(full_cfg):
+    """P5-2 B1·B2: regime_ok가 False인 날은 새 진입이 전혀 admitted되지 않아야 한다."""
+    from tests.test_state import make_df as make_signal_df
+
+    rows = [{"close": 100, "rsi": 20}, {"close": 100, "rsi": 32, "swing_low": 94}]
+    df = make_signal_df(rows)
+    date_ = df.index[1]
+    indicator_map = {"AAA": df}
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in df.index}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={"AAA": pd.Series(dtype=float)}, checkpoints=[], fx_by_date=fx_by_date,
+        universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=df, qqq_dividends=pd.Series(dtype=float), cash_etf_df=df, cash_etf_dividends=pd.Series(dtype=float),
+    )
+    regime_ok = {date_.date().isoformat(): False}
+    result = bt.simulate_portfolio(data, full_cfg, df.index[0].date(), df.index[-1].date(), regime_ok=regime_ok)
+    assert not any(t["side"] == "진입" for t in result.trades)
+
+
+def test_compute_regime_split_stats_separates_returns_and_positions():
+    """P5-2 0장: 국면별(above/below) 수익률·승률·기대값을 정확히 나눠야 한다."""
+    equity_rows = [
+        {"date": "2020-01-01", "total_krw": 100_000},
+        {"date": "2020-01-02", "total_krw": 110_000},  # above, +10%
+        {"date": "2020-01-03", "total_krw": 99_000},  # below, -10%
+        {"date": "2020-01-04", "total_krw": 108_900},  # above, +10%
+    ]
+    regime_ok = {"2020-01-02": True, "2020-01-03": False, "2020-01-04": True}
+    positions = [
+        {"position_id": 1, "ticker": "AAA", "opened_date": "2020-01-01", "pnl_krw": 1000, "r": 1.0},
+        {"position_id": 2, "ticker": "BBB", "opened_date": "2020-01-03", "pnl_krw": -500, "r": -1.0},
+    ]
+    out = bt.compute_regime_split_stats(equity_rows, positions, regime_ok)
+    assert out["above"]["days"] == 2
+    assert out["above"]["cum_return_pct"] == pytest.approx(21.0, abs=0.1)  # 1.1 * 1.1 - 1
+    assert out["below"]["days"] == 1
+    assert out["below"]["cum_return_pct"] == pytest.approx(-10.0, abs=0.1)
+    assert out["above"]["position_count"] == 0  # opened 2020-01-01은 regime_ok에 없어 어디에도 안 들어감
+    assert out["below"]["position_count"] == 1
+    assert out["below"]["win_rate_pct"] == 0.0
+
+
+def test_compute_topN_excluded_cagr_reduces_final_equity():
+    """P5-2 0-4번: 상위 n개 포지션의 손익을 빼면 CAGR이 낮아져야 한다(근사)."""
+    positions = [{"ticker": f"T{i}", "pnl_krw": (10 - i) * 1_000_000, "opened_date": "2015-01-01", "closed_date": "2015-06-01", "position_id": i, "initial_risk_krw": 100_000, "r": 1.0} for i in range(15)]
+    total_krw = 40_000_000
+    final_total_krw = 80_000_000
+    from datetime import date as date_cls
+
+    out = bt.compute_topN_excluded_cagr(positions, final_total_krw, total_krw, date_cls(2015, 1, 1), date_cls(2021, 12, 31), n=10)
+    full_years = (date_cls(2021, 12, 31) - date_cls(2015, 1, 1)).days / 365.25
+    full_cagr = (final_total_krw / total_krw) ** (1 / full_years) - 1
+    assert out["cagr_pct"] < full_cagr * 100
+    assert out["excluded_sum_pnl_krw"] > 0
+    assert len(out["excluded_tickers"]) == 10

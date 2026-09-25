@@ -160,8 +160,9 @@ class Broker:
     def pay_capital_gains_tax(self, year: int, price_usd: float, fx_rate: float, cfg: dict, settlement_year: int) -> float:
         """year의 실현손익에 대한 양도세를 settlement_year(보통 year+1) 5월에 낸다 (QQQM을 팔아 마련).
 
-        세금을 마련하려고 파는 QQQM 자체의 실현손익은 그 해(year)가 아니라 실제로
-        파는 시점(settlement_year)에 잡는다.
+        세금은 원화로 낸다고 보고, 달러를 원화로 바꾸는 그 순간에 환전 스프레드를
+        적용한다(P5-2 0-2번) — 세금을 마련하려고 파는 QQQM 자체의 실현손익은 그 해
+        (year)가 아니라 실제로 파는 시점(settlement_year)에 잡는다.
         """
         tax_cfg = cfg["backtest"]["tax"]
         gain = self.realized_gain_by_year.get(year, 0.0)
@@ -173,7 +174,9 @@ class Broker:
         if amount_krw <= 0:
             self.tax_log.append({"year": year, "gain_krw": gain, "tax_krw": 0.0})
             return 0.0
-        usd_needed = amount_krw / fx_rate
+        spread_pct = cfg["backtest"]["costs"]["fx_spread_pct"] if self.apply_costs else 0.0
+        effective_fx_rate = fx_rate * (1 - spread_pct / 100)  # 원화로 낼 때 스프레드만큼 덜 받는다
+        usd_needed = amount_krw / effective_fx_rate
         self.sell_qqqm(usd_needed, price_usd, cfg, fx_rate, year=settlement_year)
         self.cash_usd -= usd_needed  # 세금은 재투자하지 않고 밖으로 나간다
         self.tax_log.append({"year": year, "gain_krw": gain, "tax_krw": amount_krw})
@@ -365,10 +368,12 @@ class BacktestResult:
     broker: Broker
     still_open_position_ids: set
     final_date: date | None
+    states: dict = field(default_factory=dict)  # {ticker: 마지막 상태} — 청산 시나리오 계산용(P5-2 0-1번)
 
 
 def simulate_portfolio(
-    data: BacktestData, cfg: dict, start: date, end: date, apply_costs: bool = True, apply_tax: bool = True
+    data: BacktestData, cfg: dict, start: date, end: date, apply_costs: bool = True, apply_tax: bool = True,
+    max_slots: int | None = None, regime_ok: dict | None = None,
 ) -> BacktestResult:
     """core.state.process_day를 하루씩 재생해 포트폴리오를 시뮬레이션한다.
 
@@ -376,11 +381,15 @@ def simulate_portfolio(
     쓰는 수량 결정은 cfg의 고정값(총자금·전략한도)과 시세만 보고 Broker의 실제
     현금·비용과 무관하게 정해지므로, 세 시나리오(무비용무세금/비용만/비용+세금)의
     신호·체결·수량은 항상 같고 현금 흐름만 달라진다.
+
+    max_slots(P5-2 A1)는 cfg["plan"]["max_slots"] 대신 쓸 동시 보유 한도(생략하면
+    cfg 값). regime_ok(P5-2 B1·B2)는 {날짜.isoformat(): bool} — False인 날은 신규
+    진입(A1·B) 후보를 전혀 받지 않는다(보유 종목의 추가매수·청산 규칙은 그대로).
     """
     bt_cfg = cfg["backtest"]
     total_krw = bt_cfg["total_krw"]
     cash_buffer_krw = total_krw * cfg["plan"]["cash_buffer_pct"] / 100
-    max_slots = cfg["plan"]["max_slots"]
+    max_slots = max_slots if max_slots is not None else cfg["plan"]["max_slots"]
     costs = bt_cfg["costs"]
 
     trading_days = [d.date() for d in market_calendar.trading_days_between(start, end)]
@@ -467,7 +476,8 @@ def simulate_portfolio(
         candidates.sort(key=lambda c: c["score"], reverse=True)
         held_count = sum(1 for s in states.values() if any(q > 0 for q in s["units"].values()))
         slots = max(max_slots - held_count, 0)
-        admitted = {c["ticker"] for c in candidates[:slots]}
+        regime_blocks_new_entries = regime_ok is not None and not regime_ok.get(date_.isoformat(), False)
+        admitted = set() if regime_blocks_new_entries else {c["ticker"] for c in candidates[:slots]}
 
         # ── Pass 2: process_day 실행, 매도 체결·매수 신호 사이징 ──
         today_buy_events: dict[str, list] = {}
@@ -559,6 +569,7 @@ def simulate_portfolio(
     return BacktestResult(
         equity_rows=equity_rows, trades=trades, rejected=rejected, broker=broker,
         still_open_position_ids=still_open_ids, final_date=trading_days[-1] if trading_days else None,
+        states=states,
     )
 
 
@@ -711,6 +722,96 @@ def compute_position_stats(positions: list[dict]) -> dict:
     }
 
 
+# ── 청산 시나리오 (a) 공용 — 벤치마크·B0·실험 모두 같은 함수로 계산한다 ──────────
+
+
+def _liquidate_qqqm_and_pay_tax(broker: Broker, price_usd: float | None, fx_rate: float, cfg: dict, year: int) -> tuple[float, float]:
+    """QQQM을 전량 팔고, 그 시점까지 쌓인 실현손익 전체에 대한 양도세를 낸 뒤 실제로
+    손에 남는 달러 현금(청산 전 cash_usd 포함)을 계산한다. 세금은 원화로 낸다고 보고
+    그 환전에만 스프레드를 적용한다(P5-2 0-2번, 최종 원화 환산 자체는 평가용이라
+    스프레드가 없다 — P5-1.1 3번).
+
+    입력: broker(원본은 건드리지 않는다), price_usd(청산 시점 QQQM 가격),
+         fx_rate, cfg, year(청산 연도 — 그때까지의 실현손익 전부에 과세)
+    출력: (청산 후 남은 현금(달러), 낸 세금(원화))
+    """
+    liq_broker = Broker(
+        cash_usd=0.0, qqqm_shares=broker.qqqm_shares, qqqm_cost_usd=broker.qqqm_cost_usd,
+        realized_gain_by_year=defaultdict(float, broker.realized_gain_by_year),
+        apply_costs=broker.apply_costs, apply_tax=broker.apply_tax,
+    )
+    if liq_broker.qqqm_shares > 0 and price_usd:
+        liq_broker.sell_qqqm(liq_broker.qqqm_shares * price_usd, price_usd, cfg, fx_rate, year)
+
+    total_gain = sum(liq_broker.realized_gain_by_year.values())
+    tax_cfg = cfg["backtest"]["tax"]
+    tax_amount_krw = (
+        tax.capital_gains_tax(total_gain, tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100)
+        if broker.apply_tax
+        else 0.0
+    )
+    spread_pct = cfg["backtest"]["costs"]["fx_spread_pct"] if broker.apply_costs else 0.0
+    effective_fx = fx_rate * (1 - spread_pct / 100) if fx_rate else None
+    tax_amount_usd = (tax_amount_krw / effective_fx) if effective_fx else 0.0
+
+    cash_after_usd = broker.cash_usd + liq_broker.cash_usd - tax_amount_usd
+    return cash_after_usd, tax_amount_krw
+
+
+def compute_liquidated_cagr(result: BacktestResult, data: BacktestData, cfg: dict, start: date, end: date) -> dict:
+    """B0(또는 실험)이 기간 끝에 보유 종목·QQQM을 전량 매도하고 그해 양도세까지 낸
+    (a) 시나리오의 세후 CAGR을 계산한다 (P5-2 0-1번). result.broker/states는 건드리지 않는다.
+
+    출력: {"cagr_liquidated_pct", "tax_paid_krw", "liquidated_value_krw"} 또는 계산할
+         수 없으면(환율·가격 없음) 빈 dict
+    """
+    bt_cfg = cfg["backtest"]
+    total_krw = bt_cfg["total_krw"]
+    ts = pd.Timestamp(end)
+    fx_rate = data.fx_by_date.get(end.isoformat())
+    price_now = _price_on_or_before(data.cash_etf_df, ts)
+    if fx_rate is None or price_now is None:
+        return {}
+
+    costs = bt_cfg["costs"]
+    broker = result.broker
+    # 보유 종목을 전량 판다 (실제 상태는 안 바꾸고 손익만 임시로 더한다).
+    stock_realized_gain_krw = 0.0
+    stock_proceeds_usd = 0.0
+    for ticker, state_ in result.states.items():
+        for unit, qty in state_["units"].items():
+            if not qty or qty <= 0:
+                continue
+            df = data.indicator_map.get(ticker)
+            if df is None or ts not in df.index:
+                continue
+            close = df.loc[ts, "close"]
+            if pd.isna(close):
+                continue
+            entry_price = state_["entries"].get(unit)
+            if entry_price is None:
+                continue
+            usd_amount = float(close) * qty
+            commission_pct = costs["commission_sell_pct"] if broker.apply_costs else 0.0
+            proceeds_usd = usd_amount * (1 - commission_pct / 100)
+            buy_commission_pct = costs["commission_buy_pct"] if broker.apply_costs else 0.0
+            cost_usd = entry_price * qty * (1 + buy_commission_pct / 100)
+            stock_realized_gain_krw += (proceeds_usd - cost_usd) * fx_rate
+            stock_proceeds_usd += proceeds_usd
+
+    liq_broker = Broker(
+        cash_usd=broker.cash_usd + stock_proceeds_usd, qqqm_shares=broker.qqqm_shares, qqqm_cost_usd=broker.qqqm_cost_usd,
+        realized_gain_by_year=defaultdict(float, broker.realized_gain_by_year), apply_costs=broker.apply_costs, apply_tax=broker.apply_tax,
+    )
+    liq_broker.realized_gain_by_year[end.year] += stock_realized_gain_krw
+    cash_after_usd, tax_amount_krw = _liquidate_qqqm_and_pay_tax(liq_broker, price_now, fx_rate, cfg, end.year)
+    liquidated_value_krw = cash_after_usd * fx_rate
+
+    years = (pd.Timestamp(end) - pd.Timestamp(start)).days / 365.25
+    cagr = (liquidated_value_krw / total_krw) ** (1 / years) - 1 if years > 0 and liquidated_value_krw > 0 else -1.0
+    return {"cagr_liquidated_pct": round(cagr * 100, 2), "tax_paid_krw": round(tax_amount_krw), "liquidated_value_krw": round(liquidated_value_krw)}
+
+
 # ── 벤치마크(QQQ 매수 후 보유) ────────────────────────────────────────────────
 
 
@@ -731,7 +832,6 @@ def simulate_benchmark(data: BacktestData, cfg: dict, start: date, end: date) ->
     bt_cfg = cfg["backtest"]
     total_krw = bt_cfg["total_krw"]
     costs = bt_cfg["costs"]
-    tax_cfg = bt_cfg["tax"]
     df = data.qqq_df
     trading_days = [d.date() for d in market_calendar.trading_days_between(start, end) if pd.Timestamp(d) in df.index]
     if not trading_days:
@@ -776,15 +876,8 @@ def simulate_benchmark(data: BacktestData, cfg: dict, start: date, end: date) ->
     # (a) 청산: 전량 매도 후 자본이득세까지 낸 경우. 파는 그 자체의 수수료·양도세를
     # 뺀 "실제 손에 쥐는 돈"만 남겨야 한다 — 원래 보유분(unrealized_value_krw)을
     # 다시 더하면 안 된다(이전 버전의 버그, P5-1.1 1번: (a)가 (b)보다 커지는 원인).
-    liq_broker = Broker(
-        cash_usd=0.0, qqqm_shares=broker.qqqm_shares, qqqm_cost_usd=broker.qqqm_cost_usd,
-        realized_gain_by_year=defaultdict(float, broker.realized_gain_by_year),
-    )
-    liq_broker.sell_qqqm(broker.qqqm_shares * last_price, last_price, cfg, last_fx, trading_days[-1].year)
-    total_gain = sum(liq_broker.realized_gain_by_year.values())
-    tax_amount_krw = tax.capital_gains_tax(total_gain, tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100)
-    liquidated_cash_usd = broker.cash_usd + liq_broker.cash_usd
-    liquidated_value_krw = liquidated_cash_usd * last_fx - tax_amount_krw
+    cash_after_usd, tax_amount_krw = _liquidate_qqqm_and_pay_tax(broker, last_price, last_fx, cfg, trading_days[-1].year)
+    liquidated_value_krw = cash_after_usd * last_fx
     cagr_liquidated = (liquidated_value_krw / total_krw) ** (1 / years) - 1 if years > 0 and liquidated_value_krw > 0 else -1.0
 
     return BenchmarkResult(
@@ -817,6 +910,103 @@ def compute_yearly_returns_from_equity(equity_rows: list) -> dict[int, float]:
         out[y] = round((end_v / start_v - 1) * 100, 2) if start_v else None
         prev_last = end_v
     return out
+
+
+# ── 시장 국면 필터 (P5-2 B1·B2) ──────────────────────────────────────────────
+
+
+def compute_sma_regime(qqq_df: pd.DataFrame, window: int) -> dict[str, bool]:
+    """QQQ 종가가 window일 단순이동평균 위인 날짜만 True (신규 매수 허용 국면, 순수 함수).
+
+    입력: qqq_df(close 열 포함), window(이동평균 일수)
+    출력: {날짜.isoformat(): bool} — 이동평균을 계산할 데이터가 모자란 날짜는 없음
+    """
+    sma = qqq_df["close"].rolling(window).mean()
+    ok = qqq_df["close"] > sma
+    return {d.date().isoformat(): bool(v) for d, v in ok.items() if not pd.isna(sma.loc[d])}
+
+
+def compute_cloud_regime(qqq_df: pd.DataFrame) -> dict[str, bool]:
+    """QQQ 종가가 구름 상단 위 + 앞구름 양운인 날짜만 True (신규 매수 허용 국면, 순수 함수).
+
+    입력: qqq_df(core.indicators.compute_indicators 결과 — cloud_top·future_yang 포함)
+    출력: {날짜.isoformat(): bool} — 구름을 계산할 데이터가 모자란 날짜는 없음
+    """
+    out = {}
+    for d, row in qqq_df.iterrows():
+        close = row.get("close")
+        cloud_top = row.get("cloud_top")
+        future_yang = row.get("future_yang")
+        if pd.isna(close) or pd.isna(cloud_top) or pd.isna(future_yang):
+            continue
+        ok = bool(close > cloud_top and future_yang)
+        out[d.date().isoformat()] = ok
+    return out
+
+
+def compute_regime_split_stats(equity_rows: list, positions: list[dict], regime_ok: dict) -> dict:
+    """국면(regime_ok — 예: compute_sma_regime 결과)별로 B0(또는 실험)의 성과를 나눈다 (순수 함수, P5-2 0장).
+
+    입력: equity_rows(날짜별 total_krw), positions(aggregate_positions 결과),
+         regime_ok({날짜.isoformat(): bool}, True=국면 위)
+    출력: {"above": {...}, "below": {...}} 각각 {"days", "cum_return_pct", "win_rate_pct",
+         "expectancy_r", "position_count"} — compute_position_stats를 그대로 재사용한다.
+    각 날의 수익률은 그날 국면(전날 대비 오늘 등락)에 귀속시키고, 포지션은 진입일(opened_date)
+    기준 국면으로 나눈다. regime_ok에 없는 날짜/포지션은 두 그룹 어디에도 넣지 않는다.
+    """
+    rows = sorted(equity_rows, key=lambda r: r["date"])
+    above_factor = 1.0
+    below_factor = 1.0
+    above_days = below_days = 0
+    for i in range(1, len(rows)):
+        prev_v, cur_v = rows[i - 1]["total_krw"], rows[i]["total_krw"]
+        if not prev_v:
+            continue
+        day_ret = cur_v / prev_v
+        ok = regime_ok.get(rows[i]["date"])
+        if ok is True:
+            above_factor *= day_ret
+            above_days += 1
+        elif ok is False:
+            below_factor *= day_ret
+            below_days += 1
+
+    above_positions = [p for p in positions if regime_ok.get(p["opened_date"]) is True]
+    below_positions = [p for p in positions if regime_ok.get(p["opened_date"]) is False]
+    above_stats = compute_position_stats(above_positions)
+    below_stats = compute_position_stats(below_positions)
+
+    return {
+        "above": {
+            "days": above_days, "cum_return_pct": round((above_factor - 1) * 100, 2),
+            "win_rate_pct": above_stats.get("win_rate_pct"), "expectancy_r": above_stats.get("expectancy_r"),
+            "position_count": above_stats.get("count", 0),
+        },
+        "below": {
+            "days": below_days, "cum_return_pct": round((below_factor - 1) * 100, 2),
+            "win_rate_pct": below_stats.get("win_rate_pct"), "expectancy_r": below_stats.get("expectancy_r"),
+            "position_count": below_stats.get("count", 0),
+        },
+    }
+
+
+def compute_topN_excluded_cagr(positions: list[dict], final_total_krw: float, total_krw: float, start: date, end: date, n: int = 10) -> dict:
+    """pnl_krw 상위 n개 포지션을 뺀 최종 평가액으로 CAGR을 근사한다 (순수 함수, P5-2 0-4번).
+
+    근사다: 상위 포지션의 이익을 단순히 최종 평가액에서 빼고 다시 CAGR을 계산할 뿐,
+    그 자금이 실제로 재투자됐을 경로(복리 효과)는 무시한다.
+    출력: {"cagr_pct", "excluded_sum_pnl_krw", "excluded_tickers"}
+    """
+    top = sorted(positions, key=lambda p: p["pnl_krw"], reverse=True)[:n]
+    excluded_sum = sum(p["pnl_krw"] for p in top)
+    adjusted_final = final_total_krw - excluded_sum
+    years = (pd.Timestamp(end) - pd.Timestamp(start)).days / 365.25
+    cagr = (adjusted_final / total_krw) ** (1 / years) - 1 if years > 0 and adjusted_final > 0 else -1.0
+    return {
+        "cagr_pct": round(cagr * 100, 2),
+        "excluded_sum_pnl_krw": round(excluded_sum),
+        "excluded_tickers": [p["ticker"] for p in top],
+    }
 
 
 def compute_pretax_benchmark_yearly_returns(qqq_df: pd.DataFrame, qqq_dividends: pd.Series, fx_by_date: dict, start: date, end: date) -> dict:
@@ -994,7 +1184,9 @@ def write_outputs(
     run_id: str, cfg: dict, result: BacktestResult, benchmark: BenchmarkResult, data: BacktestData,
     equity_metrics: dict, position_stats: dict, decomposition: dict, survivorship: dict,
     pretax_yearly: dict, b0_yearly: dict, qqq_yearly: dict, start: date, end: date,
+    b0_liquidated: dict | None = None,
 ) -> Path:
+    b0_liquidated = b0_liquidated or {}
     out_dir = OUTPUT_ROOT / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1043,8 +1235,10 @@ def write_outputs(
         f"- 연도별(세후, 총액 기준): {_fmt_yearly(qqq_yearly)}",
         "",
         "## B0 (전략 v3 + QQQM + 슬롯 8 + 전략한도 60% + 4,000만 원, 세후)",
-        f"- 세후(비용·양도세·배당원천징수 모두 반영) CAGR: {equity_metrics.get('cagr_pct')}%",
+        f"- 세후(b, 미청산) CAGR: {equity_metrics.get('cagr_pct')}%",
+        f"- 세후(a, 기간 끝 전량 청산해 자본이득세까지 낸 경우) CAGR: {b0_liquidated.get('cagr_liquidated_pct')}% (세금 {b0_liquidated.get('tax_paid_krw'):,}원)" if b0_liquidated else "- 세후(a): 계산 불가",
         f"- QQQ 대비(세후 b 기준): {(equity_metrics.get('cagr_pct') or 0) - benchmark.cagr_unrealized * 100:.2f}%p",
+        f"- QQQ 대비(세후 a 기준): {(b0_liquidated.get('cagr_liquidated_pct') or 0) - benchmark.cagr_liquidated * 100:.2f}%p" if b0_liquidated else "",
         f"- MDD: {equity_metrics.get('mdd_pct')}% ({equity_metrics.get('mdd_start')} ~ {equity_metrics.get('mdd_end')}, 회복 {equity_metrics.get('mdd_recovery_days')}일)",
         f"- 샤프: {equity_metrics.get('sharpe')}",
         f"- 연도별: {_fmt_yearly(b0_yearly)}",
@@ -1129,10 +1323,12 @@ def run(cfg: dict, start: date, end: date, warmup_start: date | None = None) -> 
     entries_count = sum(1 for t in result.trades if t.get("side") == "진입")
     survivorship = estimate_survivorship_impact(data, entries_count, start, end)
 
+    b0_liquidated = compute_liquidated_cagr(result, data, cfg, start, end)
+
     run_id = make_run_id(cfg, start, end)
     out_dir = write_outputs(
         run_id, cfg, result, benchmark, data, equity_metrics, position_stats, decomposition, survivorship,
-        pretax_yearly, b0_yearly, qqq_yearly, start, end,
+        pretax_yearly, b0_yearly, qqq_yearly, start, end, b0_liquidated=b0_liquidated,
     )
     print(f"[backtest] (a)<=(b) 검산: {'OK' if benchmark_lookup_test_ab else 'FAIL'}")
     print(f"[backtest] 결과: {out_dir}")

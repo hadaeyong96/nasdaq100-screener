@@ -147,6 +147,8 @@ backtest:
   train_start: "2015-01-01"
   train_end: "2021-12-31"
   validation_start: "2022-01-01" # 검증 구간 — 이번 단계(P5-1)는 봉인, 계산·보고하지 않는다
+  b4_short_treasury_ticker: BIL # P5-2 B4 실험용 단기 국채 ETF. SGOV는 2020-05 상장이라
+  # 2015년부터 필요한 이번 실험은 처음부터 데이터가 있는 BIL(상장 2007)을 그대로 쓴다.
   costs:
     commission_buy_pct: 0.07 # 매수 수수료(%)
     commission_sell_pct: 0.07 # 매도 수수료(%)
