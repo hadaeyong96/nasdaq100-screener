@@ -20,7 +20,7 @@ from __future__ import annotations
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -218,6 +218,42 @@ class PortfolioData:
     fx_fallback_stats: dict
     dtb3_stats: dict  # 보고용(휴일 채움 횟수 등)
     qld_synthesis_check: dict  # 겹치는 기간(2006~) 실제 QLD 대비 합성값 오차
+    sma_source_df: pd.DataFrame  # ^NDX(QQQ 상장 전) + QQQ 접합 — 이동평균 워밍업용(P6-1.1 1번)
+
+
+def splice_pre_inception_dividends(
+    proxy_dividends: pd.Series, real_dividends: pd.Series,
+    proxy_price_df: pd.DataFrame, spliced_price_df: pd.DataFrame, boundary: pd.Timestamp,
+) -> pd.Series:
+    """real_df(실제 상장 후 배당)보다 이른 구간은 proxy(QQQ) 배당을 spliced_price_df
+    가격 수준에 맞춰(배당수익률 = 배당/가격 유지) 환산해 채운다 (순수 함수, P6-1.1 2번).
+
+    QQQM은 2020-12 이전 배당 이력이 아예 없어(상장 전이라 당연히 없음), 그 구간을
+    비워 두면 접합된 core_df(가격은 QQQ 수준을 이어받음)가 배당을 하나도 못 받는
+    문제가 생긴다(P0가 QQQ보다 계속 뒤처지는 원인). boundary 이전 각 날짜의
+    "배당/QQQ종가" 비율을 그대로 가져와 spliced_price_df의 그날 가격에 곱해
+    같은 배당수익률을 유지한다.
+
+    입력: proxy_dividends(QQQ 배당, 주당 달러), real_dividends(QQQM 실제 배당),
+         proxy_price_df(QQQ 종가, boundary 이전 배당일을 모두 포함),
+         spliced_price_df(접합된 core_df — boundary 이전은 proxy_price_df와 같은 인덱스),
+         boundary(real_dividends가 시작되는 실제 상장일)
+    출력: pd.Series(날짜 오름차순, 주당 달러) — boundary 이전은 환산값, 이후는 실제값
+    """
+    # 빈 Series(bp.fetch_dividends가 못 받으면 주는 기본 RangeIndex)는 boundary와
+    # 비교할 수 없어 데이터가 있을 때만 날짜로 걸러낸다.
+    pre = proxy_dividends.loc[proxy_dividends.index < boundary] if len(proxy_dividends) else proxy_dividends
+    scaled: dict = {}
+    for ts, amt in pre.items():
+        if ts in proxy_price_df.index and ts in spliced_price_df.index:
+            proxy_close = float(proxy_price_df.loc[ts, "close"])
+            spliced_close = float(spliced_price_df.loc[ts, "close"])
+            if proxy_close:
+                scaled[ts] = float(amt) * (spliced_close / proxy_close)
+    pre_series = pd.Series(scaled, dtype=float)
+    post = real_dividends.loc[real_dividends.index >= boundary] if len(real_dividends) else real_dividends
+    parts = [s for s in (pre_series, post) if len(s)]
+    return pd.concat(parts).sort_index() if parts else pd.Series(dtype=float)
 
 
 def prepare_data(cfg: dict, start: date, end: date) -> PortfolioData:
@@ -233,8 +269,28 @@ def prepare_data(cfg: dict, start: date, end: date) -> PortfolioData:
     qqqm_dividends = bp.fetch_dividends("QQQM", start, end)
     if not qqqm_real.empty and start < qqqm_real.index[0].date():
         core_df = splice_pre_inception_series(qqq_df, qqqm_real, bt_cfg["qqq_expense_ratio_pct"], bt_cfg["qqqm_expense_ratio_pct"])
+        # QQQM은 상장 전 배당 이력이 아예 없다(당연히) — 그대로 두면 접합 구간(QQQ 수준
+        # 가격을 물려받은 core_df)이 배당을 하나도 못 받아 QQQ보다 계속 뒤처진다
+        # (P6-1.1 2번 진단). QQQ 배당수익률을 유지해 접합 구간을 채운다.
+        core_dividends = splice_pre_inception_dividends(qqq_dividends, qqqm_dividends, qqq_df, core_df, qqqm_real.index[0])
     else:
         core_df = qqqm_real if not qqqm_real.empty else qqq_df
+        core_dividends = qqqm_dividends if not qqqm_real.empty else qqq_dividends
+
+    print("[portfolio] 200일선 워밍업용 ^NDX 과거 데이터 받는 중 (QQQ 상장 전 구간) ...", flush=True)
+    # QQQ는 1999-03-10부터만 있어, 그 시점의 200일 이동평균은 원래 계산이 안 된다
+    # (P6-1.1 1번 진단 — P4가 워밍업 동안 기본값 FULL로 굳어 P3와 구분이 안 됐다).
+    # QQQ 상장 전 나스닥 100 지수(^NDX)로 이어 붙여 첫날부터 유효한 이동평균을 만든다.
+    # 주변값 최대 210일 이동평균에 필요한 여유를 넉넉히 두고 받는다.
+    ndx_lookback_start = start - timedelta(days=450)
+    try:
+        ndx_df, _ = bp.fetch_history("^NDX", ndx_lookback_start, start)
+    except Exception:
+        ndx_df = pd.DataFrame()
+    if not ndx_df.empty and ndx_df.index[0].date() < qqq_df.index[0].date():
+        sma_source_df = splice_pre_inception_series(ndx_df, qqq_df, 0.0, 0.0)
+    else:
+        sma_source_df = qqq_df
 
     print("[portfolio] DTB3(단기 국채 연율) 받는 중 ...", flush=True)
     dtb3_raw = fxmod.fetch_fred_series_range("DTB3", start, end)
@@ -282,12 +338,13 @@ def prepare_data(cfg: dict, start: date, end: date) -> PortfolioData:
 
     return PortfolioData(
         qqq_df=qqq_df, qqq_dividends=qqq_dividends,
-        core_df=core_df, core_dividends=qqqm_dividends,
+        core_df=core_df, core_dividends=core_dividends,
         qld_df=qld_df, qld_dividends=qld_dividends,
         reserve_daily_rate=reserve_daily_rate,
         fx_by_date=fx_by_date, fx_fallback_stats=fx_stats,
         dtb3_stats={"holiday_fill_unresolved_days": filled_holidays},
         qld_synthesis_check=qld_synthesis_check,
+        sma_source_df=sma_source_df,
     )
 
 
@@ -334,7 +391,7 @@ def simulate_portfolio(
     if not trading_days:
         return PortfolioResult(equity_rows=[], broker=PortfolioBroker(apply_costs=apply_costs, apply_tax=apply_tax), trade_count=0)
 
-    sma_ok = compute_sma_regime(data.qqq_df, sma_days)  # {날짜 iso: bool}, 전체 df 기준(경계 밖도 계산 가능)
+    sma_ok = compute_sma_regime(data.sma_source_df, sma_days)  # {날짜 iso: bool}, ^NDX 워밍업 포함(P6-1.1 1번)
     all_trading_days = list(data.qqq_df.index)
     may_days = _may_settlement_days(all_trading_days)
 

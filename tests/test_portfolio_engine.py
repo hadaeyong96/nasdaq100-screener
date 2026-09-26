@@ -33,6 +33,7 @@ def _mk_data(dates: list[str], qqq_prices: list[float], fx_rate: float = 1300.0)
         qqq_df=df, qqq_dividends=empty_div, core_df=df.copy(), core_dividends=empty_div,
         qld_df=df.copy(), qld_dividends=empty_div, reserve_daily_rate=reserve_rate,
         fx_by_date=fx_by_date, fx_fallback_stats={}, dtb3_stats={}, qld_synthesis_check={},
+        sma_source_df=df.copy(),  # 워밍업 없음(qqq_df 자체가 이동평균 소스) — 기존 테스트 동작 유지
     )
 
 
@@ -151,6 +152,91 @@ def test_p4_switches_to_defensive_below_sma_and_back_above():
     data = _mk_data(dates, prices)
     result = pf.simulate_portfolio(data, CFG, pd.Timestamp(dates[0]).date(), pd.Timestamp(dates[-1]).date(), "P4", sma_days=200)
     assert result.trade_count >= 2  # 방어 전환 1회 + 복귀 1회 이상
+
+
+def test_p4_uses_sma_source_df_warmup_instead_of_defaulting_full(monkeypatch):
+    """P6-1.1 1번 회귀 방지: qqq_df 자체 길이가 200일 미만이라 이동평균이 정의되지
+    않는 구간이라도, sma_source_df(^NDX 워밍업 접합)에 그 이전 이력이 있으면 첫날부터
+    유효한 국면 판정을 써야 한다. 예전에는 qqq_df만 보고 계산해 워밍업 동안 판정이
+    없어(None) P4가 계속 기본값 FULL로 굳어 있었다(1999년 P3·P4·P5가 똑같이 나온 원인)."""
+    import dataclasses
+
+    n = 10
+    dates = pd.bdate_range("2021-06-01", periods=n).strftime("%Y-%m-%d").tolist()
+    qqq_prices = [90.0] * n  # sma_source_df의 워밍업 평균(100)보다 낮은 국면
+    data = _mk_data(dates, qqq_prices)
+
+    lead_dates = pd.bdate_range(end=pd.Timestamp(dates[0]) - pd.Timedelta(days=1), periods=249)
+    lead_dates = lead_dates.strftime("%Y-%m-%d").tolist()
+    extended_dates = lead_dates + dates
+    extended_prices = [100.0] * len(lead_dates) + qqq_prices
+    data = dataclasses.replace(data, sma_source_df=_flat_df(extended_dates, extended_prices))
+
+    result = pf.simulate_portfolio(data, CFG, pd.Timestamp(dates[0]).date(), pd.Timestamp(dates[-1]).date(), "P4", sma_days=200)
+    assert result.trade_count >= 1  # 첫날부터 200일선 아래 국면이 인식되어 방어 전환이 일어난다
+
+
+# ── QQQM 상장 전 접합(가격·배당) ─────────────────────────────────────────────
+
+
+def test_splice_pre_inception_dividends_preserves_yield_before_boundary():
+    """P6-1.1 2번 회귀 방지: QQQM은 상장 전 배당 이력이 없어(당연히), 그대로 두면
+    접합 구간(core_df, QQQ 수준 가격을 물려받음)이 배당을 하나도 못 받아 QQQ보다
+    계속 뒤처졌다(P0 vs QQQ -0.52%p/-0.91%p 잔차의 원인). boundary 이전은 QQQ의
+    배당수익률(배당/종가)을 그대로 유지해 채워야 한다."""
+    dates = pd.bdate_range("2018-01-02", periods=500)
+    proxy_close = pd.Series([100.0 + i * 0.05 for i in range(500)], index=dates)
+    proxy_df = pd.DataFrame({"open": proxy_close, "high": proxy_close, "low": proxy_close, "close": proxy_close}, index=dates)
+
+    boundary = dates[300]
+    real_close = proxy_close.loc[boundary:] * 0.5  # 접합 후 가격 수준이 QQQ의 절반이라 가정
+    spliced_df = pd.DataFrame(
+        {"open": real_close, "high": real_close, "low": real_close, "close": real_close}, index=real_close.index
+    )
+    # boundary 이전 구간은 proxy(QQQ) 수준을 그대로 이어받는다고 가정(가격 접합의 핵심 성질)
+    spliced_df = pd.concat([proxy_df.loc[proxy_df.index < boundary], spliced_df])
+
+    div_date_before = dates[100]
+    div_date_after = dates[350]
+    proxy_dividends = pd.Series([0.50], index=[div_date_before])  # QQQ 배당, boundary 이전
+    real_dividends = pd.Series([0.30], index=[div_date_after])  # QQQM 실제 배당, boundary 이후
+
+    out = pf.splice_pre_inception_dividends(proxy_dividends, real_dividends, proxy_df, spliced_df, boundary)
+
+    assert list(out.index) == [div_date_before, div_date_after]
+    assert out.loc[div_date_after] == pytest.approx(0.30)  # boundary 이후는 실제 배당 그대로
+    # boundary 이전은 같은 배당수익률(배당/종가)을 유지해야 한다
+    proxy_yield = 0.50 / float(proxy_df.loc[div_date_before, "close"])
+    spliced_price_at_div = float(spliced_df.loc[div_date_before, "close"])
+    assert out.loc[div_date_before] == pytest.approx(proxy_yield * spliced_price_at_div)
+
+
+def test_splice_pre_inception_dividends_empty_proxy_dividends_before_boundary():
+    dates = pd.bdate_range("2018-01-02", periods=10)
+    proxy_close = pd.Series([100.0] * 10, index=dates)
+    proxy_df = pd.DataFrame({"open": proxy_close, "high": proxy_close, "low": proxy_close, "close": proxy_close}, index=dates)
+    boundary = dates[5]
+    out = pf.splice_pre_inception_dividends(pd.Series(dtype=float), pd.Series([0.1], index=[dates[7]]), proxy_df, proxy_df, boundary)
+    assert list(out.index) == [dates[7]]
+
+
+def test_p0_receives_spliced_dividends_before_real_inception_boundary():
+    """simulate_portfolio 수준 회귀 방지: core_dividends가 splice_pre_inception_dividends로
+    만들어졌다면, 실제 QQQM 상장 전 구간에서도 P0가 배당을 재투자해야 한다."""
+    import dataclasses
+
+    dates = pd.bdate_range("2018-01-02", periods=250).strftime("%Y-%m-%d").tolist()
+    prices = [100.0] * len(dates)
+    data = _mk_data(dates, prices)
+
+    proxy_dividends = pd.Series([1.0], index=[pd.Timestamp(dates[50])])  # boundary(dates[-1] 이후) 이전 QQQ 배당
+    boundary = pd.Timestamp(dates[-1]) + pd.Timedelta(days=1)  # 이 테스트 구간 전체가 상장 "전"이라고 가정
+    spliced_dividends = pf.splice_pre_inception_dividends(proxy_dividends, pd.Series(dtype=float), data.qqq_df, data.core_df, boundary)
+    data = dataclasses.replace(data, core_dividends=spliced_dividends)
+
+    result = pf.simulate_portfolio(data, CFG, pd.Timestamp(dates[0]).date(), pd.Timestamp(dates[-1]).date(), "P0")
+    shares_without_div = (CFG["backtest"]["total_krw"] / 1300.0 * (1 - 0.001)) / 100.0
+    assert result.broker.core.shares > shares_without_div
 
 
 # ── 지표 함수 ────────────────────────────────────────────────────────────────

@@ -126,8 +126,7 @@ def crash_detail(equity_rows: list, start: date, end: date) -> dict:
     dates = [r["date"] for r in rows]
     values = {r["date"]: r["total_krw"] for r in rows}
     before = [d for d in dates if d < start.isoformat()]
-    peak_before = max((values[d] for d in before), default=values[dates[0]])
-    peak_before = max(peak_before, *(values[d] for d in before if d >= before[0])) if before else values[dates[0]]
+    peak_before = max((values[d] for d in before), default=values[dates[0]])  # 직전 전고점(구간 시작 전 전체)
     in_window = [d for d in dates if start.isoformat() <= d <= end.isoformat()]
     if not in_window:
         return {}
@@ -175,6 +174,17 @@ def main() -> Path:
             run_cand = "P0" if cand == "QQQ" else cand
             print(f"[p6-1] {pkey} 구간 {cand} ...", flush=True)
             scenarios[key] = _run_checkpointed(key, lambda d=d, start=start, end=end, run_cand=run_cand: run_scenario(d, cfg, start, end, run_cand))
+
+    print("[p6-1] P0 vs QQQ 정합성 확인(구간별 세후(a) 차이 < 0.2%p/년, P6-1.1 2번) ...", flush=True)
+    p0_qqq_parity: dict[str, dict] = {}
+    for pkey in periods:
+        p0_a = scenarios[f"P0_{pkey}"]["posttax_a_pct"]
+        qqq_a = scenarios[f"QQQ_{pkey}"]["posttax_a_pct"]
+        diff_pp = round((p0_a or 0) - (qqq_a or 0), 2)
+        p0_qqq_parity[pkey] = {
+            "p0_posttax_a_pct": p0_a, "qqq_posttax_a_pct": qqq_a,
+            "diff_pp": diff_pp, "within_0_2pp": abs(diff_pp) < 0.2,
+        }
 
     print("[p6-1] 재현 확인(P0 2015~2021 vs P5-5 QQQ 값) ...", flush=True)
     repro = _run_checkpointed("repro_qqq_2015_2021", lambda: run_scenario(qqq_bench_data, cfg, REPRO_START, REPRO_END, "P0"))
@@ -236,7 +246,7 @@ def main() -> Path:
 
     write_report(
         out_dir, cfg, data, scenarios, repro, repro_diff, neighbor_drawdown, neighbor_sma,
-        crash_table, verdicts, target_tier, periods,
+        crash_table, verdicts, target_tier, periods, p0_qqq_parity,
     )
     print(f"[p6-1] 결과: {out_dir}", flush=True)
     return out_dir
@@ -245,6 +255,7 @@ def main() -> Path:
 def write_report(
     out_dir: Path, cfg: dict, data: pf.PortfolioData, scenarios: dict, repro: dict, repro_diff: dict,
     neighbor_drawdown: dict, neighbor_sma: dict, crash_table: dict, verdicts: dict, target_tier: str, periods: dict,
+    p0_qqq_parity: dict,
 ) -> None:
     try:
         commit_hash = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
@@ -279,8 +290,19 @@ def write_report(
         "## 재현 확인 (P0=QQQM100%, 2015~2021 vs P5-5 QQQ 값)", "",
         f"- 세후(a) 차이: {repro_diff['posttax_a_pct']:+.2f}%p · 세후(b) 차이: {repro_diff['posttax_b_pct']:+.2f}%p · MDD 차이: {repro_diff['mdd_pct']:+.2f}%p",
         "- 차이가 0에 가까우면 재현 성공(잔여 차이는 QQQM·QQQ 보수율 0.05%p 차이로 설명 가능한 수준이어야 한다).", "",
-        "## 2장: 결과 표", "",
+        "## P0 vs QQQ 정합성 (구간별 세후(a) 차이 < 0.2%p/년, P6-1.1 2번)", "",
     ]
+    period_titles_short = {
+        "full": "전 기간(1999-03~2021-12)", "sub_1999_2007": "1999-03~2007-12",
+        "sub_2008_2015": "2008-01~2015-12", "sub_2016_2021": "2016-01~2021-12",
+    }
+    for pkey, p in p0_qqq_parity.items():
+        ok = "충족" if p["within_0_2pp"] else "미충족"
+        lines.append(
+            f"- {period_titles_short.get(pkey, pkey)}: P0 {_fmt_pct(p['p0_posttax_a_pct'])} vs QQQ {_fmt_pct(p['qqq_posttax_a_pct'])} "
+            f"(차이 {p['diff_pp']:+.2f}%p) → {ok}"
+        )
+    lines += ["", "## 2장: 결과 표", ""]
     period_titles = {
         "full": "### 1999-03~2021-12 (전 기간)", "sub_1999_2007": "### 1999-03~2007-12 (닷컴 붕괴 포함)",
         "sub_2008_2015": "### 2008-01~2015-12 (금융위기·회복 포함)", "sub_2016_2021": "### 2016-01~2021-12",
