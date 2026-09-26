@@ -72,6 +72,22 @@ def test_p0_buy_and_hold_has_zero_rebalance_trades():
     assert result.trade_count == 0
 
 
+def test_p0_dividends_are_reinvested_same_day_without_counting_as_a_trade():
+    dates = pd.bdate_range("2020-01-02", "2020-06-30").strftime("%Y-%m-%d").tolist()
+    prices = [100.0] * len(dates)  # 가격 고정 — 배당 재투자 효과만 분리해서 본다
+    data = _mk_data(dates, prices)
+    import dataclasses
+
+    div_date = pd.Timestamp(dates[10])
+    data = dataclasses.replace(data, core_dividends=pd.Series([1.0], index=[div_date]))  # 주당 $1 배당
+
+    result = pf.simulate_portfolio(data, CFG, pd.Timestamp(dates[0]).date(), pd.Timestamp(dates[-1]).date(), "P0")
+
+    assert result.trade_count == 0  # 배당 재투자는 "매매 횟수"에 안 잡힌다
+    shares_before_div = (CFG["backtest"]["total_krw"] / 1300.0 * (1 - 0.001)) / 100.0
+    assert result.broker.core.shares > shares_before_div  # 배당만큼 주식 수가 늘어남
+
+
 def test_p0_tax_only_charged_at_final_liquidation_not_annually():
     dates = pd.bdate_range("2019-01-02", "2020-12-31").strftime("%Y-%m-%d").tolist()
     prices = [100.0 * (1 + 0.0005) ** i for i in range(len(dates))]  # 꾸준한 상승

@@ -206,26 +206,29 @@ def main() -> Path:
         full_rows = scenarios[f"{cand}_full"]["equity_rows"]
         crash_table[cand] = {label: crash_detail(full_rows, s, e) for label, (s, e) in CRASH_WINDOWS.items()}
 
-    print("[p6-1] 판정 ...", flush=True)
-    tiers_to_judge = ["공격형", "안정형"] if target_tier == "undecided" else [target_tier]
+    print("[p6-1] 판정 (공격형·안정형 둘 다 계산 — 사전 등록 note: target_tier는 우선순위일 뿐, 두 등급 다 보고) ...", flush=True)
+    ALL_TIERS = ["공격형", "안정형"]
     verdicts: dict[str, dict] = {}
     for cand in ("P0", "P3", "P4", "P5"):
         full_scn = scenarios[f"{cand}_full"]
         qqq_full = scenarios["QQQ_full"]
-        sub_hits = 0
-        for pkey in SUB_PERIODS:
-            sub_scn, qqq_sub = scenarios[f"{cand}_{pkey}"], scenarios[f"QQQ_{pkey}"]
-            sub_judge = judge_tier(sub_scn, qqq_sub, tiers_to_judge[0])
-            if sub_judge["pass"]:
-                sub_hits += 1
-        per_tier = {t: judge_tier(full_scn, qqq_full, t) for t in tiers_to_judge}
-        common_ok = sub_hits >= 2
-        final = "불합격"
-        for t in tiers_to_judge:
-            if per_tier[t]["pass"] and common_ok:
-                final = t
-                break
-        verdicts[cand] = {"per_tier": per_tier, "sub_hits": sub_hits, "common_ok": common_ok, "final": final}
+        per_tier: dict[str, dict] = {}
+        for t in ALL_TIERS:
+            sub_hits = 0
+            for pkey in SUB_PERIODS:
+                sub_scn, qqq_sub = scenarios[f"{cand}_{pkey}"], scenarios[f"QQQ_{pkey}"]
+                if judge_tier(sub_scn, qqq_sub, t)["pass"]:
+                    sub_hits += 1
+            full_judge = judge_tier(full_scn, qqq_full, t)
+            common_ok = sub_hits >= 2
+            per_tier[t] = {**full_judge, "sub_hits": sub_hits, "common_ok": common_ok, "overall_pass": full_judge["pass"] and common_ok}
+
+        official_tier = target_tier if target_tier in ALL_TIERS else None
+        if official_tier is not None:
+            final = official_tier if per_tier[official_tier]["overall_pass"] else "불합격"
+        else:
+            final = next((t for t in ALL_TIERS if per_tier[t]["overall_pass"]), "불합격")
+        verdicts[cand] = {"per_tier": per_tier, "final": final, "official_tier": official_tier or "undecided"}
 
     run_id = f"{date.today().isoformat()}_{bt.make_run_id(cfg, FULL_START, FULL_END)[-8:]}"
     out_dir = OUT_ROOT / run_id
@@ -309,10 +312,13 @@ def write_report(
             mark = "(주 설정)" if sma == MAIN_SMA_DAYS else ""
             lines.append(f"- {cand} {sma}일{mark}: 세후(a) {_fmt_pct(s['posttax_a_pct'])} (주 설정 대비 {(s['posttax_a_pct'] or 0) - (main_a or 0):+.2f}%p)")
 
-    lines += ["", "## 3장: 판정 (전 기간 기준, 하위 구간 3개 중 2개 이상 충족 = 공통 조건)", ""]
+    lines += ["", "## 3장: 판정 (전 기간 기준, 하위 구간 3개 중 2개 이상 충족 = 공통 조건, 목표 등급 외에도 두 등급 모두 계산)", ""]
     for cand, v in verdicts.items():
-        detail = " · ".join(f"{t}: {'충족' if r['pass'] else '미충족'}({r})" for t, r in v["per_tier"].items())
-        lines.append(f"- {cand}: 하위구간 충족 {v['sub_hits']}/3 · {detail} · **최종 판정: {v['final']}**")
+        detail = " · ".join(
+            f"{t}: 전기간 {'충족' if r['pass'] else '미충족'} · 하위구간 {r['sub_hits']}/3 · 종합 {'합격' if r['overall_pass'] else '불합격'} ({r})"
+            for t, r in v["per_tier"].items()
+        )
+        lines.append(f"- {cand} (목표 등급: {v['official_tier']}) · {detail} · **최종 판정: {v['final']}**")
 
     lines += ["", "## 4장: 폭락 구간 상세 (전 기간 시뮬레이션 기준)", ""]
     for cand, windows in crash_table.items():

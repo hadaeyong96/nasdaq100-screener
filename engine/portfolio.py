@@ -116,10 +116,10 @@ class PortfolioBroker:
         if fx_rate:
             self.realized_gain_by_year[year] += gain_usd * fx_rate
 
-    def buy_core(self, usd_amount: float, price_usd: float, cfg: dict, date_iso: str) -> float:
+    def buy_core(self, usd_amount: float, price_usd: float, cfg: dict, date_iso: str, count_as_trade: bool = True) -> float:
         cost = self.core.buy(usd_amount, price_usd, cfg["backtest"]["costs"]["commission_buy_pct"], self.apply_costs)
         self.cash_usd -= cost
-        if cost > 0:
+        if cost > 0 and count_as_trade:
             self.trade_log.append({"date": date_iso, "asset": "core", "side": "buy", "usd": cost})
         return cost
 
@@ -131,10 +131,10 @@ class PortfolioBroker:
             self.trade_log.append({"date": date_iso, "asset": "core", "side": "sell", "usd": proceeds})
         return proceeds
 
-    def buy_qld(self, usd_amount: float, price_usd: float, cfg: dict, date_iso: str) -> float:
+    def buy_qld(self, usd_amount: float, price_usd: float, cfg: dict, date_iso: str, count_as_trade: bool = True) -> float:
         cost = self.qld.buy(usd_amount, price_usd, cfg["backtest"]["costs"]["commission_buy_pct"], self.apply_costs)
         self.cash_usd -= cost
-        if cost > 0:
+        if cost > 0 and count_as_trade:
             self.trade_log.append({"date": date_iso, "asset": "qld", "side": "buy", "usd": cost})
         return cost
 
@@ -410,11 +410,17 @@ def simulate_portfolio(
                     broker.buy_core(usd, core_open, cfg, date_iso)
         pending = []
 
-        # 배당(대상 기간 안의 배당락일)
-        if broker.core.shares > 0 and d in data.core_dividends.index:
-            broker.receive_dividend(float(data.core_dividends.loc[d]) * broker.core.shares, cfg)
-        if broker.qld.shares > 0 and d in data.qld_dividends.index:
-            broker.receive_dividend(float(data.qld_dividends.loc[d]) * broker.qld.shares, cfg)
+        # 배당(대상 기간 안의 배당락일) — 받은 즉시 같은 날 종가로 재투자한다
+        # (engine.backtest.simulate_benchmark과 동일한 규칙. P6-1 재현 확인에서 이걸
+        # 빠뜨렸던 것이 QQQ 벤치마크 재현 잔차의 주원인이었다 — 완료 보고 참고).
+        if broker.core.shares > 0 and d in data.core_dividends.index and core_close:
+            net_usd = broker.receive_dividend(float(data.core_dividends.loc[d]) * broker.core.shares, cfg)
+            if net_usd > 0:
+                broker.buy_core(net_usd, core_close, cfg, date_iso, count_as_trade=False)
+        if broker.qld.shares > 0 and d in data.qld_dividends.index and qld_close:
+            net_usd = broker.receive_dividend(float(data.qld_dividends.loc[d]) * broker.qld.shares, cfg)
+            if net_usd > 0:
+                broker.buy_qld(net_usd, qld_close, cfg, date_iso, count_as_trade=False)
 
         # 5월 양도세 정산
         if may_days.get(d.year) == d and core_close:
