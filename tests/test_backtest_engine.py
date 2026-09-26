@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -765,3 +767,73 @@ def test_find_first_technical_exit_returns_none_when_nothing_triggers():
     )
     out = bt.find_first_technical_exit(df, idx[0], stop_price=10.0)
     assert out is None
+
+
+# ── P5-5 테스트: compute_yearly_universe_coverage ───────────────────────────
+
+
+def _mk_price_df(dates: list) -> pd.DataFrame:
+    idx = pd.DatetimeIndex(dates, name="date")
+    return pd.DataFrame({"close": [100.0] * len(idx)}, index=idx)
+
+
+def test_compute_yearly_universe_coverage_full_coverage_gives_zero_missing_ratio():
+    from data import universe_history as uh
+
+    days_2007 = pd.bdate_range("2007-01-02", "2007-12-31")
+    changes: list = []  # 구성 변경 없음 -> AAA·BBB가 연중 내내 구성 종목
+    checkpoints = uh.membership_checkpoints({"AAA", "BBB"}, changes, date(2007, 1, 1))
+    indicator_map = {"AAA": _mk_price_df(days_2007), "BBB": _mk_price_df(days_2007)}
+
+    out = bt.compute_yearly_universe_coverage(checkpoints, indicator_map, list(days_2007))
+    assert out[2007]["constituent_count"] == 2
+    assert out[2007]["priced_count"] == 2
+    assert out[2007]["missing_ratio_pct"] == 0.0
+    assert out[2007]["missing_members"] == []
+
+
+def test_compute_yearly_universe_coverage_flags_ticker_with_no_price_data():
+    from data import universe_history as uh
+
+    days_2007 = pd.bdate_range("2007-01-02", "2007-12-31")
+    changes: list = []
+    checkpoints = uh.membership_checkpoints({"AAA", "BBB"}, changes, date(2007, 1, 1))
+    indicator_map = {"AAA": _mk_price_df(days_2007)}  # BBB는 시세를 못 받음
+
+    out = bt.compute_yearly_universe_coverage(checkpoints, indicator_map, list(days_2007))
+    assert out[2007]["constituent_count"] == 2
+    assert out[2007]["priced_count"] == 1
+    assert out[2007]["missing_members"] == ["BBB"]
+    assert out[2007]["missing_ratio_pct"] == 50.0  # 종목·일수 절반이 BBB(누락)
+
+
+def test_compute_yearly_universe_coverage_partial_year_membership_change():
+    """연중 구성이 바뀌면(BBB가 7월부터 CCC로 교체) 그 연도의 constituent_count에 둘 다 잡혀야 한다."""
+    from data.universe_history import IndexChange, membership_checkpoints
+
+    days_2007 = pd.bdate_range("2007-01-02", "2007-12-31")
+    changes = [IndexChange(date=date(2007, 7, 1), added="CCC", removed="BBB")]
+    checkpoints = membership_checkpoints({"AAA", "CCC"}, changes, date(2007, 1, 1))
+    indicator_map = {
+        "AAA": _mk_price_df(days_2007),
+        "BBB": _mk_price_df(pd.bdate_range("2007-01-02", "2007-06-29")),
+        "CCC": _mk_price_df(pd.bdate_range("2007-07-01", "2007-12-31")),
+    }
+
+    out = bt.compute_yearly_universe_coverage(checkpoints, indicator_map, list(days_2007))
+    assert out[2007]["constituent_count"] == 3  # AAA·BBB·CCC 모두 그해 한 번이라도 구성 종목이었음
+    assert out[2007]["missing_ratio_pct"] == 0.0  # 각자 재직 기간에는 시세가 다 있음
+    assert out[2007]["members"] == ["AAA", "BBB", "CCC"]
+
+
+def test_compute_yearly_universe_coverage_splits_by_calendar_year():
+    from data import universe_history as uh
+
+    days = list(pd.bdate_range("2007-01-02", "2008-12-31"))
+    changes: list = []
+    checkpoints = uh.membership_checkpoints({"AAA"}, changes, date(2007, 1, 1))
+    indicator_map = {"AAA": _mk_price_df(pd.bdate_range("2007-01-02", "2007-12-31"))}  # 2008년은 시세 없음
+
+    out = bt.compute_yearly_universe_coverage(checkpoints, indicator_map, days)
+    assert out[2007]["missing_ratio_pct"] == 0.0
+    assert out[2008]["missing_ratio_pct"] == 100.0

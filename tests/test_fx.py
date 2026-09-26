@@ -26,6 +26,45 @@ def test_pick_rate_for_date_none_when_nothing_available():
     assert fx.pick_rate_for_date({"2026-09-24": 1_400.0}, "2026-09-23") is None  # 미래 값뿐
 
 
+# ── merge_fx_with_fallback (P5-5 3번: yfinance 우선 + FRED로 빈 날짜만 보완) ──────
+
+
+def test_merge_fx_with_fallback_prefers_primary_on_overlap():
+    primary = {"2007-01-02": 950.0, "2007-01-03": 951.0}
+    fallback = {"2007-01-02": 949.5, "2007-01-03": 950.5}
+    merged, stats = fx.merge_fx_with_fallback(primary, fallback)
+    assert merged["2007-01-02"] == 950.0  # primary 값을 그대로 쓴다(덮어써지지 않음)
+    assert merged["2007-01-03"] == 951.0
+    assert stats["overlap_days"] == 2
+    assert stats["filled_from_fallback_days"] == 0
+
+
+def test_merge_fx_with_fallback_fills_gaps_from_fallback():
+    primary = {"2007-01-02": 950.0}  # 2007-01-03이 비어 있음(예: yfinance 결측일)
+    fallback = {"2007-01-02": 949.5, "2007-01-03": 950.5}
+    merged, stats = fx.merge_fx_with_fallback(primary, fallback)
+    assert merged["2007-01-03"] == 950.5  # fallback으로 채워짐
+    assert stats["filled_from_fallback_days"] == 1
+    assert stats["filled_dates"] == ["2007-01-03"]
+
+
+def test_merge_fx_with_fallback_reports_overlap_diff_stats():
+    primary = {"2007-01-02": 950.0, "2007-01-03": 960.0}
+    fallback = {"2007-01-02": 949.0, "2007-01-03": 955.0}  # 차이 1.0, 5.0
+    merged, stats = fx.merge_fx_with_fallback(primary, fallback)
+    assert stats["mean_abs_diff"] == 3.0
+    assert stats["max_abs_diff"] == 5.0
+    assert stats["max_abs_diff_date"] == "2007-01-03"
+
+
+def test_merge_fx_with_fallback_empty_fallback_is_noop():
+    primary = {"2007-01-02": 950.0}
+    merged, stats = fx.merge_fx_with_fallback(primary, {})
+    assert merged == primary
+    assert stats["overlap_days"] == 0
+    assert stats["filled_from_fallback_days"] == 0
+
+
 def test_get_usd_krw_rate_uses_fresh_value(tmp_path, monkeypatch):
     monkeypatch.setattr(fx, "CACHE_PATH", tmp_path / "fx_krw.json")
     result = fx.get_usd_krw_rate("2026-09-23", fetch_provider=lambda: {"2026-09-23": 1_385.5})

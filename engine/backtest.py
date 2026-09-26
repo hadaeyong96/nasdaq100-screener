@@ -113,6 +113,7 @@ class Broker:
     tax_log: list = field(default_factory=list)
     apply_costs: bool = True
     apply_tax: bool = True
+    qqqm_trade_count_by_year: dict = field(default_factory=lambda: defaultdict(int))  # P5-5 4번 — 연도별 QQQM 매매(스윕) 횟수 집계용, 손익 계산에는 안 씀
 
     def _commission(self, usd_amount: float, pct: float) -> float:
         return usd_amount * pct / 100 if self.apply_costs else 0.0
@@ -691,8 +692,10 @@ def simulate_portfolio(
                 surplus_usd = broker.cash_usd - cash_buffer_usd
                 if surplus_usd > 1:
                     broker.buy_qqqm(surplus_usd, price_now, cfg)
+                    broker.qqqm_trade_count_by_year[date_.year] += 1  # P5-5 4번 집계용(손익에는 영향 없음)
                 elif surplus_usd < -1 and broker.qqqm_shares > 0:
                     broker.sell_qqqm(-surplus_usd, price_now, cfg, fx_rate, date_.year)
+                    broker.qqqm_trade_count_by_year[date_.year] += 1
 
         # ── 자산 기록 ──
         if fx_rate is not None:
@@ -1218,6 +1221,47 @@ def compute_relative_strength_top_half(indicator_map: dict, trading_days: list, 
             continue
         threshold = statistics.median(rets.values())
         out[d.isoformat()] = {t for t, r in rets.items() if r >= threshold}
+    return out
+
+
+def compute_yearly_universe_coverage(checkpoints: list, indicator_map: dict, trading_days: list) -> dict[int, dict]:
+    """연도별로 "시점별 구성 종목 수 / 시세를 받은 종목 수 / 못 받은 종목의 종목·일수 비율"을
+    계산한다 (순수 함수, P5-5 1번 — 과거 구간 확장의 데이터 신뢰도 판정용).
+
+    입력: checkpoints(data.universe_history.membership_checkpoints 결과), indicator_map({ticker: df} —
+         시세를 받은 종목만 키로 있음), trading_days(pd.Timestamp 목록 — 보통 QQQ의 거래일 달력)
+    출력: {year: {"constituent_count", "priced_count", "missing_ratio_pct"(종목·일수 기준),
+                  "members"(정렬된 티커 목록), "missing_members"(그해 하루도 시세가 없던 종목)}}
+    missing_ratio_pct: 그해 구성 종목이 보유해야 할 총 "종목·거래일" 수 대비, 시세가 없어
+    못 채운 "종목·거래일" 수의 비율(%). trading_days가 비어 있으면 빈 dict.
+    """
+    by_year: dict[int, dict] = {}
+    for d in trading_days:
+        y = d.year
+        members = uh.universe_on(checkpoints, d.date())
+        agg = by_year.setdefault(y, {"members": set(), "total_ticker_days": 0, "priced_ticker_days": 0})
+        agg["members"] |= set(members)
+        for t in members:
+            agg["total_ticker_days"] += 1
+            df = indicator_map.get(t)
+            if df is not None and d in df.index:
+                agg["priced_ticker_days"] += 1
+
+    out: dict[int, dict] = {}
+    for y, agg in by_year.items():
+        members = agg["members"]
+        priced_members = {t for t in members if indicator_map.get(t) is not None and not indicator_map[t].empty}
+        total = agg["total_ticker_days"]
+        priced = agg["priced_ticker_days"]
+        out[y] = {
+            "constituent_count": len(members),
+            "priced_count": len(priced_members),
+            "total_ticker_days": total,
+            "priced_ticker_days": priced,
+            "missing_ratio_pct": round((1 - priced / total) * 100, 1) if total else None,
+            "members": sorted(members),
+            "missing_members": sorted(members - priced_members),
+        }
     return out
 
 
