@@ -646,3 +646,122 @@ def test_compute_exit_type_breakdown_averages_r_per_kind():
     out = bt.compute_exit_type_breakdown(trades)
     assert out["STOP"]["count"] == 2
     assert out["STOP"]["avg_r"] == pytest.approx((-1.0 + -1.5) / 2, abs=1e-6)
+
+
+# ── P5-4 테스트 ──────────────────────────────────────────────────────────
+
+
+def test_atr_trail_exit_labeled_atr_trail_not_stop():
+    """P5-4 0-1번: 추적 손절이 실제로 발동한 청산은 STOP이 아니라 ATR_TRAIL로 기록돼야 한다."""
+    from core.indicators import compute_atr
+
+    tickers = ["AAA", "BBB", "CCC"]
+    raw = _synthetic_universe(tickers, seed_base=500)
+    cfg = _plan_cfg_base()
+    indicator_map = {}
+    for t, df in raw.items():
+        ind = compute_indicators(df, cfg)
+        ind["atr"] = compute_atr(df, period=14)
+        indicator_map[t] = ind
+    idx = raw["AAA"].index
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in idx}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={t: pd.Series(dtype=float) for t in tickers}, checkpoints=[],
+        fx_by_date=fx_by_date, universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=indicator_map["AAA"], qqq_dividends=pd.Series(dtype=float),
+        cash_etf_df=indicator_map["AAA"], cash_etf_dividends=pd.Series(dtype=float),
+    )
+    trailed = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date(), atr_trail_mult=0.3)
+    atr_trail_trades = [t for t in trailed.trades if t.get("stage") == "ATR_TRAIL"]
+    assert atr_trail_trades
+    for t in atr_trail_trades:
+        assert t["side"] == "청산"
+        assert t["reason"] == "ATR 추적 손절"
+
+
+def test_partial_tp_fills_use_next_day_open_price():
+    """P5-4 0-2번: 분할 익절 체결가는 신호 다음날 시가여야 한다(다른 청산과 통일)."""
+    tickers = ["AAA", "BBB", "CCC"]
+    raw = _synthetic_universe(tickers, seed_base=400)
+    cfg = _plan_cfg_base()
+    indicator_map = {t: compute_indicators(df, cfg) for t, df in raw.items()}
+    idx = raw["AAA"].index
+    fx_by_date = {d.date().isoformat(): 1_300.0 for d in idx}
+    data = bt.BacktestData(
+        indicator_map=indicator_map, dividends={t: pd.Series(dtype=float) for t in tickers}, checkpoints=[],
+        fx_by_date=fx_by_date, universe_mode="CURRENT_CONSTITUENTS", survivorship_bias="TRUE", failed_tickers={}, data_gap={},
+        qqq_df=indicator_map["AAA"], qqq_dividends=pd.Series(dtype=float),
+        cash_etf_df=indicator_map["AAA"], cash_etf_dividends=pd.Series(dtype=float),
+    )
+    result = bt.simulate_portfolio(data, cfg, idx[0].date(), idx[-1].date(), partial_tp_r_mult=2.0)
+    partials = [t for t in result.trades if t.get("stage") == "PARTIAL_TP"]
+    assert partials
+    for t in partials:
+        df = indicator_map[t["ticker"]]
+        ts = pd.Timestamp(t["date"])
+        assert ts in df.index
+        assert t["price"] == pytest.approx(float(df.loc[ts, "open"]), rel=1e-6)
+
+
+def test_select_flat_region_smallest_picks_smallest_stable_value():
+    mults = [2.5, 3.0, 3.5, 4.0]
+    metric = {2.5: 10.0, 3.0: 10.5, 3.5: 10.4, 4.0: 15.0}
+    # 3.0·3.5는 서로(그리고 있는 이웃과) 1 이내 -> 평탄 구간. 2.5는 3.0과 0.5차이라 이웃 기준 평탄,
+    # 4.0은 3.5와 4.6차이라 평탄 아님. 평탄 구간 중 가장 작은 값 = 2.5(3.0과 0.5차이로 평탄 조건 만족).
+    out = bt.select_flat_region_smallest(mults, metric, tol_pp=1.0)
+    assert out == 2.5
+
+
+def test_select_flat_region_smallest_returns_none_when_no_flat_region():
+    mults = [2.5, 3.0, 3.5]
+    metric = {2.5: 5.0, 3.0: 20.0, 3.5: 40.0}
+    out = bt.select_flat_region_smallest(mults, metric, tol_pp=1.0)
+    assert out is None
+
+
+def test_compute_block_bootstrap_ci_reproducible_and_detects_zero_excess():
+    daily = [0.0] * 500  # 초과 수익이 항상 0이면 신뢰구간이 0을 포함해야 한다
+    out1 = bt.compute_block_bootstrap_ci(daily, block_size=20, n_resamples=200, seed=42)
+    out2 = bt.compute_block_bootstrap_ci(daily, block_size=20, n_resamples=200, seed=42)
+    assert out1 == out2  # 같은 시드 -> 같은 결과
+    assert out1["includes_zero"] is True
+
+
+def test_compute_block_bootstrap_ci_excludes_zero_for_clear_positive_excess():
+    daily = [0.01] * 500  # 매일 +1% 초과 수익 -> 연율화하면 확실히 양수, 신뢰구간이 0 위에 있어야 함
+    out = bt.compute_block_bootstrap_ci(daily, block_size=20, n_resamples=200, seed=1)
+    assert out["ci_low_pct"] > 0
+    assert out["includes_zero"] is False
+
+
+def test_find_first_technical_exit_detects_stop_before_later_e1():
+    idx = pd.bdate_range("2021-01-04", periods=6, name="date")
+    df = pd.DataFrame(
+        {
+            "close": [100.0, 90.0, 80.0, 70.0, 60.0, 50.0],
+            "dc": [False, False, False, True, False, False],
+            "rsi": [60.0, 55.0, 52.0, 48.0, 45.0, 40.0],
+            "cloud_bot": [50.0, 50.0, 50.0, 50.0, 50.0, 50.0],
+            "chikou_broken": [False, False, False, False, False, False],
+        },
+        index=idx,
+    )
+    out = bt.find_first_technical_exit(df, idx[0], stop_price=85.0)
+    assert out["kind"] == "STOP"
+    assert out["date"] == idx[2]  # close 80 <= 85 이 첫 번째로 걸리는 날(idx[2])
+
+
+def test_find_first_technical_exit_returns_none_when_nothing_triggers():
+    idx = pd.bdate_range("2021-01-04", periods=4, name="date")
+    df = pd.DataFrame(
+        {
+            "close": [100.0, 101.0, 102.0, 103.0],
+            "dc": [False, False, False, False],
+            "rsi": [60.0, 61.0, 62.0, 63.0],
+            "cloud_bot": [50.0, 50.0, 50.0, 50.0],
+            "chikou_broken": [False, False, False, False],
+        },
+        index=idx,
+    )
+    out = bt.find_first_technical_exit(df, idx[0], stop_price=10.0)
+    assert out is None

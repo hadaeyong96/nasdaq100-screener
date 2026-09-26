@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -428,6 +429,7 @@ def simulate_portfolio(
     next_position_id = [1]
     trailing_high: dict[str, float] = {}  # P5-3 E1(ATR 추적 손절)용 — 진입 후 최고 종가
     partial_tp_taken: set = set()  # P5-3 E2(분할 익절)용 — 이미 절반을 판 position_id
+    partial_tp_pending: dict[str, dict] = {}  # P5-4 0-2번 — 오늘 도달 신호, 다음날 시가 체결 대기
 
     # 첫 거래일에 버퍼를 뺀 전액을 달러로 바꿔(딱 한 번 환전) QQQM에 넣는다.
     first_ts = pd.Timestamp(trading_days[0])
@@ -490,6 +492,45 @@ def simulate_portfolio(
             elif qty > 0:
                 rejected.append({"date": date_.isoformat(), "ticker": ticker, "stage": pending["kind"], "reason": "미체결(저가가 지정가보다 높음)"})
 
+        # ── P5-4 0-2번: 분할 익절 체결 해소(어제 도달 신호 -> 오늘 시가, 다른 청산과 통일) ──
+        for ticker, pend in list(partial_tp_pending.items()):
+            if pd.Timestamp(pend["signal_date"]) >= ts:
+                continue
+            df = indicator_map[ticker]
+            if ts not in df.index:
+                del partial_tp_pending[ticker]
+                continue
+            fill_price = ex.exit_at_open(df.loc[ts].get("open"))
+            del partial_tp_pending[ticker]
+            if fill_price is None:
+                continue
+            half_qty = pend["qty"]
+            avg_cost = pend["avg_cost"]
+            state_now = states.get(ticker, {})
+            held_now = sum(q for q in state_now.get("units", {}).values() if q and q > 0)
+            if held_now < half_qty:
+                # 체결 전에 다른 사유(손절·E3 등)로 이미 (일부) 청산됐으면 분할 익절은 취소된 것으로 본다.
+                continue
+            commission_sell_pct = costs["commission_sell_pct"] if broker.apply_costs else 0.0
+            commission_buy_pct = costs["commission_buy_pct"] if broker.apply_costs else 0.0
+            proceeds_usd = broker.sell_usd_asset(float(fill_price) * half_qty, commission_sell_pct)
+            cost_usd = avg_cost * half_qty * (1 + commission_buy_pct / 100)
+            gain_usd = proceeds_usd - cost_usd
+            gain_krw = gain_usd * fx_rate if fx_rate else 0.0
+            if fx_rate:
+                broker.realized_gain_by_year[date_.year] += gain_krw
+            trades.append(
+                {"date": date_.isoformat(), "ticker": ticker, "position_id": pend["position_id"], "side": "청산",
+                 "stage": "PARTIAL_TP", "qty": half_qty, "price": float(fill_price), "fx_rate": fx_rate,
+                 "reason": f"분할 익절(+{partial_tp_r_mult}R)", "entry_price": avg_cost,
+                 "pnl_usd": round(gain_usd, 2), "pnl_krw": round(gain_krw), "r": None}
+            )
+            state_ = states.get(ticker)
+            if state_ is not None:
+                for u, take in pend["sell_amounts"].items():
+                    if take > 0:
+                        state_["units"][u] = max(state_["units"].get(u, 0) - take, 0)
+
         # ── Pass 1: 오늘 새 진입(A1·B) 후보를 점수 순으로 추린다 ──
         candidates = []
         skip_today = set()
@@ -523,6 +564,7 @@ def simulate_portfolio(
         # 덮어쓴다(기존 손절가·추적 손절 중 더 높은 쪽이 먼저 걸린다). 어제까지의 최고
         # 종가로 오늘을 판정하고(당일 종가로 자기 자신을 미리 판정하지 않는다), 그다음
         # 오늘 종가로 최고치를 갱신해 내일 판정에 쓴다.
+        atr_trail_active: set = set()  # P5-4 0-1번: 오늘 손절가가 추적 손절로 덮였는지(STOP과 구분용)
         if atr_trail_mult is not None:
             for ticker in active:
                 held_qty = sum(q for q in states[ticker]["units"].values() if q > 0)
@@ -540,6 +582,7 @@ def simulate_portfolio(
                     cur_stop = states[ticker].get("stop")
                     if cur_stop is None or trail_stop > cur_stop:
                         states[ticker]["stop"] = trail_stop
+                        atr_trail_active.add(ticker)
                 if not pd.isna(close_today):
                     trailing_high[ticker] = max(prev_high, float(close_today)) if prev_high is not None else float(close_today)
 
@@ -560,6 +603,11 @@ def simulate_portfolio(
                 elif event["kind"] in _SELL_KINDS:
                     position_id = open_positions.get(ticker, {}).get("id")
                     _settle_sell(event, ticker, position_id, date_, ts, indicator_map[ticker], broker, cfg, fx_rate, trades)
+                    if event["kind"] == "STOP" and ticker in atr_trail_active and trades:
+                        # P5-4 0-1번: 오늘 발동한 손절이 추적 손절이 덮어쓴 값이었으면 STOP과
+                        # 섞이지 않게 ATR_TRAIL로 다시 표시한다(_settle_sell이 방금 append한 행).
+                        trades[-1]["stage"] = "ATR_TRAIL"
+                        trades[-1]["reason"] = "ATR 추적 손절"
                 elif event["kind"] in _BUY_KINDS:
                     today_buy_events.setdefault(ticker, []).append(event)
 
@@ -567,13 +615,13 @@ def simulate_portfolio(
             if ticker in open_positions and states[ticker]["state"] == "대기":
                 del open_positions[ticker]
 
-        # ── P5-3 E2: 분할 익절 — 평균단가 대비 +partial_tp_r_mult×R 도달 시 보유의 절반을
-        # 그날 종가로 즉시 매도한다(단순화 — 다른 청산은 다음날 시가 체결이지만, "도달하면
-        # 즉시 판다"는 규칙 자체를 그대로 반영해 같은 날 체결로 둔다). 한 포지션당 한 번만.
+        # ── P5-4 0-2번: 분할 익절 감지만(체결은 위의 "체결 해소" 블록에서 다음날 시가로 —
+        # 다른 청산 규칙과 통일). 평균단가 대비 +partial_tp_r_mult×R 도달 시 보유의 절반을
+        # 예약해 둔다. 한 포지션당 한 번만.
         if partial_tp_r_mult is not None:
             for ticker in active:
                 position_open = open_positions.get(ticker)
-                if not position_open or position_open["id"] in partial_tp_taken:
+                if not position_open or position_open["id"] in partial_tp_taken or ticker in partial_tp_pending:
                     continue
                 risk_per_share = position_open.get("risk_per_share_usd")
                 if not risk_per_share:
@@ -594,8 +642,8 @@ def simulate_portfolio(
                 if float(close_today) < target:
                     continue
                 half_qty = total_qty // 2
+                partial_tp_taken.add(position_open["id"])
                 if half_qty <= 0:
-                    partial_tp_taken.add(position_open["id"])
                     continue
                 sell_amounts: dict[str, int] = {}
                 for u, q in held_units.items():
@@ -604,25 +652,10 @@ def simulate_portfolio(
                 if diff != 0:
                     biggest_unit = max(held_units, key=held_units.get)
                     sell_amounts[biggest_unit] = max(0, min(held_units[biggest_unit], sell_amounts[biggest_unit] + diff))
-
-                commission_sell_pct = costs["commission_sell_pct"] if broker.apply_costs else 0.0
-                commission_buy_pct = costs["commission_buy_pct"] if broker.apply_costs else 0.0
-                proceeds_usd = broker.sell_usd_asset(float(close_today) * half_qty, commission_sell_pct)
-                cost_usd = avg_cost * half_qty * (1 + commission_buy_pct / 100)
-                gain_usd = proceeds_usd - cost_usd
-                gain_krw = gain_usd * fx_rate if fx_rate else 0.0
-                if fx_rate:
-                    broker.realized_gain_by_year[date_.year] += gain_krw
-                trades.append(
-                    {"date": date_.isoformat(), "ticker": ticker, "position_id": position_open["id"], "side": "청산",
-                     "stage": "PARTIAL_TP", "qty": half_qty, "price": float(close_today), "fx_rate": fx_rate,
-                     "reason": f"분할 익절(+{partial_tp_r_mult}R)", "entry_price": avg_cost,
-                     "pnl_usd": round(gain_usd, 2), "pnl_krw": round(gain_krw), "r": None}
-                )
-                for u, take in sell_amounts.items():
-                    if take > 0:
-                        state_["units"][u] = max(state_["units"].get(u, 0) - take, 0)
-                partial_tp_taken.add(position_open["id"])
+                partial_tp_pending[ticker] = {
+                    "position_id": position_open["id"], "qty": half_qty, "avg_cost": avg_cost,
+                    "sell_amounts": sell_amounts, "signal_date": date_,
+                }
 
         if today_buy_events:
             _size_and_stash(today_buy_events, states, indicator_map, ts, cfg, fx_rate, rejected, date_)
@@ -1351,6 +1384,84 @@ def compute_exit_type_breakdown(trades: list[dict]) -> dict:
         avg_r = v["r_sum"] / v["r_n"] if v["r_n"] else None
         out[kind] = {"count": v["count"], "avg_r": round(avg_r, 2) if avg_r is not None else None}
     return out
+
+
+def select_flat_region_smallest(mults: list, metric_by_mult: dict, tol_pp: float = 1.0) -> float | None:
+    """격자(mults, 오름차순 숫자 목록)에서 "평탄 구간"(있는 이웃과 모두 metric 차이가 tol_pp
+    이내인 값) 중 가장 작은 값을 고른다 — 끝 값은 있는 쪽 이웃 하나만 본다 (순수 함수,
+    P5-4 2장 선택 규칙: 최고값이 아니라 안정적인 구간의 가장 작은 배수를 쓴다).
+
+    출력: 평탄 구간이 하나도 없으면 None.
+    """
+    flat = []
+    for i, m in enumerate(mults):
+        neighbors = []
+        if i > 0:
+            neighbors.append(metric_by_mult[mults[i - 1]])
+        if i < len(mults) - 1:
+            neighbors.append(metric_by_mult[mults[i + 1]])
+        if neighbors and all(abs(metric_by_mult[m] - n) <= tol_pp for n in neighbors):
+            flat.append(m)
+    return min(flat) if flat else None
+
+
+def compute_block_bootstrap_ci(daily_values: list, block_size: int, n_resamples: int, seed: int, annualize: int = 252) -> dict:
+    """일별 값(예: 전략−QQQ 초과 수익률)을 block_size일 블록 단위로 복원추출해 n_resamples번
+    재표본하고, 각 표본 평균×annualize(연율화 근사)를 모아 95% 신뢰구간(2.5·97.5 백분위)을
+    낸다 (순수 함수, 시드 고정으로 재현 가능 — P5-4 4-2번 부트스트랩).
+    """
+    n = len(daily_values)
+    if n == 0:
+        return {}
+    arr = np.asarray(daily_values, dtype=float)
+    rng = np.random.default_rng(seed)
+    n_blocks = max(n // block_size, 1)
+    means = np.empty(n_resamples)
+    max_start = n - block_size
+    for i in range(n_resamples):
+        if max_start <= 0:
+            sample = arr
+        else:
+            starts = rng.integers(0, max_start + 1, size=n_blocks)
+            sample = np.concatenate([arr[s : s + block_size] for s in starts])
+        means[i] = sample.mean() * annualize
+    lo, hi = np.percentile(means, [2.5, 97.5])
+    return {
+        "ci_low_pct": round(float(lo) * 100, 2), "ci_high_pct": round(float(hi) * 100, 2),
+        "includes_zero": bool(lo <= 0 <= hi), "point_estimate_pct": round(float(np.mean(daily_values)) * annualize * 100, 2),
+    }
+
+
+def find_first_technical_exit(df: pd.DataFrame, entry_ts: pd.Timestamp, stop_price: float) -> dict | None:
+    """진입일 이후 첫 청산 신호(손절 또는 E1·E2·E3 중 아무거나 하나)의 날짜·종가를 찾는다
+    (순수 함수, P5-4 4장 무작위 진입 비교용 — 실제 전략의 1:2:6 분할·부분매도 대신 단일
+    로트 전량 청산으로 단순화한 기준선).
+
+    입력: df(compute_indicators 결과 — close·dc·rsi·cloud_bot·chikou_broken 필요),
+         entry_ts(이 날짜 다음부터 찾는다), stop_price
+    출력: {"date", "kind": "STOP"|"E1"|"E2"|"E3", "close"} 또는 기간 끝까지 못 찾으면 None
+    """
+    sub = df.loc[df.index > entry_ts]
+    if sub.empty:
+        return None
+    stop_hit = sub["close"] <= stop_price
+    e1_hit = sub["dc"].fillna(False)
+    prev_rsi = sub["rsi"].shift(1)
+    e2_hit = (prev_rsi >= 50) & (sub["rsi"] < 50)
+    e3_hit = (sub["close"] < sub["cloud_bot"]) | sub["chikou_broken"].fillna(False)
+    combined = stop_hit | e1_hit | e2_hit.fillna(False) | e3_hit.fillna(False)
+    if not combined.any():
+        return None
+    first_ts = combined[combined].index[0]
+    if bool(stop_hit.loc[first_ts]):
+        kind = "STOP"
+    elif bool(e3_hit.loc[first_ts]):
+        kind = "E3"
+    elif bool(e1_hit.loc[first_ts]):
+        kind = "E1"
+    else:
+        kind = "E2"
+    return {"date": first_ts, "kind": kind, "close": float(sub.loc[first_ts, "close"])}
 
 
 def compute_pretax_benchmark_yearly_returns(qqq_df: pd.DataFrame, qqq_dividends: pd.Series, fx_by_date: dict, start: date, end: date) -> dict:
