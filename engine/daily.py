@@ -56,14 +56,16 @@ for _stream in (sys.stdout, sys.stderr):  # 윈도우 콘솔 cp949 UnicodeEncode
 
 from core import explain as expl  # noqa: E402
 from core import filters as filt  # noqa: E402
+from core import macro_status  # noqa: E402
 from core import sizing  # noqa: E402
 from core import signals as sig  # noqa: E402
 from core import state as st  # noqa: E402
 from core.indicators import compute_indicators  # noqa: E402
 from data import fx  # noqa: E402
+from data import macro as macrodata  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
 from data.fills import fills_for, load_fills, summarize_cash_rows  # noqa: E402
-from data.market_calendar import latest_closed_trading_day  # noqa: E402
+from data.market_calendar import latest_closed_trading_day, trading_days_between  # noqa: E402
 from data.prices import US_EASTERN, fetch_universe_prices  # noqa: E402
 from data.universe import get_universe  # noqa: E402
 from notify import briefing, report_html, telegram  # noqa: E402
@@ -624,6 +626,126 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
     return base
 
 
+_MACRO_FRED_DEFS = [
+    ("DGS10", "미국 10년물 국채금리", "%"),
+    ("T10Y2Y", "장단기 금리차 (10년−2년)", "%p"),
+    ("BAMLH0A0HYM2", "하이일드 스프레드", "%"),
+    ("DFEDTARU", "미국 기준금리 (상단)", "%"),
+    ("DEXKOUS", "원/달러 환율", "원"),
+]
+
+
+def _trading_days_between_iso(a: str, b: str) -> list:
+    from datetime import date as _date
+
+    return list(trading_days_between(_date.fromisoformat(a), _date.fromisoformat(b)))
+
+
+def _n_periods_ago(series: dict, latest_date: str, n: int) -> float | None:
+    dates = sorted(d for d in series if d <= latest_date)
+    idx = len(dates) - 1
+    return series[dates[idx - n]] if idx - n >= 0 else None
+
+
+def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
+    """시장 온도 6칸(공포·탐욕 + FRED 5개) 데이터를 만든다 (P3.8, 표시 전용).
+
+    입력: cfg(config.yaml의 macro 설정), as_of_date(보고서 기준일, date)
+    출력: (rows, warnings). rows 각 항목: name, code, value, unit, as_of, change_1w,
+         series(1년치, 스파크라인용), badge({status,symbol,label,text}), is_stale, note.
+    실패해도 조용히 넘기지 않는다 — 못 받은 지표는 warnings에 남기고 칸에서 뺀다
+    (호출부가 "지연"으로 표시).
+    """
+    macro_cfg = cfg.get("macro", {})
+    if not macro_cfg.get("enabled", False):
+        return [], []
+
+    warnings: list[str] = []
+    rows: list[dict] = []
+    th = macro_cfg["thresholds"]
+    n3m = macro_cfg.get("lookback_trading_days_3m", 63)
+    stale_days = macro_cfg.get("stale_days", 5)
+    report_date_iso = as_of_date.isoformat()
+
+    # 1) 공포·탐욕 (CNN, 실패·3일 초과 지연 시 VIX 대체)
+    fg_cfg = macro_cfg.get("fear_greed", {})
+    fg = macrodata.get_fear_greed(as_of_date, stale_fallback_days=fg_cfg.get("fallback_after_days", 3))
+    if fg["warning"]:
+        warnings.append(fg["warning"])
+
+    if fg["value"] is not None and not fg["use_vix_fallback"]:
+        badge = macro_status.classify_fear_greed(fg["value"], th["FEAR_GREED"])
+        rows.append({
+            "name": "공포·탐욕 지수", "code": "CNN Fear & Greed", "value": round(fg["value"]),
+            "unit": "/100", "as_of": fg["as_of"], "change_1w": None, "series": fg["series_1y"],
+            "badge": badge, "is_stale": fg["is_fallback"], "short_range": True,
+            "note": "25 이하 극단적 공포 · 75 이상 극단적 탐욕",
+            "ref_values": [th["FEAR_GREED"]["extreme_fear"], th["FEAR_GREED"]["greed"]],
+        })
+    else:
+        if fg["use_vix_fallback"]:
+            warnings.append("공포·탐욕 지수 3일 넘게 지연 - VIX(VIXCLS)로 대체")
+        vix = macrodata.fetch_fred_indicator(fg_cfg.get("fallback", "VIXCLS"), as_of_date)
+        if vix["warning"]:
+            warnings.append(vix["warning"])
+        series = vix["series"]
+        if series:
+            latest_date = max(series)
+            value = series[latest_date]
+            badge = macro_status.classify_vix_fallback(value, th["VIXCLS"])
+            rows.append({
+                "name": "공포·탐욕 지수", "code": "VIX(대체) · VIXCLS", "value": round(value, 2),
+                "unit": "", "as_of": latest_date, "change_1w": None,
+                "series": [v for _, v in sorted(series.items())], "badge": badge,
+                "is_stale": macro_status.is_stale(latest_date, report_date_iso, stale_days, _trading_days_between_iso),
+                "note": f"{th['VIXCLS']['caution']} 위 주의 · {th['VIXCLS']['alert']} 위 경계 (공포·탐욕 대체)",
+            })
+
+    # 2~6) FRED 지표
+    for code, name, unit in _MACRO_FRED_DEFS:
+        res = macrodata.fetch_fred_indicator(code, as_of_date)
+        if res["warning"]:
+            warnings.append(res["warning"])
+        series = res["series"]
+        if not series:
+            continue
+        latest_date = max(series)
+        value = series[latest_date]
+        prev_3m = _n_periods_ago(series, latest_date, n3m)
+        prev_1w = _n_periods_ago(series, latest_date, 5)
+
+        if code == "DGS10":
+            badge = macro_status.classify_rise_over_window(value, prev_3m, th["DGS10"]["rise_3m_caution"])
+        elif code == "T10Y2Y":
+            badge = macro_status.classify_t10y2y(value, th["T10Y2Y"])
+        elif code == "BAMLH0A0HYM2":
+            badge = macro_status.classify_hy_spread(value, th["BAMLH0A0HYM2"])
+        elif code == "DFEDTARU":
+            badge = macro_status.classify_fed_funds_trend(value, prev_3m)
+        else:  # DEXKOUS
+            badge = macro_status.classify_fx_percentile(value, [v for _, v in sorted(series.items())], th["DEXKOUS"])
+
+        earliest_date = min(series)
+        short_range = (pd.Timestamp(as_of_date) - pd.Timestamp(earliest_date)).days < 365
+        if code == "BAMLH0A0HYM2" and short_range:
+            warnings.append(f"{code}: 1년치를 못 받아 받은 만큼만 표시(기간 짧음)")
+
+        rows.append({
+            "name": name, "code": code, "value": round(value, 2), "unit": unit,
+            "as_of": latest_date, "change_1w": round(value - prev_1w, 2) if prev_1w is not None else None,
+            "series": [v for _, v in sorted(series.items())], "badge": badge,
+            "is_stale": macro_status.is_stale(latest_date, report_date_iso, stale_days, _trading_days_between_iso),
+            "short_range": short_range, "prev_3m": round(prev_3m, 2) if prev_3m is not None else None,
+            "note": None,
+            "ref_values": (
+                [th["T10Y2Y"]["alert"]] if code == "T10Y2Y"
+                else [th["BAMLH0A0HYM2"]["caution"]] if code == "BAMLH0A0HYM2"
+                else []
+            ),
+        })
+    return rows, warnings
+
+
 def _empty_run_summary(
     mode: str,
     as_of_date,
@@ -667,6 +789,7 @@ def _empty_run_summary(
         "funding_plan": None,
         "buy_risk_sum_krw": 0,
         "buy_risk_pct": None,
+        "macro_rows": [],
     }
 
 
@@ -1127,14 +1250,17 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
                 f"[daily] *** 데이터 지연: 기대 기준일 {expected_date.isoformat()}, "
                 f"실제 {actual_date.isoformat()} — 오늘은 매매 신호 없음 ***"
             )
+            macro_rows, macro_warnings = _build_macro_rows(cfg, actual_date)
             summary = _empty_run_summary(
                 mode,
                 actual_date,
-                [f"데이터 지연: 기대 기준일 {expected_date.isoformat()}, 실제 {actual_date.isoformat()}. 오늘은 매매 신호 없음"],
+                [f"데이터 지연: 기대 기준일 {expected_date.isoformat()}, 실제 {actual_date.isoformat()}. 오늘은 매매 신호 없음"]
+                + macro_warnings,
                 stale=True,
                 expected_date=expected_date,
                 actual_date=actual_date,
             )
+            summary["macro_rows"] = macro_rows
             summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
             return summary
 
@@ -1240,11 +1366,16 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
     if not dry_run:
         db.record_price_snapshots(conn, run_at, snapshot_rows)
 
+    print("시장 온도(공포·탐욕 + FRED 지표)를 받는 중...")
+    macro_rows, macro_warnings = _build_macro_rows(cfg, actual_date) if actual_date is not None else ([], [])
+    run_warnings.extend(macro_warnings)
+
     summary = build_report_summary(
         mode, cfg, indicator_map, name_map, earnings_map, positions, today_events,
         as_of_by_ticker, data_gap_tickers, fills_result, run_warnings, max_concurrent,
         fx_result, replay_needed=replay_needed,
     )
+    summary["macro_rows"] = macro_rows
     as_of = summary["as_of"]
     funnel = summary["funnel"]
 

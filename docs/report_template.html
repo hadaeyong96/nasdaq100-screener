@@ -101,6 +101,31 @@ a.tk::after{content:" ↗";font-size:11px;color:var(--mute);font-weight:400}
 .cnt{font-weight:800;font-size:15px}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .two table{min-width:0}
+/* 시장 온도 (FRED 지표) */
+.macro{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;margin-bottom:12px}
+.mhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;font-size:12px;color:var(--sub);margin-bottom:8px}
+.mhead>b{font-size:15px;color:var(--ink)}
+.mhead a{margin-left:auto;color:var(--info);font-weight:700;cursor:pointer}
+.mgrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.mt{border:1px solid var(--grid);border-radius:8px;padding:8px 10px;min-width:0}
+.mn{font-size:12px;color:var(--sub);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mn small{display:block;font-weight:400;color:var(--mute);font-size:11px}
+.mv{display:flex;align-items:baseline;gap:3px;margin:2px 0}
+.mv b{font-size:22px;font-weight:800;letter-spacing:-0.02em;color:var(--ink)}
+.mv .u{font-size:12px;color:var(--sub)}
+.mv .mc{margin-left:auto;font-size:12px;color:var(--sub)}
+.spark{display:block;width:100%;height:30px;margin:2px 0 4px}
+.spark polyline{fill:none;stroke:var(--sub);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.spark circle{fill:var(--ink);stroke:var(--card);stroke-width:1.5}
+.spark .ref{stroke:var(--mute);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.mf{display:flex;flex-direction:column;gap:2px}
+.stb{align-self:flex-start;font-size:12px;font-weight:700;border-radius:999px;padding:1px 8px}
+.st-ok{background:var(--buy-bg);color:var(--buy)}.st-warn{background:var(--warn-bg);color:var(--warn)}
+.st-bad{background:var(--sell-bg);color:var(--sell)}.st-info{background:var(--info-bg);color:var(--info)}
+.mr{font-size:11px;color:var(--mute);line-height:1.35}
+@media (max-width:1100px){.mgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:640px){.mgrid{grid-template-columns:repeat(2,minmax(0,1fr))}.mhead a{margin-left:0}}
+
 /* 선별 이유 (쉬운 설명) */
 .whybtn{font:inherit;font-size:12px;font-weight:700;color:var(--info);background:var(--info-bg);border:1px solid transparent;border-radius:999px;padding:2px 10px;cursor:pointer;white-space:nowrap}
 .whybtn:hover{border-color:var(--info)}
@@ -212,6 +237,47 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 
 
+<section class="macro" aria-label="시장 온도">
+  <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 9/22 · 변화는 1주 전 대비 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span><a data-goto="guide">지표 읽는 법 →</a></div>
+  <div class="mgrid">
+    <div class="mt" title="CNN 공포·탐욕 지수 · 1년 18 ~ 81">
+      <div class="mn">공포·탐욕 지수<small>CNN Fear &amp; Greed</small></div>
+      <div class="mv"><b>58</b><span class="u">/100</span><span class="mc">+6</span></div>
+      <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true"><line x1="2" x2="148" y1="24.5" y2="24.5" class="ref"/><line x1="2" x2="148" y1="9.5" y2="9.5" class="ref"/><polyline points="2.0,18.5 4.9,20.7 7.7,19.3 10.6,16.7 13.5,17.7 16.3,20.2 19.2,19.8 22.0,18.3 24.9,15.6 27.8,18.2 30.6,20.6 33.5,18.5 36.4,17.1 39.2,13.7 42.1,11.9 44.9,12.5 47.8,13.4 50.7,8.3 53.5,9.8 56.4,12.1 59.3,26.6 62.1,25.4 65.0,14.6 67.8,15.4 70.7,15.5 73.6,15.0 76.4,13.6 79.3,11.5 82.2,11.5 85.0,15.8 87.9,14.3 90.7,17.4 93.6,17.5 96.5,20.4 99.3,19.8 102.2,7.7 105.1,19.8 107.9,12.4 110.8,12.8 113.6,11.4 116.5,14.7 119.4,15.4 122.2,14.0 125.1,14.4 128.0,13.7 130.8,13.7 133.7,16.0 136.5,14.8 139.4,16.6 142.3,12.5 145.1,13.9 148.0,14.6"/><circle cx="148.0" cy="14.6" r="2.5"/></svg>
+      <div class="mf"><span class="stb st-warn">▲ 탐욕</span><span class="mr">25 이하 극단적 공포 · 75 이상 극단적 탐욕</span></div>
+    </div>
+    <div class="mt" title="미국 10년물 국채금리 · 1년 4.00 ~ 4.50%">
+      <div class="mn">미국 10년물 국채금리<small>DGS10</small></div>
+      <div class="mv"><b>4.12</b><span class="u">%</span><span class="mc">−0.08%p</span></div>
+      <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true"><polyline points="2.0,12.2 4.9,12.5 7.7,17.5 10.6,13.6 13.5,11.2 16.3,8.5 19.2,4.9 22.0,5.9 24.9,7.5 27.8,13.6 30.6,11.7 33.5,14.5 36.4,16.1 39.2,20.2 42.1,22.2 44.9,22.3 47.8,16.3 50.7,23.1 53.5,26.3 56.4,23.0 59.3,16.5 62.1,14.6 65.0,21.7 67.8,29.1 70.7,25.0 73.6,25.7 76.4,27.5 79.3,21.9 82.2,17.3 85.0,17.0 87.9,16.7 90.7,15.8 93.6,11.2 96.5,11.2 99.3,11.6 102.2,11.8 105.1,19.2 107.9,15.1 110.8,13.2 113.6,13.3 116.5,21.9 119.4,23.9 122.2,20.4 125.1,26.8 128.0,26.2 130.8,21.7 133.7,26.3 136.5,19.9 139.4,18.7 142.3,20.3 145.1,19.9 148.0,23.4"/><circle cx="148.0" cy="23.4" r="2.5"/></svg>
+      <div class="mf"><span class="stb st-ok">● 안정</span><span class="mr">3개월 새 +0.5%p 넘게 오르면 주의</span></div>
+    </div>
+    <div class="mt" title="장단기 금리차 (10년−2년) · 1년 +0.15 ~ +0.52%p">
+      <div class="mn">장단기 금리차 (10년−2년)<small>T10Y2Y</small></div>
+      <div class="mv"><b>+0.48</b><span class="u">%p</span><span class="mc">+0.03%p</span></div>
+      <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true"><line x1="2" x2="148" y1="29.1" y2="29.1" class="ref"/><polyline points="2.0,22.1 4.9,21.8 7.7,19.1 10.6,21.2 13.5,22.1 16.3,19.3 19.2,19.5 22.0,21.7 24.9,19.0 27.8,15.7 30.6,17.6 33.5,21.1 36.4,20.8 39.2,20.5 42.1,20.6 44.9,16.6 47.8,19.1 50.7,15.7 53.5,18.9 56.4,20.1 59.3,17.7 62.1,14.6 65.0,12.8 67.8,12.6 70.7,12.9 73.6,13.0 76.4,12.0 79.3,12.9 82.2,12.5 85.0,11.4 87.9,11.8 90.7,10.3 93.6,9.6 96.5,5.6 99.3,6.4 102.2,8.7 105.1,10.2 107.9,10.5 110.8,8.4 113.6,9.7 116.5,8.9 119.4,4.9 122.2,12.0 125.1,13.9 128.0,12.1 130.8,10.3 133.7,9.3 136.5,10.0 139.4,7.9 142.3,7.1 145.1,8.4 148.0,6.9"/><circle cx="148.0" cy="6.9" r="2.5"/></svg>
+      <div class="mf"><span class="stb st-ok">● 정상</span><span class="mr">0 아래(역전)면 경기 침체 경계</span></div>
+    </div>
+    <div class="mt" title="하이일드 스프레드 · 1년 2.73 ~ 3.66%">
+      <div class="mn">하이일드 스프레드<small>BAMLH0A0HYM2</small></div>
+      <div class="mv"><b>3.05</b><span class="u">%</span><span class="mc">−0.06%p</span></div>
+      <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true"><line x1="2" x2="148" y1="4.9" y2="4.9" class="ref"/><polyline points="2.0,16.3 4.9,15.6 7.7,17.1 10.6,17.2 13.5,17.7 16.3,17.6 19.2,23.7 22.0,23.2 24.9,19.5 27.8,21.7 30.6,20.8 33.5,17.9 36.4,15.9 39.2,13.0 42.1,18.2 44.9,19.0 47.8,19.7 50.7,18.0 53.5,15.7 56.4,22.6 59.3,19.2 62.1,22.5 65.0,20.1 67.8,23.3 70.7,22.0 73.6,18.6 76.4,19.3 79.3,19.0 82.2,17.4 85.0,17.8 87.9,18.6 90.7,15.5 93.6,14.4 96.5,16.6 99.3,11.4 102.2,16.4 105.1,15.5 107.9,17.5 110.8,18.2 113.6,17.4 116.5,17.9 119.4,17.4 122.2,22.0 125.1,25.4 128.0,23.2 130.8,25.2 133.7,26.8 136.5,29.1 139.4,24.6 142.3,22.4 145.1,19.2 148.0,23.0"/><circle cx="148.0" cy="23.0" r="2.5"/></svg>
+      <div class="mf"><span class="stb st-ok">● 안정</span><span class="mr">4% 위 주의 · 6% 위 경계</span></div>
+    </div>
+    <div class="mt" title="미국 기준금리 (상단) · 1년 4.50 ~ 5.50%">
+      <div class="mn">미국 기준금리 (상단)<small>DFEDTARU</small></div>
+      <div class="mv"><b>4.50</b><span class="u">%</span><span class="mc">0.00%p</span></div>
+      <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true"><polyline points="2.0,4.9 4.9,4.9 7.7,4.9 10.6,4.9 13.5,4.9 16.3,4.9 19.2,4.9 22.0,4.9 24.9,4.9 27.8,4.9 30.6,4.9 33.5,4.9 36.4,4.9 39.2,4.9 42.1,11.0 44.9,11.0 47.8,11.0 50.7,11.0 53.5,11.0 56.4,11.0 59.3,11.0 62.1,11.0 65.0,11.0 67.8,11.0 70.7,17.0 73.6,17.0 76.4,17.0 79.3,17.0 82.2,17.0 85.0,17.0 87.9,17.0 90.7,17.0 93.6,17.0 96.5,17.0 99.3,17.0 102.2,17.0 105.1,23.0 107.9,23.0 110.8,23.0 113.6,23.0 116.5,23.0 119.4,23.0 122.2,23.0 125.1,23.0 128.0,29.1 130.8,29.1 133.7,29.1 136.5,29.1 139.4,29.1 142.3,29.1 145.1,29.1 148.0,29.1"/><circle cx="148.0" cy="29.1" r="2.5"/></svg>
+      <div class="mf"><span class="stb st-info">▼ 인하 흐름</span><span class="mr">3개월 전 4.75% → 인하 중</span></div>
+    </div>
+    <div class="mt" title="원/달러 환율 · 1년 1,320 ~ 1,400원">
+      <div class="mn">원/달러 환율<small>DEXKOUS · KRW=X</small></div>
+      <div class="mv"><b>1,380</b><span class="u">원</span><span class="mc">+12</span></div>
+      <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true"><polyline points="2.0,26.2 4.9,26.1 7.7,29.1 10.6,26.1 13.5,21.4 16.3,24.7 19.2,20.4 22.0,18.6 24.9,20.4 27.8,26.6 30.6,21.9 33.5,22.4 36.4,24.1 39.2,22.6 42.1,21.3 44.9,17.3 47.8,21.1 50.7,18.0 53.5,14.7 56.4,12.2 59.3,14.7 62.1,18.0 65.0,15.7 67.8,16.3 70.7,16.6 73.6,13.3 76.4,15.3 79.3,22.3 82.2,22.2 85.0,26.1 87.9,21.7 90.7,19.6 93.6,20.6 96.5,19.5 99.3,16.4 102.2,16.0 105.1,12.3 107.9,13.2 110.8,10.8 113.6,7.6 116.5,4.9 119.4,9.0 122.2,7.8 125.1,14.3 128.0,17.0 130.8,21.3 133.7,16.2 136.5,18.5 139.4,16.9 142.3,16.1 145.1,15.0 148.0,11.0"/><circle cx="148.0" cy="11.0" r="2.5"/></svg>
+      <div class="mf"><span class="stb st-warn">▲ 달러 비쌈</span><span class="mr">1년 중 상위 20% · 환전 불리</span></div>
+    </div>
+  </div>
+</section>
 <div class="planbar" id="planbar">
   <span>전략 한도 <b id="pl-limit">6,000만</b> <span id="pl-pct">(60%)</span></span>
   <span>종목당 슬롯 <b id="pl-slot">750만</b></span>
@@ -493,6 +559,19 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <tr><td>과열 (RSI 70 이상)</td><td>이미 많이 올라 비싸게 따라 사는 자리예요</td></tr>
   <tr><td>잦은 교차 (횡보)</td><td>옆으로 오르내리는 구간의 골든크로스는 가짜 신호가 많아요</td></tr>
   <tr><td>보유 한도·자금 한도 초과</td><td>한 번에 너무 많은 종목에 돈이 몰리지 않게 막아요. 점수 높은 종목부터 사요</td></tr>
+  </tbody></table></div>
+
+  <h2>시장 온도 지표 6가지 (맨 위 칸)</h2>
+  <p class="lead2">첫 칸은 CNN의 공포·탐욕 지수, 나머지 5칸은 미국 연준이 운영하는 경제 데이터 사이트 FRED의 지표예요. 시장 전체의 분위기를 보는 <b>참고용</b>이고, 매수·매도 규칙에는 쓰지 않아요. 백테스트(P5-2)에서 시장 국면 필터를 넣었더니 오히려 성과가 나빠졌기 때문이에요.</p>
+  <div class="sheet"><table>
+  <thead><tr><th class="nosort">지표</th><th class="nosort">무엇인가</th><th class="nosort">표시 기준</th><th class="nosort">투자자에게 뜻하는 것</th></tr></thead>
+  <tbody>
+  <tr><td>공포·탐욕 지수 (CNN)</td><td>CNN이 주가 추세, 52주 신고가·신저가 종목 수, 거래량 흐름, 풋·콜 옵션 비율, 정크본드 수요, 변동성(VIX), 안전자산 수요 7가지를 합쳐 0~100으로 만든 투자 심리 지수</td><td>0~24 극단적 공포 · 25~44 공포 · 45~55 중립 · 56~75 탐욕 · 76~100 극단적 탐욕</td><td>남들이 겁먹을 때(25 이하)가 장기 매수에 유리했던 경우가 많아요. 다만 탐욕(75 이상)일 때 팔면 이후 상승을 놓치는 경우가 많다는 연구가 있어요. S&amp;P 500 기준 지수라 나스닥과 조금 다를 수 있어요</td></tr>
+  <tr><td>미국 10년물 국채금리</td><td>미국 정부가 10년 동안 돈을 빌릴 때 주는 이자</td><td>3개월 새 +0.5%p 넘게 오르면 주의</td><td>금리가 빠르게 오르면 미래 이익의 가치가 줄어 기술주(나스닥)가 특히 약해지기 쉬워요 (2022년처럼)</td></tr>
+  <tr><td>장단기 금리차 (10년−2년)</td><td>10년물 금리에서 2년물 금리를 뺀 값</td><td>0.5%p 위 정상 · 0~0.5 주의 · 0 아래(역전) 경계</td><td>보통은 오래 빌릴수록 이자가 높아요. 거꾸로 뒤집히면(역전) 과거에 경기 침체가 뒤따른 경우가 많았어요. 역전이 풀린 직후도 조심하는 구간이에요</td></tr>
+  <tr><td>하이일드 스프레드</td><td>신용등급이 낮은 회사채 금리가 국채보다 얼마나 높은지</td><td>4% 아래 안정 · 4~6% 주의 · 6% 위 경계</td><td>회사들이 돈 빌리기 어려워지면 먼저 벌어져요. 주식보다 먼저 위험을 알려 주는 경우가 많아요</td></tr>
+  <tr><td>미국 기준금리 (상단)</td><td>연준이 정한 정책 금리의 위쪽 끝</td><td>3개월 전보다 올랐으면 인상 · 내렸으면 인하 흐름</td><td>인하 흐름은 보통 주식에 우호적이지만, 경기가 나빠져서 내리는 경우도 있어서 다른 지표와 함께 봐야 해요</td></tr>
+  <tr><td>원/달러 환율</td><td>1달러를 사는 데 드는 원화</td><td>1년 중 상위 20%면 "달러 비쌈"</td><td>환율이 높을 때 달러로 바꾸면 불리하고, 나중에 환율이 내리면 원화 기준 수익이 줄어요. QQQM을 새로 살 때 참고해요</td></tr>
   </tbody></table></div>
 
   <h2>용어 사전</h2>

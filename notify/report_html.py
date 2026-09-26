@@ -17,6 +17,7 @@ from pathlib import Path
 import jinja2
 import pandas as pd
 
+from core import macro_status
 from core.sizing import format_krw
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -104,6 +105,25 @@ def _buy_row_ctx(r: dict, include_stage_label: bool) -> dict:
     if include_stage_label:
         ctx["stage_label"] = r.get("stage_label", "")
     return ctx
+
+
+def _macro_row_ctx(row: dict) -> dict:
+    """engine.daily._build_macro_rows의 행 하나 -> 템플릿에 넘길 context (P3.8, 표시 전용)."""
+    series = row.get("series") or []
+    spark_points = macro_status.sparkline_points(series) if len(series) > 1 else ""
+    ref_ys: list[float] = []
+    if series:
+        mn, mx = min(series), max(series)
+        ref_ys = [round(macro_status.value_to_y(rv, mn, mx), 1) for rv in row.get("ref_values", [])]
+    value = row["value"]
+    value_str = f"{value:,.2f}" if isinstance(value, float) and not value.is_integer() else f"{value:,.0f}"
+    change = row.get("change_1w")
+    change_str = f"{change:+g}" if change is not None else None
+    range_str = f"{min(series):,.2f} ~ {max(series):,.2f}" if series else "-"
+    return {
+        **row, "spark_points": spark_points, "ref_ys": ref_ys,
+        "value_str": value_str, "change_str": change_str, "range_str": range_str,
+    }
 
 
 def build_context(summary: dict, cfg: dict) -> dict:
@@ -216,6 +236,17 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "ichimoku_shift": ind_cfg["ichimoku_shift"],
         "entry_limit_markup": cfg["entry"]["limit_markup"],
     }
+    # cfg에 macro 섹션이 없어도(구버전 테스트 fixture 등) 안내 탭이 깨지지 않게 기본값을 둔다
+    # — 실제 운영은 config.yaml에 항상 이 섹션이 있어 아래 기본값은 쓰이지 않는다.
+    macro_cfg = cfg.get("macro", {})
+    macro_th = macro_cfg.get("thresholds", {})
+    guide["macro"] = {
+        "fg": macro_th.get("FEAR_GREED") or {"extreme_fear": 25, "fear": 45, "neutral_high": 55, "greed": 75},
+        "dgs10_pp": (macro_th.get("DGS10") or {}).get("rise_3m_caution", 0.5),
+        "t10y2y": macro_th.get("T10Y2Y") or {"normal": 0.5, "alert": 0},
+        "hy": macro_th.get("BAMLH0A0HYM2") or {"caution": 4, "alert": 6},
+        "fx": macro_th.get("DEXKOUS") or {"pct_high": 80, "pct_low": 20},
+    }
 
     return {
         "stale": bool(summary.get("stale")),
@@ -271,6 +302,8 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "data_slot": funding["slot_krw"] if funding else 0,
         "data_fx": funding["fx_rate"] if funding else 0,
         "guide": guide,
+        "macro_rows": [_macro_row_ctx(r) for r in summary.get("macro_rows", [])],
+        "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
     }
 
 

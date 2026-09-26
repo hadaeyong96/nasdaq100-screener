@@ -21,6 +21,37 @@ _SELL_KIND_SHORT = {
 }
 
 
+# 텔레그램 "시장 온도" 한 줄 (P3.8 4번) — 표시 전용, 매매 규칙에는 안 쓴다.
+_MACRO_SHORT_NAME = {
+    "공포·탐욕 지수": "공포·탐욕", "미국 10년물 국채금리": "10년물", "장단기 금리차 (10년−2년)": "금리차",
+    "하이일드 스프레드": "HY", "미국 기준금리 (상단)": "기준금리", "원/달러 환율": "환율",
+}
+
+
+def _macro_item_text(row: dict) -> str:
+    name = _MACRO_SHORT_NAME.get(row["name"], row["name"])
+    value = row["value"]
+    label = row["badge"]["label"]
+    if row["name"] == "공포·탐욕 지수":
+        text = f"{name} {value:g} {label}"
+    elif row["name"] == "장단기 금리차 (10년−2년)":
+        text = f"{name} {value:+g}"
+    elif row["name"] == "미국 기준금리 (상단)":
+        text = f"{name} {value:g}% {label.replace(' 흐름', '')}"
+    elif row["name"] == "원/달러 환율":
+        text = f"{name} {value:,.0f} {label}"
+    else:
+        text = f"{name} {value:g}{row.get('unit', '')}"
+    return ("⚠" + text) if row["badge"]["status"] in ("warn", "bad") else text
+
+
+def build_macro_line(macro_rows: list[dict]) -> str | None:
+    """summary["macro_rows"] -> "시장 온도: ..." 한 줄 (없으면 None)."""
+    if not macro_rows:
+        return None
+    return "시장 온도: " + " · ".join(_macro_item_text(r) for r in macro_rows)
+
+
 def _sell_short_label(row: dict) -> str:
     """매도 범위를 티커 옆 괄호에 쓸 짧은 표기로 줄인다 (예: "ROP(1차분(E1))", "ROP(손절·예약 체결 확인)")."""
     kind = row.get("kind")
@@ -48,6 +79,9 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
         date_str = "알수없음"
 
     lines = [f"📊 나스닥100 · {date_str} 마감 · {mode_label}"]
+    macro_line = build_macro_line(summary.get("macro_rows", []))
+    if macro_line:
+        lines.append(macro_line)
 
     buy_groups = summary.get("buy_groups", {})
     buy_items = [
