@@ -1,0 +1,134 @@
+# P6-1 사전 등록 — docs/p6_1_instructions.md 0번.
+#
+# docs/p6_plan.md 4장(후보·주변값)과 5장(판정 기준)을 그대로 옮겨 적는다.
+# 어떤 백테스트도 돌리기 전에 커밋한다. 결과를 본 뒤에는 이 파일을 수정하지 않는다.
+# 판정을 바꾸려고 기준·구간·설정을 사후에 건드리지 않는다 — 결과가 나빠도 그대로 판정한다.
+
+registered_at: "2026-09-26"
+# 이 파일을 커밋하는 시점의 HEAD — 그 다음 이 코드 위에서 P6-1 구현(데이터 확장·
+# 포트폴리오 엔진·실행)을 진행한다. 실제 백테스트에 쓰는 코드 커밋 해시는
+# 완료 보고에 별도로 적는다.
+head_commit_at_registration: "679f8c403da2f080543b6e1d2268bf1759f764f1"
+
+# ── 목표 등급 ────────────────────────────────────────────────────────────
+# docs/p6_1_instructions.md 0번: 사용자가 실행 전에 정하면 그 값으로 채우고
+# 같은 커밋에 넣는다. 정하지 않으면 undecided로 두고 두 등급 모두 판정·보고한다.
+target_tier: 공격형  # 사용자가 실행 전 지정 (백테스트 실행 전 확정값)
+
+# ── 평가 대상 (docs/p6_plan.md 4장, P6-1 범위: 종목 없는 조합만) ──────────────
+# P1·P2·R0·R1(위성 포함 조합)은 P6-2 대상이며 이번 단계에서 다루지 않는다.
+candidates:
+  P0:
+    role: "기준 — QQQM 100% 보유"
+    rule: "사서 보유"
+    period: "전 기간 (1999-03~2021-12)"
+    params: {}
+  P3:
+    role: "코어·대기"
+    rule: >
+      코어 60% + 대기 40%(단기 국채). QQQ 종가가 직전 최고점 대비 −20/−30/−40%에
+      처음 도달할 때마다 대기 자금의 1/3씩 코어로. QQQ가 직전 최고점을 회복하면
+      60:40으로 한 번 재조정.
+    period: "1999~2021"
+    params:
+      core_pct: 60
+      reserve_pct: 40
+      drawdown_triggers_pct: [-20, -30, -40]
+      reserve_deploy_fraction_each: 0.3333333333333333  # 1/3
+      rebalance_target_on_recovery: {core_pct: 60, reserve_pct: 40}
+  P4:
+    role: "코어·이동평균 스위치"
+    rule: >
+      QQQ 종가가 200일 단순이동평균 아래면 다음 날 코어의 40%를 단기 국채로,
+      위로 돌아오면 다음 날 다시 코어로.
+    period: "1999~2021"
+    params:
+      sma_days: 200
+      switch_out_pct: 40
+  P5:
+    role: "코어·대기 + 레버리지"
+    rule: >
+      P3 규칙 + 대기 자금 투입 후 QQQ가 200일선을 다시 넘으면 총자산의 최대 20%를
+      QLD로(재원은 남은 대기 자금 → 부족하면 코어). QQQ가 200일선을 다시 깨거나
+      직전 최고점을 회복하면 QLD 청산 후 코어로.
+    period: "1999~2021"
+    params:
+      core_pct: 60
+      reserve_pct: 40
+      drawdown_triggers_pct: [-20, -30, -40]
+      reserve_deploy_fraction_each: 0.3333333333333333
+      rebalance_target_on_recovery: {core_pct: 60, reserve_pct: 40}
+      sma_days: 200
+      qld_max_pct_of_total: 20
+
+# ── 주변값 (docs/p6_plan.md 4장 "주변값 (종목 없는 조합)") ──────────────────
+neighborhood_values:
+  p3_p5_drawdown_triggers_pct:
+    - [-15, -25, -35]
+    - [-20, -30, -40]  # 주 설정
+    - [-25, -35, -45]
+  p4_p5_sma_days: [190, 200, 210]  # 200일이 주 설정
+
+# ── 평가 구간 (docs/p6_plan.md 2장) ────────────────────────────────────────
+periods:
+  full: {start: "1999-03-10", end: "2021-12-31", role: "전 기간"}
+  sub_1999_2007: {start: "1999-03-10", end: "2007-12-31", role: "하위 구간 1 (닷컴 붕괴 포함)"}
+  sub_2008_2015: {start: "2008-01-01", end: "2015-12-31", role: "하위 구간 2 (금융위기·회복 포함)"}
+  sub_2016_2021: {start: "2016-01-01", end: "2021-12-31", role: "하위 구간 3"}
+  validation_2022_plus:
+    role: "봉인 — 최종 후보 1개에만 P6-4에서 1회 개봉. 이번 단계에서 쓰지 않는다."
+  note: >
+    하위 구간은 해당 구간 시작일에 4,000만 원으로 새로 시작한다(docs/p6_1_instructions.md 3번).
+
+# ── 판정 기준 (docs/p6_plan.md 5장, 학습 구간 전체·세후(a) 기준) ─────────────
+criteria:
+  applies_to_period: full  # "학습 구간 전체" = 1999~2021
+  tiers:
+    공격형_합격:
+      conditions:
+        - key: excess_posttax_a_pp
+          description: "학습 구간 전체 세후(a) CAGR − QQQ 세후(a) CAGR"
+          pass_threshold_min_pp: 2.0
+        - key: mdd_leq_qqq
+          description: "MDD(절대값) <= QQQ MDD(절대값)"
+    안정형_합격:
+      conditions:
+        - key: excess_posttax_a_pp
+          description: "학습 구간 전체 세후(a) CAGR − QQQ 세후(a) CAGR"
+          within_pp: 1.5  # -1.5%p 이내(그 이상 밑돌면 실격)
+        - key: mdd_leq_pct_of_qqq
+          description: "MDD(절대값) <= QQQ MDD(절대값)의 70%"
+          pct_of_qqq_mdd: 70
+        - key: recovery_days_leq_qqq
+          description: "원금 회복 기간(최고점 회복까지 거래일 수, 최장값) <= QQQ"
+  common_conditions:
+    - description: >
+        하위 구간 3개(1999~2007·2008~2015·2016~2021) 중 2개 이상에서 같은 등급
+        조건을 충족해야 한다. (위성 조합은 P6-2 대상이라 여기 해당 없음 — 이번
+        단계 후보 P0·P3·P4·P5에는 그대로 적용)
+    - description: "주 설정이 주변값(neighborhood_values)에서 무너지지 않아야 한다."
+  verdicts_per_candidate: ["공격형", "안정형", "불합격"]
+  note: >
+    결과가 나빠도 그대로 보고한다. 판정을 바꾸려고 기준·구간·설정을 사후에
+    건드리지 않는다. target_tier가 지정된 경우 그 등급을 우선 판정하되,
+    두 등급 모두 계산해 보고서에 나란히 적는다(docs/p6_1_instructions.md 4번
+    "판정: 후보별 등급과 조건별 충족 여부").
+
+# ── 보고용 (판정에 쓰지 않음, docs/p6_plan.md 5장) ─────────────────────────
+reporting_only_metrics:
+  - sharpe
+  - worst_year
+  - worst_month
+  - total_tax_krw
+  - trade_count
+  - opportunity_cost_in_up_years  # QQQ 연 +20% 이상인 해
+
+# ── 재현 확인 (docs/p6_1_instructions.md 3번) ──────────────────────────────
+reproduction_check:
+  description: "P0의 2015~2021 세후(a)·(b)·MDD가 P5-5의 QQQ 값과 일치하는지 확인"
+  reference_values_from_p5_5:
+    posttax_a_pct: 20.60
+    posttax_b_pct: 23.62
+    mdd_pct: -27.31
+
+no_parameter_changes_beyond_scope: true  # 이번 단계는 데이터 기간 확장·엔진 구현 외 파라미터를 임의로 바꾸지 않는다
