@@ -1,0 +1,79 @@
+# P5-5 사전 등록 — docs/p5_5_instructions.md 0번.
+#
+# 백테스트(2007~2014 등)를 실제로 돌리기 전에 커밋한다. 결과를 본 뒤에는
+# 이 파일을 수정하지 않는다. 판정을 바꾸려고 기준·기간·설정을 사후에
+# 건드리지 않는다 — 결과가 나빠도 여기 적은 그대로 판정한다.
+
+registered_at: "2026-09-26"
+# 이 파일을 커밋하는 시점의 HEAD — 그 다음 이 코드 위에서 P5-5 구현(데이터 확장·
+# 실험 스크립트)을 진행한다. 실제 백테스트에 쓰는 engine/backtest.py 커밋 해시는
+# 완료 보고에 별도로 적는다(이번 단계에서 데이터 기간 확장 외의 전략 로직은
+# 바꾸지 않을 계획이라 같은 해시일 것으로 예상하지만, 바뀌면 보고서에 이유를 남긴다).
+head_commit_at_registration: "63ccff33ecb674703525583d8ecd8052a0580298"
+
+# ── 평가 대상 ────────────────────────────────────────────────────────────
+evaluation_target: B0.5  # 판정은 B0.5에만 적용한다.
+
+baseline:
+  name: B0.5
+  role: "주 대상 — 이번 단계의 판정 대상"
+  description: >
+    B0(슬롯8) 기준에서 종목당 슬롯 수만 5로 바꾼 것. P5-3·P5-4와 완전히 동일한 정의이며,
+    이번 단계에서 파라미터를 하나도 바꾸지 않는다.
+  params:
+    max_slots: 5
+    apply_costs: true
+    apply_tax: true
+    overrides: {}  # C2·E1 등 어떤 신호·필터 변형도 추가하지 않는다(engine.backtest.simulate_portfolio 기본값 그대로)
+
+reference_only:
+  name: K1
+  role: "참고용 — 이번 단계에서 채택 후보가 될 수 없다. 판정표에는 값만 나란히 적는다."
+  description: >
+    B0.5 + C2(RSI 반복교차 제외, lookback=15거래일, max_crosses=2). P5-4에서 정의한 것과
+    완전히 동일하다(engine.backtest.compute_rsi_whipsaw_block(lookback=15, max_crosses=2)).
+  params:
+    max_slots: 5
+    a1_whipsaw_block: "compute_rsi_whipsaw_block(indicator_map, lookback=15, max_crosses=2)"
+
+# ── 평가 구간 ────────────────────────────────────────────────────────────
+periods:
+  warmup_start: "2006-01-01"  # 지표 준비(1년 버퍼) — 2015 학습 구간의 warmup_start(2014-01-01)와 같은 1년 버퍼 규칙
+  out_of_sample_2007_2014:
+    start: "2007-01-01"
+    end: "2014-12-31"
+    role: "표 외 검증 — 이번 판정의 주 대상 구간"
+  train_2015_2021:
+    start: "2015-01-01"
+    end: "2021-12-31"
+    role: "학습 구간 — P5-3 값과 같게 재현되는지 확인용(판정 대상 아님)"
+  full_2007_2021:
+    start: "2007-01-01"
+    end: "2021-12-31"
+    role: "전체 — 통계 검정력 확인용(판정 대상 아님)"
+  validation_2022_plus:
+    role: "봉인 — 이번 단계에서도 쓰지 않는다"
+
+# ── 판정 기준 (B0.5, 2007~2014 구간에만 적용) ──────────────────────────────
+criteria:
+  applies_to: B0.5
+  applies_to_period: out_of_sample_2007_2014
+  conditions:
+    - key: excess_posttax_a_pp
+      description: "2007~2014 세후(a) CAGR − QQQ 세후(a) CAGR"
+      pass_threshold_min_pp: 1.0   # +1%p 이상이면 이 조건 충족
+      fail_threshold_max_pp: -1.0  # -1%p 미만이면 이 조건에서 바로 불합격
+    - key: mdd_leq_qqq
+      description: "2007~2014 B0.5 MDD(절대값) <= QQQ MDD(절대값)"
+    - key: monte_carlo_percentile
+      description: "2007~2014 무작위 진입 비교(500회, P5-4와 같은 방식·같은 시드 규칙) 백분위"
+      pass_threshold_min_percentile: 95
+  verdicts:
+    합격: "위 세 조건 모두 충족"
+    보류: "excess_posttax_a_pp가 -1%p~+1%p 사이이거나, 세 조건 중 두 가지만 충족"
+    불합격: "excess_posttax_a_pp가 -1%p 미만"
+  note: >
+    결과가 나빠도 그대로 보고한다. 판정을 바꾸려고 기준·기간·설정을 사후에 건드리지 않는다.
+    K1은 이 판정표에 포함하지 않는다(참고용, evaluation_target 아님).
+
+no_parameter_changes: true  # 이번 단계는 어떤 파라미터도 바꾸거나 새로 고르지 않는다(C2·E1 등 채택 없음)
