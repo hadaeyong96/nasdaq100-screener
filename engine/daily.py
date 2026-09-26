@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -633,6 +633,7 @@ _MACRO_FRED_DEFS = [
     ("DFEDTARU", "미국 기준금리 (상단)", "%"),
     ("DEXKOUS", "원/달러 환율", "원"),
 ]
+_MACRO_CODE_LABEL = {"DEXKOUS": "DEXKOUS · KRW=X"}  # DEXKOUS는 최근 며칠 KRW=X로 보완하므로 출처를 함께 표시
 
 
 def _trading_days_between_iso(a: str, b: str) -> list:
@@ -707,6 +708,19 @@ def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
         if res["warning"]:
             warnings.append(res["warning"])
         series = res["series"]
+
+        if code == "DEXKOUS":
+            # DEXKOUS는 보통 1주일 정도 늦게 갱신된다 — 그 뒤 며칠은 기존 KRW=X로
+            # 보완한다(P3.8 1번 표). DEXKOUS가 있는 날짜는 그대로 두고, DEXKOUS에
+            # 아직 없는 최근 날짜만 KRW=X로 채운다.
+            try:
+                recent_krwx = fx.fetch_usd_krw_range(as_of_date - timedelta(days=14), as_of_date)
+            except Exception as exc:
+                recent_krwx = {}
+                warnings.append(f"DEXKOUS 최근 며칠 KRW=X 보완 실패: {exc}")
+            if recent_krwx:
+                series, _ = fx.merge_fx_with_fallback(series, recent_krwx)
+
         if not series:
             continue
         latest_date = max(series)
@@ -731,7 +745,7 @@ def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
             warnings.append(f"{code}: 1년치를 못 받아 받은 만큼만 표시(기간 짧음)")
 
         rows.append({
-            "name": name, "code": code, "value": round(value, 2), "unit": unit,
+            "name": name, "code": _MACRO_CODE_LABEL.get(code, code), "value": round(value, 2), "unit": unit,
             "as_of": latest_date, "change_1w": round(value - prev_1w, 2) if prev_1w is not None else None,
             "series": [v for _, v in sorted(series.items())], "badge": badge,
             "is_stale": macro_status.is_stale(latest_date, report_date_iso, stale_days, _trading_days_between_iso),
