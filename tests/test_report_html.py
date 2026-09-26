@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import pytest
 
@@ -42,7 +44,22 @@ def cfg():
             "max_position_pct": 25,
             "max_concurrent_positions": 8,
         },
-        "indicators": {"ichimoku_shift": 26},
+        "indicators": {
+            "ichimoku_shift": 26,
+            "rsi": {"period": 14},
+            "macd": {"fast": 12, "slow": 26, "signal": 9},
+            "ichimoku": {"tenkan": 9, "kijun": 26, "senkou_b": 52},
+        },
+        "assumptions": {
+            "a1_to_a2_expiry_days": 10,
+            "reentry_cooldown_days": 5,
+            "gap_filter_pct": 4.0,
+            "whipsaw_max_crosses_20d": 4,
+            "swing_low_period": 10,
+            "s_grade_macd_norm_min_pct": -0.5,
+            "b_grade_macd_norm_max_pct": -2.0,
+        },
+        "entry": {"limit_markup": 1.01},
     }
 
 
@@ -148,11 +165,11 @@ def test_buy_table_header_has_max_loss_column(tmp_path, cfg):
     html = path.read_text(encoding="utf-8")
     for header in ("종목", "티커", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "최대손실", "점수", "비고"):
         assert f"<th" in html and header in html
-    # 이전 버전의 조건 열(탭별로 달랐던 헤더)은 더 이상 없어야 한다.
-    assert "RSI 30 돌파" not in html
-    assert "앞구름 양운" not in html
-    assert "계좌%" not in html
-    assert "위험금액" not in html
+    # 이전 버전의 조건 열(탭별로 달랐던 헤더)은 더 이상 없어야 한다 — 머리글(thead) 안에서만 확인
+    # (P3.7 "읽는 법" 탭 본문에는 "RSI 30 돌파" 같은 설명 문구가 정상적으로 등장한다).
+    theads = re.findall(r"<thead>.*?</thead>", html, re.S)
+    for phrase in ("RSI 30 돌파", "앞구름 양운", "계좌%", "위험금액"):
+        assert not any(phrase in t for t in theads), phrase
 
 
 def test_buy_tabs_include_all_tab_selected_by_default(tmp_path, cfg):
@@ -302,3 +319,148 @@ def test_filtered_reason_label_mapping():
     assert _label_filter_reason("골든크로스 당일 RSI 70 이상") == "과열 (RSI 70 이상)"
     assert _label_filter_reason("최근 20거래일 MACD 교차 5회 이상 (휩소)") == "잦은 교차 (횡보)"
     assert _label_filter_reason("실적 발표 3거래일 이내") == "실적 발표 3거래일 이내"
+
+
+# ── P3.7: "설명" 칸·왜? 버튼 ───────────────────────────────────────────────
+
+
+def _sample_explain(title="테스트 · 설명"):
+    return {"title": title, "badge": "슬롯의 1/9", "checks": [{"level": "y", "text": "체크1"}], "body": "본문 설명", "next": "다음 단계"}
+
+
+def _lxml():
+    lxml_html = pytest.importorskip("lxml.html")
+    return lxml_html
+
+
+def test_why_row_colspan_matches_buy_table_header_count(tmp_path, cfg):
+    lxml_html = _lxml()
+    summary = _empty_summary()
+    summary["buy_groups"]["b1"] = [
+        {
+            "ticker": "PEP", "kr": "펩시코", "stage": "A1", "bucket": "b1", "stage_label": "1차 정찰",
+            "key": "PEP-A1", "is_new_position": True, "limit": 132.5, "stop": 127.98, "qty": 34,
+            "amount_krw": 4_500_000, "max_loss_krw": 220_000, "target_qty": 34, "risk_cap_qty": 40,
+            "stop_pct": -3.4, "decision": "매수", "note": "", "score": 20, "grade": "",
+            "explain": _sample_explain("펩시코 · 1차 정찰 매수"),
+        }
+    ]
+    summary["buy_count"] = 1
+    path = report_html.render_report(summary, cfg, tmp_path)
+    doc = lxml_html.fromstring(path.read_text(encoding="utf-8"))
+    table = doc.get_element_by_id("b1").find(".//table")
+    header_count = len(table.findall(".//thead/tr/th"))
+    why_tds = table.findall(".//tbody/tr[@class='why']/td")
+    assert len(why_tds) == 1
+    assert int(why_tds[0].get("colspan")) == header_count
+    # 종목 없는 표(예: b2)는 빈 줄 colspan도 같은 칸 수여야 한다.
+    empty_td = doc.get_element_by_id("b2").find(".//table//tbody/tr/td[@class='empty']")
+    assert int(empty_td.get("colspan")) == header_count
+
+
+def test_why_row_immediately_follows_its_signal_row(tmp_path, cfg):
+    lxml_html = _lxml()
+    summary = _empty_summary()
+    summary["buy_groups"]["b1"] = [
+        {
+            "ticker": "AAA", "kr": "에이", "stage": "A1", "bucket": "b1", "stage_label": "1차 정찰",
+            "key": "AAA-A1", "is_new_position": True, "limit": 100.0, "stop": 94.0, "qty": 10,
+            "amount_krw": 1_000_000, "max_loss_krw": 100_000, "target_qty": 10, "risk_cap_qty": 20,
+            "stop_pct": -6.0, "decision": "매수", "note": "", "score": 20, "grade": "",
+            "explain": _sample_explain("에이 · 설명"),
+        },
+        {
+            "ticker": "BBB", "kr": "비", "stage": "A1", "bucket": "b1", "stage_label": "1차 정찰",
+            "key": "BBB-A1", "is_new_position": True, "limit": 50.0, "stop": None, "qty": 0,
+            "amount_krw": 0, "max_loss_krw": 0, "target_qty": 0, "risk_cap_qty": 0,
+            "stop_pct": None, "decision": "보류", "note": "손절가 계산 불가로 수량 미산정 — 매수 보류", "score": 0, "grade": "",
+            "explain": None,
+        },
+    ]
+    summary["buy_count"] = 2
+    path = report_html.render_report(summary, cfg, tmp_path)
+    doc = lxml_html.fromstring(path.read_text(encoding="utf-8"))
+    rows = doc.get_element_by_id("b1").findall(".//tbody/tr")
+    classes = [r.get("class") for r in rows]
+    # 설명 있는 AAA 뒤에는 tr.why가 바로 오고, 설명 없는 BBB 뒤에는 오지 않는다.
+    assert classes == ["sig", "why", "sig"]
+    aaa_btn = rows[0].find(".//button")
+    bbb_btn = rows[2].find(".//button")
+    assert aaa_btn.get("disabled") is None
+    assert bbb_btn.get("disabled") is not None
+
+
+def test_sell_watch_filtered_warn_tables_get_explain_column_and_why_row(tmp_path, cfg):
+    lxml_html = _lxml()
+    summary = _empty_summary()
+    summary["sell_rows"] = [
+        {
+            "티커": "ROP", "종목명": "로퍼", "kind": "E3", "신호": "구조 붕괴(E3)", "매도범위": "3차분(67%) 또는 잔량",
+            "수량": 14, "평균단가": 441.20, "종가": 412.30, "예상손익_krw": -558900, "손익률": -6.6,
+            "주문안내": "안내", "비고": "", "explain": _sample_explain("로퍼 · E3"),
+        }
+    ]
+    summary["watch_rows"] = [
+        {"티커": "PEP", "종목명": "펩시코", "현재단계": "1차", "기다리는신호": "2차", "남은거래일": 5, "explain": _sample_explain("펩시코 · 관찰")}
+    ]
+    summary["filtered_rows"] = [
+        {"티커": "MU", "종목명": "마이크론", "단계": "재진입", "유형": "매매금지", "사유": "실적 발표 3거래일 이내", "explain": _sample_explain("마이크론 · 제외")}
+    ]
+    summary["warn_rows"] = [
+        {"티커": "QCOM", "종목명": "퀄컴", "내용": "목표 도달 (매도 아님)", "badge_class": "b-info", "explain": _sample_explain("퀄컴 · 경고")}
+    ]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    doc = lxml_html.fromstring(path.read_text(encoding="utf-8"))
+    for section_id in ("sell", "watch", "filtered", "warn"):
+        table = doc.get_element_by_id(section_id).find(".//table")
+        header_count = len(table.findall(".//thead/tr/th"))
+        headers = [th.text_content().strip() for th in table.findall(".//thead/tr/th")]
+        assert headers[-1] == "설명"
+        why_tds = table.findall(".//tbody/tr[@class='why']/td")
+        assert len(why_tds) == 1, section_id
+        assert int(why_tds[0].get("colspan")) == header_count, section_id
+
+
+def test_guide_tab_uses_config_values_not_hardcoded(tmp_path, cfg):
+    """P3.7: "읽는 법" 탭의 숫자 기준은 config.yaml 값을 그대로 반영해야 한다."""
+    cfg = {**cfg, "assumptions": {**cfg["assumptions"], "a1_to_a2_expiry_days": 7, "reentry_cooldown_days": 3}}
+    path = report_html.render_report(_empty_summary(), cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert 'id="guide"' in html
+    assert "7거래일" in html
+    assert "3거래일" in html
+
+
+def test_why_row_follows_sorted_signal_row_in_browser(tmp_path, cfg):
+    """P3.7 4번: 점수 머리글로 정렬해도 설명 줄이 자기 종목 바로 아래를 따라가는지(playwright)."""
+    sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
+    summary = _empty_summary()
+    summary["buy_groups"]["b1"] = [
+        {
+            "ticker": t, "kr": t, "stage": "A1", "bucket": "b1", "stage_label": "1차 정찰",
+            "key": f"{t}-A1", "is_new_position": True, "limit": 100.0, "stop": 94.0, "qty": 10,
+            "amount_krw": 1_000_000, "max_loss_krw": 100_000, "target_qty": 10, "risk_cap_qty": 20,
+            "stop_pct": -6.0, "decision": "매수", "note": "", "score": score, "grade": "",
+            "explain": _sample_explain(f"{t} · 설명"),
+        }
+        for t, score in (("AAA", 20), ("BBB", 60), ("CCC", 5))
+    ]
+    summary["buy_count"] = 3
+    path = report_html.render_report(summary, cfg, tmp_path)
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.goto(path.resolve().as_uri(), wait_until="domcontentloaded", timeout=15000)
+            table = page.locator("#all table")  # "전체" 탭이 기본으로 보임(b1은 하위 탭이라 숨김)
+            table.locator("thead th", has_text="점수").click()  # 오름차순
+            rows = table.locator("tbody tr")
+            classes = rows.evaluate_all("els => els.map(e => e.className)")
+            tickers = rows.evaluate_all("els => els.map(e => e.dataset.key || '')")
+            # sig/why가 번갈아 나오고, 각 why 앞의 sig가 같은 종목이어야 한다(정렬 후에도 짝이 안 깨짐).
+            assert classes == ["sig", "why"] * 3
+            assert [tickers[i] for i in range(0, 6, 2)] == ["CCC-A1", "AAA-A1", "BBB-A1"]  # 점수 5<20<60
+            browser.close()
+    except Exception as e:  # pragma: no cover - 브라우저 바이너리가 없는 환경 대비
+        pytest.skip(f"playwright 브라우저를 쓸 수 없어 건너뜀: {e}")

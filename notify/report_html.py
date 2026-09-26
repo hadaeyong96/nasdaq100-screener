@@ -71,8 +71,8 @@ def _stage_flags(stage: str) -> list[bool]:
 
 
 # 11칸(차수별) / 12칸("전체" — 티커 다음에 차수 칸, P3.6 6-3번).
-_BUY_HEADERS = ["종목", "티커", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "최대손실", "점수", "비고"]
-_ALL_BUY_HEADERS = ["종목", "티커", "차수", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "점수", "비고"]
+_BUY_HEADERS = ["종목", "티커", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "최대손실", "점수", "비고", "설명"]
+_ALL_BUY_HEADERS = ["종목", "티커", "차수", "결정", "지정가", "수량", "투입금액", "손절가", "손절폭", "점수", "비고", "설명"]
 _BUY_TITLES = {
     "b1": "1차 정찰 · 슬롯의 1/9",
     "b2": "2차 확인 · 2/9",
@@ -99,6 +99,7 @@ def _buy_row_ctx(r: dict, include_stage_label: bool) -> dict:
         "key": r.get("key", f"{r['ticker']}-{r.get('stage', '')}"),
         "stage": r.get("stage", ""),
         "is_new_position": bool(r.get("is_new_position")),
+        "explain": r.get("explain"),
     }
     if include_stage_label:
         ctx["stage_label"] = r.get("stage_label", "")
@@ -170,6 +171,8 @@ def build_context(summary: dict, cfg: dict) -> dict:
         {**r, "예상손익_krw_str": _won(r.get("예상손익_krw"))}
         for r in summary.get("sell_rows", [])
     ]
+    # hold_rows·watch_rows·filtered_rows·warn_rows는 summary의 dict를 그대로 쓰므로
+    # engine/daily.py가 이미 채운 row["explain"]이 별다른 변환 없이 그대로 넘어간다.
 
     # 체결 기록 안내 (P3.1 보완 2번): 신호 당일엔 "주문 후 체결 기록 필요"만, 미체결 확정은 다음 날에만.
     pending_names = " · ".join(r["종목명"] for r in summary.get("pending_order_rows", []))
@@ -189,6 +192,30 @@ def build_context(summary: dict, cfg: dict) -> dict:
 
     buy_risk_sum_krw = summary.get("buy_risk_sum_krw", 0)
     buy_risk_pct = summary.get("buy_risk_pct")
+
+    # "읽는 법" 탭 숫자 기준 (P3.7 — 하드코딩하지 않고 config.yaml에서 읽는다).
+    assumptions_cfg = cfg["assumptions"]
+    ind_cfg = cfg["indicators"]
+    guide = {
+        "a1_to_a2_expiry_days": assumptions_cfg["a1_to_a2_expiry_days"],
+        "reentry_cooldown_days": assumptions_cfg["reentry_cooldown_days"],
+        "gap_filter_pct": assumptions_cfg["gap_filter_pct"],
+        "whipsaw_max_crosses_20d": assumptions_cfg["whipsaw_max_crosses_20d"],
+        "swing_low_period": assumptions_cfg["swing_low_period"],
+        "s_grade_macd_norm_min_pct": assumptions_cfg["s_grade_macd_norm_min_pct"],
+        "b_grade_macd_norm_max_pct": assumptions_cfg["b_grade_macd_norm_max_pct"],
+        "risk_a_pct": round(risk_cfg["a1_budget_pct"] + risk_cfg["a2_budget_pct"] + risk_cfg["a3_budget_pct"], 2),
+        "risk_b_pct": risk_cfg["b_budget_pct"],
+        "rsi_period": ind_cfg["rsi"]["period"],
+        "macd_fast": ind_cfg["macd"]["fast"],
+        "macd_slow": ind_cfg["macd"]["slow"],
+        "macd_signal": ind_cfg["macd"]["signal"],
+        "ichimoku_tenkan": ind_cfg["ichimoku"]["tenkan"],
+        "ichimoku_kijun": ind_cfg["ichimoku"]["kijun"],
+        "ichimoku_senkou_b": ind_cfg["ichimoku"]["senkou_b"],
+        "ichimoku_shift": ind_cfg["ichimoku_shift"],
+        "entry_limit_markup": cfg["entry"]["limit_markup"],
+    }
 
     return {
         "stale": bool(summary.get("stale")),
@@ -243,6 +270,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "data_reserved": funding["reserved_krw"] if funding else 0,
         "data_slot": funding["slot_krw"] if funding else 0,
         "data_fx": funding["fx_rate"] if funding else 0,
+        "guide": guide,
     }
 
 

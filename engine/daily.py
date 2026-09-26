@@ -54,6 +54,8 @@ for _stream in (sys.stdout, sys.stderr):  # 윈도우 콘솔 cp949 UnicodeEncode
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
+from core import explain as expl  # noqa: E402
+from core import filters as filt  # noqa: E402
 from core import sizing  # noqa: E402
 from core import signals as sig  # noqa: E402
 from core import state as st  # noqa: E402
@@ -566,14 +568,22 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
         "note": "" if stop_ok else "손절가 계산 불가로 수량 미산정 — 매수 보류",
         "score": event.get("score", 0),
         "grade": event.get("grade") or "",
+        # 설명(core/explain.py)용 — 실제 우선순위 점수 구성 요소는 차수와 무관하게 항상 쓰인다.
+        "vol_ratio": round(row.get("vol_ratio"), 1) if not pd.isna(row.get("vol_ratio")) else None,
+        "cloud_thickness_pct": (
+            round(t, 1) if not pd.isna(t := filt.cloud_thickness_pct(row.get("cloud_top"), row.get("cloud_bot"), row.get("close"))) else None
+        ),
+        "bb_width_pct": round(row.get("bb_width_pct"), 4) if not pd.isna(row.get("bb_width_pct")) else None,
     }
 
     if event["kind"] == "A1":
+        expiry_days = cfg["assumptions"]["a1_to_a2_expiry_days"]
+        expiry_idx = idx + expiry_days
         base.update(
             {
                 "rsi_prev": round(prev_rsi, 1) if not pd.isna(prev_rsi) else None,
                 "rsi_now": round(row.get("rsi"), 1) if not pd.isna(row.get("rsi")) else None,
-                "vol_ratio": round(row.get("vol_ratio"), 1) if not pd.isna(row.get("vol_ratio")) else None,
+                "a2_expiry_date": df.index[expiry_idx].strftime("%m/%d") if expiry_idx < len(df.index) else None,
             }
         )
     elif event["kind"] == "A2":
@@ -748,6 +758,8 @@ def build_report_summary(
         r["qty"] = s["qty"]
         r["amount_krw"] = s["amount_krw"]
         r["max_loss_krw"] = s["max_loss_krw"]
+        r["risk_capped"] = s["risk_capped"]
+        r["limited"] = s["limited"]
         extra_notes = []
         if s["risk_capped"] and s["qty"] > 0:
             extra_notes.append("손절이 멀어 수량 축소")
@@ -755,6 +767,7 @@ def build_report_summary(
             extra_notes.append("남은 한도 부족" if s["qty"] > 0 else "남은 한도 부족 — 매수 보류")
         if extra_notes:
             r["note"] = " · ".join(p for p in (r["note"], *extra_notes) if p)
+        r["explain"] = expl.explain_buy(r["stage"], r, cfg) if r["stop"] is not None else None
 
     funding_plan = None
     buy_risk_sum_krw = sum(r.get("max_loss_krw") or 0 for r in all_buy_rows)
@@ -772,18 +785,41 @@ def build_report_summary(
         }
 
     # ── 오늘 걸러진 신호 (매매 금지·동시 보유 한도) ────────────────────────────
-    filtered_rows = [
-        {
-            "티커": event["ticker"],
-            "종목명": name_map.get(event["ticker"], "") or event["ticker"],
-            "단계": _STAGE_LABEL.get(event["stage"], event["stage"]),
-            "유형": "동시보유한도" if event["blocked_type"] == "limit" else "매매금지",
-            "사유": ", ".join(_label_filter_reason(r) for r in event["reasons"]),
-            "점수": event.get("score", 0),
+    filtered_rows = []
+    for event in today_events:
+        if event["kind"] != "BLOCKED":
+            continue
+        ticker = event["ticker"]
+        df = indicator_map[ticker]
+        date = event["date"]
+        row = df.loc[date] if date in df.index else None
+        idx = df.index.get_loc(date) if date in df.index else None
+        gc_count = filt.macd_cross_count(df, date) if (event["stage"] in ("A2", "B") and date in df.index) else None
+        gap_pct = None
+        if event["stage"] == "A3" and row is not None and idx:
+            prev_close = df.iloc[idx - 1]["close"]
+            if not pd.isna(row.get("open")) and not pd.isna(prev_close) and prev_close:
+                gap_pct = round((row["open"] / prev_close - 1) * 100, 1)
+        explain_ctx = {
+            "kr": name_map.get(ticker, "") or ticker,
+            "score": event.get("score", 0),
+            "rsi_now": round(row.get("rsi"), 1) if row is not None and not pd.isna(row.get("rsi")) else None,
+            "gc_count_20d": gc_count,
+            "gap_pct": gap_pct,
+            "earnings_date": earnings_map[ticker].isoformat() if earnings_map.get(ticker) else None,
+            "max_concurrent": max_concurrent,
         }
-        for event in today_events
-        if event["kind"] == "BLOCKED"
-    ]
+        filtered_rows.append(
+            {
+                "티커": ticker,
+                "종목명": name_map.get(ticker, "") or ticker,
+                "단계": _STAGE_LABEL.get(event["stage"], event["stage"]),
+                "유형": "동시보유한도" if event["blocked_type"] == "limit" else "매매금지",
+                "사유": ", ".join(_label_filter_reason(r) for r in event["reasons"]),
+                "점수": event.get("score", 0),
+                "explain": expl.explain_filtered(event["reasons"], explain_ctx, cfg),
+            }
+        )
     filtered_rows.sort(key=lambda r: r["점수"], reverse=True)
 
     # ── 오늘 매도·손절 신호 ─────────────────────────────────────────────
@@ -802,6 +838,20 @@ def build_report_summary(
             if (close is not None and entry_price is not None and fx_rate)
             else None
         )
+        row = df.loc[date] if date in df.index else None
+        idx = df.index.get_loc(date) if date in df.index else None
+        prev_rsi = df.iloc[idx - 1]["rsi"] if (idx is not None and idx > 0) else float("nan")
+        explain_ctx = {
+            "kr": name_map.get(ticker, "") or ticker,
+            "close": close,
+            "stop": event.get("stop_price"),
+            "macd": round(row.get("macd"), 2) if row is not None and not pd.isna(row.get("macd")) else None,
+            "signal": round(row.get("signal"), 2) if row is not None and not pd.isna(row.get("signal")) else None,
+            "rsi_prev": round(prev_rsi, 1) if not pd.isna(prev_rsi) else None,
+            "rsi_now": round(row.get("rsi"), 1) if row is not None and not pd.isna(row.get("rsi")) else None,
+            "cloud_bot": round(row.get("cloud_bot"), 2) if row is not None and not pd.isna(row.get("cloud_bot")) else None,
+            "chikou_broken": bool(row.get("chikou_broken")) if row is not None and not pd.isna(row.get("chikou_broken")) else False,
+        }
         sell_rows.append(
             {
                 "티커": ticker,
@@ -816,6 +866,7 @@ def build_report_summary(
                 "손익률": pnl_pct,
                 "주문안내": _order_guidance(event["kind"], event["qty"], event.get("stop_price"), cfg),
                 "비고": "",
+                "explain": expl.explain_sell(event["kind"], explain_ctx, cfg),
             }
         )
 
@@ -834,12 +885,15 @@ def build_report_summary(
         name_kr = name_map.get(ticker, "") or ticker
 
         if sig.kijun_breach(row.get("close"), row.get("kijun")):
-            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "기준선 이탈 (매도 아님)", "badge_class": "b-info"})
+            ctx = {"kr": name_kr, "close": row.get("close"), "kijun": row.get("kijun")}
+            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "기준선 이탈 (매도 아님)", "badge_class": "b-info", "explain": expl.explain_warn("KIJUN_BREACH", ctx, cfg)})
         if sig.rsi_overheat_relief(prev_rsi, row.get("rsi")):
-            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "RSI 과열 해소 (매도 아님)", "badge_class": "b-info"})
+            ctx = {"kr": name_kr, "rsi_prev": round(prev_rsi, 1) if not pd.isna(prev_rsi) else None, "rsi_now": round(row.get("rsi"), 1) if not pd.isna(row.get("rsi")) else None}
+            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "RSI 과열 해소 (매도 아님)", "badge_class": "b-info", "explain": expl.explain_warn("RSI_RELIEF", ctx, cfg)})
         avg_entry = _average_entry_price(state_)
         if avg_entry is not None and sig.target_reached(avg_entry, row.get("close"), state_.get("stop")):
-            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "목표 도달 (손익비 2배, 매도 아님)", "badge_class": "b-info"})
+            ctx = {"kr": name_kr, "avg_entry": avg_entry, "stop": state_.get("stop"), "close": row.get("close")}
+            warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "목표 도달 (손익비 2배, 매도 아님)", "badge_class": "b-info", "explain": expl.explain_warn("TARGET_REACHED", ctx, cfg)})
 
     # ── 손절 예약 알림 (P3.5 1번): 근접·변경·신규 3종 + 손절 발생 종목 최우선 ──────
     stop_near_pct = cfg["alerts"]["stop_near_pct"]
@@ -903,7 +957,15 @@ def build_report_summary(
             hold_alert_by_ticker[ticker] = (badge_class, text)
             stop_alerts.append({"티커": ticker, "종목명": name_kr, "type": alert_type, "text": text})
             for extra_type, extra_class, extra_text in candidates[1:]:
-                warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": extra_text, "badge_class": extra_class})
+                extra_code = {"근접": "STOP_NEAR", "변경": "STOP_CHANGED", "신규": "STOP_NEEDED"}[extra_type]
+                changed = changed_by_ticker.get(ticker)
+                extra_ctx = {
+                    "kr": name_kr, "close": close, "stop": stop, "stop_near_pct": stop_near_pct,
+                    "old_stop": changed["old_stop"] if changed else None, "new_stop": changed["new_stop"] if changed else None,
+                }
+                warn_rows.append(
+                    {"티커": ticker, "종목명": name_kr, "내용": extra_text, "badge_class": extra_class, "explain": expl.explain_warn(extra_code, extra_ctx, cfg)}
+                )
 
         badge = hold_alert_by_ticker.get(ticker)
         value_krw = round(qty * close * fx_rate) if (close is not None and fx_rate) else None
@@ -955,27 +1017,45 @@ def build_report_summary(
         date = as_of_by_ticker.get(ticker)
         if date is None or date not in df.index:
             continue
+        row = df.loc[date]
+        name_kr = name_map.get(ticker, "") or ticker
         if state_["state"] == "정찰" and state_["units"].get("1", 0) > 0 and state_.get("a1_date") in df.index:
             bars_since = df.index.get_loc(date) - df.index.get_loc(state_["a1_date"])
             expiry_days = cfg["assumptions"]["a1_to_a2_expiry_days"]
             remaining = max(expiry_days - bars_since - 1, 0)
+            a1_idx = df.index.get_loc(state_["a1_date"])
+            expiry_idx = a1_idx + expiry_days
+            watch_ctx = {
+                "kr": name_kr,
+                "macd_diff": round(row["macd"] - row["signal"], 2) if not (pd.isna(row.get("macd")) or pd.isna(row.get("signal"))) else None,
+                "expiry_date": df.index[expiry_idx].strftime("%m/%d") if expiry_idx < len(df.index) else None,
+            }
             watch_rows.append(
                 {
                     "티커": ticker,
-                    "종목명": name_map.get(ticker, "") or ticker,
+                    "종목명": name_kr,
                     "현재단계": "1차 (체결 시)" if state_["units"].get("1", 0) else "1차 (미체결)",
                     "기다리는신호": "2차 · MACD 골든크로스",
                     "남은거래일": remaining,
+                    "explain": expl.explain_watch("WAIT_A2", watch_ctx, cfg),
                 }
             )
         elif state_["state"] == "확인" and state_["units"].get("2", 0) > 0:
+            watch_ctx = {
+                "kr": name_kr,
+                "cloud_ok": bool(row.get("close") > row.get("cloud_top")) if not pd.isna(row.get("cloud_top")) else False,
+                "future_yang_ok": bool(row.get("future_yang")) if not pd.isna(row.get("future_yang")) else False,
+                "chikou_ok": bool(row.get("chikou_ok")) if not pd.isna(row.get("chikou_ok")) else False,
+                "rsi_now": round(row.get("rsi"), 1) if not pd.isna(row.get("rsi")) else None,
+            }
             watch_rows.append(
                 {
                     "티커": ticker,
-                    "종목명": name_map.get(ticker, "") or ticker,
+                    "종목명": name_kr,
                     "현재단계": "2차 확인",
                     "기다리는신호": "3차 · 구름 4요소",
                     "남은거래일": None,
+                    "explain": expl.explain_watch("WAIT_A3", watch_ctx, cfg),
                 }
             )
 

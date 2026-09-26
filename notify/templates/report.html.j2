@@ -110,6 +110,52 @@ a.tk::after{content:" ↗";font-size:11px;color:var(--mute);font-weight:400}
 .cnt{font-weight:800;font-size:15px}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .two table{min-width:0}
+/* 선별 이유 (쉬운 설명, P3.7) */
+.whybtn{font:inherit;font-size:12px;font-weight:700;color:var(--info);background:var(--info-bg);border:1px solid transparent;border-radius:999px;padding:2px 10px;cursor:pointer;white-space:nowrap}
+.whybtn:hover{border-color:var(--info)}
+.whybtn[aria-expanded="true"]{background:var(--info);color:#fff}
+.whybtn:disabled{opacity:.4;cursor:default}
+tr.why{display:none}
+tr.why.open{display:table-row}
+tr.why td{background:var(--soft);white-space:normal;padding:10px 14px}
+.whybox{max-width:980px;font-size:13px;line-height:1.65}
+.whybox .wt{font-weight:800;font-size:14px;margin-bottom:6px}
+.whybox .wt .badge{margin-left:6px;vertical-align:1px}
+.chk{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.chk li{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:3px 9px;font-size:12px}
+.chk li.y::before{content:"✔ ";color:var(--buy);font-weight:800}
+.chk li.n::before{content:"✘ ";color:var(--sell);font-weight:800}
+.chk li.i::before{content:"• ";color:var(--mute);font-weight:800}
+.whybox p{margin:0 0 6px}
+.whybox .nx{color:var(--sub)}
+.whybox .nx b{color:var(--ink)}
+.guidebar{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;font-size:13px;color:var(--sub);margin:0 0 10px}
+.guidebar button{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--card);color:var(--sub);border-radius:999px;padding:3px 11px;cursor:pointer}
+.guidebar a{color:var(--info);font-weight:700;cursor:pointer;text-decoration:none}
+
+/* 읽는 법 탭 */
+.gd h2{font-size:17px;font-weight:800;margin:22px 0 8px;letter-spacing:-0.01em}
+.gd h2:first-child{margin-top:4px}
+.gd .lead2{color:var(--sub);font-size:13px;margin:0 0 10px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;counter-reset:st}
+.steps div{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--sub)}
+.steps div b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
+.steps div b::before{counter-increment:st;content:counter(st);display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--ink);color:var(--paper);font-size:12px;margin-right:6px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13px}
+.card h3{font-size:15px;margin:0 0 2px;font-weight:800}
+.card .en{color:var(--mute);font-size:12px;margin-bottom:8px}
+.card dl{margin:0;display:grid;grid-template-columns:72px 1fr;gap:5px 10px}
+.card dt{color:var(--sub);font-weight:600}
+.card dd{margin:0}
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:6px}
+.flow .fs{flex:1 1 170px;background:var(--card);border:1px solid var(--line);border-top:4px solid var(--buy);border-radius:8px;padding:9px 11px;font-size:13px}
+.flow.out .fs{border-top-color:var(--sell)}
+.flow .fs b{display:block;font-size:14px}
+.flow .fs small{display:block;color:var(--mute);font-size:12px;margin-bottom:4px}
+.flow .ar{align-self:center;color:var(--mute);font-weight:800}
+.gd .sheet table{min-width:0}
+.gd td{white-space:normal}
 footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var(--line);padding-top:10px}
 .stale-banner{background:var(--sell);color:#fff;font-weight:700;font-size:14px;
   border-radius:8px;padding:10px 14px;margin-bottom:16px}
@@ -147,6 +193,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   .sheet tfoot tr{background:var(--soft)}
   .sheet tfoot td:empty{display:none}
   .two{grid-template-columns:1fr}
+  .sheet tr.why{display:none;padding:0;border:none;background:transparent;margin:-6px 0 10px}
+  .sheet tr.why.open{display:block}
+  .sheet tr.why td{display:block;grid-column:auto;font-size:14px;padding:10px 12px;border:1px solid var(--line);border-radius:12px}
+  .sheet tr.why td::before{content:none}
 }
 </style>
 </head>
@@ -155,6 +205,21 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 {% macro finviz(ticker) -%}
 <a class="tk" href="https://finviz.com/quote.ashx?t={{ ticker }}&p=d" target="_blank" rel="noopener" title="{{ ticker }} 차트 (Finviz)">{{ ticker }}</a>
+{%- endmacro %}
+
+{% macro explain_cell(explain) -%}
+<td class="nosort"><button type="button" class="whybtn" aria-expanded="false"{% if not explain %} disabled{% endif %}>왜?</button></td>
+{%- endmacro %}
+
+{% macro why_row(explain, colspan) -%}
+{% if explain %}
+<tr class="why"><td colspan="{{ colspan }}"><div class="whybox">
+  <div class="wt">{{ explain.title }}{% if explain.badge %}<span class="badge b-info">{{ explain.badge }}</span>{% endif %}</div>
+  {% if explain.checks %}<ul class="chk">{% for c in explain.checks %}<li class="{{ c.level }}">{{ c.text }}</li>{% endfor %}</ul>{% endif %}
+  {% if explain.body %}<p>{{ explain.body|safe }}</p>{% endif %}
+  {% if explain.next %}<p class="nx"><b>다음 단계</b> · {{ explain.next }}</p>{% endif %}
+</div></td></tr>
+{% endif %}
 {%- endmacro %}
 
 {% if stale %}
@@ -209,7 +274,13 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <button role="tab" data-tab="filtered" aria-selected="false">걸러진 신호<span class="n">{{ filtered_count }}</span></button>
   <button role="tab" data-tab="warn" aria-selected="false">경고<span class="n">{{ warn_count }}</span></button>
   <button role="tab" data-tab="rules" aria-selected="false">규칙</button>
+  <button role="tab" data-tab="guide" aria-selected="false">읽는 법</button>
 </nav>
+<div class="guidebar" style="margin-top:10px">
+  <span>각 줄 끝의 <span class="whybtn" style="cursor:default">왜?</span>를 누르면 그 종목이 <b>어떤 지표 때문에</b> 선별됐는지 쉬운 말로 보여 줍니다.</span>
+  <button type="button" id="whyAll" aria-pressed="false">모든 설명 펼치기</button>
+  <a data-goto="guide">처음이라면 → 읽는 법</a>
+</div>
 
 <!-- 신규 매수 -->
 <section class="panel on" id="buy">
@@ -228,7 +299,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <th class="nosort">결정</th><th class="num">지정가</th><th class="num">수량</th><th class="num">투입금액</th>
     <th class="num">손절가</th><th class="num">손절폭</th>
     {% if tab.key != 'all' %}<th class="num">최대손실</th>{% endif %}
-    <th class="num">점수</th><th class="nosort">비고</th>
+    <th class="num">점수</th><th class="nosort">비고</th><th class="nosort">설명</th>
   </tr></thead>
   <tbody>
   {% if not tab.rows %}
@@ -248,7 +319,9 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     {% if tab.key != 'all' %}<td class="num calc ml">{{ row.max_loss_krw_str }}</td>{% endif %}
     <td class="num">{{ row.score }}</td>
     <td class="note">{{ row.note }}</td>
+    {{ explain_cell(row.explain) }}
   </tr>
+  {{ why_row(row.explain, tab.headers|length) }}
   {% endfor %}
   {% endif %}
   </tbody></table></div></div>
@@ -259,10 +332,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="sell">
   <p class="desc">손절이 모든 신호보다 우선합니다. 추세가 약해지는 정도에 따라 1차분 → 2차분 → 3차분 순으로 나눠 팝니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">신호</th><th class="nosort">매도 범위</th><th class="num">매도 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">예상 손익</th><th class="num">손익률</th><th class="nosort">결정</th><th class="nosort">주문 안내</th><th class="nosort">비고</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">신호</th><th class="nosort">매도 범위</th><th class="num">매도 수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">예상 손익</th><th class="num">손익률</th><th class="nosort">결정</th><th class="nosort">주문 안내</th><th class="nosort">비고</th><th class="nosort">설명</th></tr></thead>
   <tbody>
   {% if not sell_rows %}
-  <tr><td colspan="12" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="13" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in sell_rows %}
   <tr>
@@ -278,7 +351,9 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <td><span class="badge b-sell">매도</span></td>
     <td class="note">{{ row['주문안내'] }}</td>
     <td class="note">{{ row['비고'] }}</td>
+    {{ explain_cell(row.explain) }}
   </tr>
+  {{ why_row(row.explain, 13) }}
   {% endfor %}
   {% endif %}
   </tbody></table></div>
@@ -328,10 +403,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="watch">
   <p class="desc">다음 매수 신호를 기다리는 종목입니다. 남은 기간 안에 조건이 안 오면 1차분은 만료 매도됩니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">현재 단계</th><th class="nosort">기다리는 신호</th><th class="num">남은 거래일</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">현재 단계</th><th class="nosort">기다리는 신호</th><th class="num">남은 거래일</th><th class="nosort">설명</th></tr></thead>
   <tbody>
   {% if not watch_rows %}
-  <tr><td colspan="5" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="6" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in watch_rows %}
   <tr>
@@ -340,7 +415,9 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <td>{{ row['현재단계'] }}</td>
     <td>{{ row['기다리는신호'] }}</td>
     <td class="num">{{ row['남은거래일'] if row['남은거래일'] is not none else '제한 없음' }}</td>
+    {{ explain_cell(row.explain) }}
   </tr>
+  {{ why_row(row.explain, 6) }}
   {% endfor %}
   {% endif %}
   </tbody></table></div>
@@ -350,10 +427,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="filtered">
   <p class="desc">조건은 맞았지만 매매 금지 규칙이나 한도에 걸려 추천하지 않은 종목입니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">원래 신호</th><th class="nosort">걸린 규칙</th><th class="nosort">비고 · 세부</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">원래 신호</th><th class="nosort">걸린 규칙</th><th class="nosort">비고 · 세부</th><th class="nosort">설명</th></tr></thead>
   <tbody>
   {% if not filtered_rows %}
-  <tr><td colspan="5" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="6" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in filtered_rows %}
   <tr>
@@ -362,7 +439,9 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <td>{{ row['단계'] }}</td>
     <td><span class="badge b-warn">{{ row['유형'] }}</span></td>
     <td class="note">{{ row['사유'] }}</td>
+    {{ explain_cell(row.explain) }}
   </tr>
+  {{ why_row(row.explain, 6) }}
   {% endfor %}
   {% endif %}
   </tbody></table></div>
@@ -372,17 +451,19 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <section class="panel" id="warn">
   <p class="desc">보유 종목에만 표시합니다. 매도 신호는 아닙니다.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">경고</th></tr></thead>
+  <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">경고</th><th class="nosort">설명</th></tr></thead>
   <tbody>
   {% if not warn_rows %}
-  <tr><td colspan="3" class="empty">오늘 해당 종목 없음</td></tr>
+  <tr><td colspan="4" class="empty">오늘 해당 종목 없음</td></tr>
   {% else %}
   {% for row in warn_rows %}
   <tr>
     <td class="nm">{{ row['종목명'] }}</td>
     <td>{{ finviz(row['티커']) }}</td>
     <td><span class="badge {{ row.get('badge_class', 'b-info') }}">{{ row['내용'] }}</span></td>
+    {{ explain_cell(row.explain) }}
   </tr>
+  {{ why_row(row.explain, 4) }}
   {% endfor %}
   {% endif %}
   </tbody></table></div>
@@ -437,6 +518,90 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <tr><td>E3 구조 붕괴</td><td>구름 하단 이탈 · 후행스팬 &lt; 선행 B</td><td>3차분(67%) 또는 잔량</td></tr>
     </tbody></table></div>
   </div>
+</section>
+
+<!-- 읽는 법 (초보자 안내) -->
+<section class="panel gd" id="guide">
+  <h2>이 보고서를 읽는 순서</h2>
+  <div class="steps">
+    <div><b>손절부터 확인</b>매도·손절 탭에 "손절"이 있으면 가장 먼저 처리해요. 손실을 작게 끝내는 게 모든 규칙보다 우선이에요.</div>
+    <div><b>매도 신호 처리</b>E1·E2·E3 신호가 난 종목은 표에 적힌 범위(1차분·2차분·전량)만큼 팔아요.</div>
+    <div><b>신규 매수 주문</b>신규 매수 탭의 지정가·수량 그대로 주문하고, 체결되면 손절 예약 주문을 바로 걸어요.</div>
+    <div><b>체결 기록</b>fills.xlsx에 체결 내역을 적어요. 내일 보고서가 이걸 보고 보유 현황을 계산해요.</div>
+  </div>
+
+  <h2>이 프로그램이 쓰는 지표 4가지</h2>
+  <p class="lead2">모든 판단은 미국장 마감 후 확정된 일봉(하루 한 개의 봉)으로만 해요. 사람의 감이 들어가는 부분은 없어요.</p>
+  <div class="cards">
+    <div class="card"><h3>RSI · 과매도 탐지기</h3><div class="en">Relative Strength Index · {{ guide.rsi_period }}일</div>
+      <dl><dt>무엇</dt><dd>최근 {{ guide.rsi_period }}일 동안 오른 힘과 내린 힘을 비교해 0~100으로 나타낸 값</dd>
+      <dt>읽는 법</dt><dd><b>30 아래</b> 너무 많이 떨어짐(과매도) · <b>50 위</b> 오르는 힘이 더 셈 · <b>70 위</b> 너무 많이 오름(과매수)</dd>
+      <dt>우리 규칙</dt><dd>30을 아래→위로 넘으면 <b>1차 매수</b> · 50 아래로 떨어지면 <b>2차분 매도(E2)</b> · 70 이상이면 재진입 금지</dd></dl></div>
+    <div class="card"><h3>MACD · 방향 확인기</h3><div class="en">Moving Average Convergence Divergence · {{ guide.macd_fast }}, {{ guide.macd_slow }}, {{ guide.macd_signal }}</div>
+      <dl><dt>무엇</dt><dd>짧은 평균({{ guide.macd_fast }}일)과 긴 평균({{ guide.macd_slow }}일)의 차이. 오르는 힘이 세지는지 약해지는지 보여 주는 속도계</dd>
+      <dt>읽는 법</dt><dd>MACD선이 신호선을 아래→위로 뚫으면 <b>골든크로스</b>(상승 전환), 위→아래면 <b>데드크로스</b>(힘 약화)</dd>
+      <dt>우리 규칙</dt><dd>1차 후 {{ guide.a1_to_a2_expiry_days }}거래일 안에 골든크로스면 <b>2차 매수</b> · 데드크로스면 <b>1차분 매도(E1)</b></dd></dl></div>
+    <div class="card"><h3>일목 구름 · 추세 판정기</h3><div class="en">Ichimoku Cloud · {{ guide.ichimoku_tenkan }}, {{ guide.ichimoku_kijun }}, {{ guide.ichimoku_senkou_b }}</div>
+      <dl><dt>무엇</dt><dd>과거 가격으로 그린 띠(구름). 주가가 구름 위면 상승 추세, 아래면 하락 추세</dd>
+      <dt>읽는 법</dt><dd>구름 위 · 앞 구름이 양운(상승 구름) · 후행스팬이 {{ guide.ichimoku_shift }}일 전 가격 위 · RSI 50 위 = 추세 확정 4조건</dd>
+      <dt>우리 규칙</dt><dd>4조건 모두 맞으면 <b>3차 매수</b> · 구름 아래로 떨어지면 <b>전량 매도(E3)</b></dd></dl></div>
+    <div class="card"><h3>손절가 · 안전벨트</h3><div class="en">최근 {{ guide.swing_low_period }}거래일 최저가</div>
+      <dl><dt>무엇</dt><dd>"여기까지 내려오면 예상이 틀렸다"고 미리 정해 둔 가격</dd>
+      <dt>읽는 법</dt><dd>종가가 손절가 아래로 마감하면 전량 매도. 3차까지 산 뒤에는 구름 하단이 더 높으면 그걸 써요</dd>
+      <dt>우리 규칙</dt><dd>한 종목에서 잃을 수 있는 돈은 <b>총자금의 {{ guide.risk_a_pct }}%</b>(재진입 {{ guide.risk_b_pct }}%)까지. 손절가가 멀면 수량을 줄여요</dd></dl></div>
+  </div>
+
+  <h2>사는 순서 · 신호가 겹칠수록 많이 산다</h2>
+  <p class="lead2">한 번에 다 사지 않고, 확인될 때마다 1 : 2 : 6 비율로 늘려요. 첫 판단이 틀려도 손실이 작고, 확실할수록 큰 금액이 들어가요.</p>
+  <div class="flow">
+    <div class="fs"><small>1차 정찰 · 슬롯의 1/9</small><b>RSI 30 돌파</b>떨어지던 주가가 멈춤. 반등 시작의 첫 신호</div>
+    <div class="ar">→</div>
+    <div class="fs"><small>2차 확인 · 2/9</small><b>MACD 골든크로스</b>{{ guide.a1_to_a2_expiry_days }}거래일 안에. 방향이 정말 바뀜</div>
+    <div class="ar">→</div>
+    <div class="fs"><small>3차 확정 · 6/9</small><b>일목 구름 4조건</b>상승 추세가 자리 잡음</div>
+  </div>
+  <div class="flow" style="margin-top:8px">
+    <div class="fs" style="border-top-color:var(--info)"><small>재진입 · 슬롯 전체 1회 · 위험 {{ guide.risk_b_pct }}%</small><b>구름 위 + 0선 근처 골든크로스 + RSI 50~70</b>이미 오르던 종목이 잠깐 쉬었다가 다시 오를 때</div>
+  </div>
+
+  <h2>파는 순서 · 약해지는 정도만큼 판다</h2>
+  <div class="flow out">
+    <div class="fs" style="border-top-color:var(--ink)"><small>최우선 · 전량</small><b>손절</b>종가 &lt; 손절가</div>
+    <div class="ar">·</div>
+    <div class="fs"><small>E1 · 1차분</small><b>MACD 데드크로스</b>오르는 힘이 약해지기 시작</div>
+    <div class="ar">→</div>
+    <div class="fs"><small>E2 · 2차분</small><b>RSI 50 아래</b>오르는 힘이 우위를 잃음</div>
+    <div class="ar">→</div>
+    <div class="fs"><small>E3 · 남은 전량</small><b>구름 아래로 이탈</b>상승 추세가 무너짐</div>
+  </div>
+  <p class="lead2" style="margin-top:8px">1차만 사고 {{ guide.a1_to_a2_expiry_days }}거래일 안에 골든크로스가 안 나오면 1차분을 팔아요(만료). 판 종목은 {{ guide.reentry_cooldown_days }}거래일 동안 다시 사지 않아요(쿨다운).</p>
+
+  <h2>조건이 맞아도 사지 않는 경우</h2>
+  <div class="sheet"><table>
+  <thead><tr><th class="nosort">걸러지는 이유</th><th class="nosort">왜 피하나</th></tr></thead>
+  <tbody>
+  <tr><td>실적 발표 3거래일 이내</td><td>발표 다음 날 주가가 크게 튀어 손절가가 소용없을 수 있어요</td></tr>
+  <tr><td>과열 (RSI 70 이상)</td><td>이미 많이 올라 비싸게 따라 사는 자리예요</td></tr>
+  <tr><td>잦은 교차 (횡보, 최근 20일 {{ guide.whipsaw_max_crosses_20d }}회 이상)</td><td>옆으로 오르내리는 구간의 골든크로스는 가짜 신호가 많아요</td></tr>
+  <tr><td>시가 갭 {{ guide.gap_filter_pct }}% 이상</td><td>이미 크게 뛴 가격에 진입하면 손절가까지 거리가 왜곡돼요</td></tr>
+  <tr><td>보유 한도·자금 한도 초과</td><td>한 번에 너무 많은 종목에 돈이 몰리지 않게 막아요. 점수 높은 종목부터 사요</td></tr>
+  </tbody></table></div>
+
+  <h2>용어 사전</h2>
+  <div class="sheet"><table>
+  <thead><tr><th class="nosort">용어</th><th class="nosort">뜻</th></tr></thead>
+  <tbody>
+  <tr><td>지정가</td><td>"이 가격 이하로만 사겠다"는 주문. 우리는 전날 종가 × {{ guide.entry_limit_markup }}로 넣고, 체결 안 되면 취소해요</td></tr>
+  <tr><td>슬롯</td><td>한 종목에 쓸 수 있는 최대 금액 = 총자금 × 전략 한도 ÷ 최대 보유 종목 수</td></tr>
+  <tr><td>손절폭</td><td>지정가에서 손절가까지 몇 % 떨어지면 파는지</td></tr>
+  <tr><td>최대 손실</td><td>손절가에 팔렸을 때 잃는 금액(갭 여유 포함). 이 합계가 오늘 새로 지는 위험이에요</td></tr>
+  <tr><td>점수</td><td>같은 날 신호가 여러 개일 때 우선순위(100점 만점). 등급 S/A/B(+40/+25/+10) + 거래량 배수 1.5배 이상(+25)·1.2배 이상(+15) + 위쪽 구름 두께 3% 이하(+20)·6% 이하(+10) + 볼린저 밴드폭 120일 백분위 20% 이하(+15)를 더해요</td></tr>
+  <tr><td>등급(S/A/B)</td><td>2차·재진입 신호의 신뢰도. MACD 정규화값이 {{ guide.s_grade_macd_norm_min_pct }}% 이상이면 S, {{ guide.b_grade_macd_norm_max_pct }}% 이상이면 A, 그 아래면 B</td></tr>
+  <tr><td>QQQM</td><td>나스닥 100 전체를 담은 ETF. 신호 종목에 쓰지 않는 돈은 여기에 넣어 둬요</td></tr>
+  <tr><td>후행스팬</td><td>오늘 종가를 {{ guide.ichimoku_shift }}일 뒤로 옮겨 그린 선. {{ guide.ichimoku_shift }}일 전 가격보다 높으면 상승 흐름</td></tr>
+  <tr><td>양운</td><td>일목 구름 중 선행스팬 A가 B보다 위인 구름. 앞으로의 흐름이 상승 쪽이라는 뜻</td></tr>
+  <tr><td>쿨다운</td><td>손절·전량 매도 후 다시 사지 않는 기간. 지금 설정은 {{ guide.reentry_cooldown_days }}거래일이에요</td></tr>
+  </tbody></table></div>
 </section>
 
 <div class="todo" style="margin-top:16px">
@@ -568,20 +733,40 @@ document.querySelectorAll('table').forEach(tbl=>{
     if(th.classList.contains('nosort')) return;
     th.addEventListener('click',()=>{
       const tb=tbl.tBodies[0]; const rows=[...tb.rows];
-      if(rows.length<2||rows[0].cells.length<=i) return;
+      const main=rows.filter(r=>!r.classList.contains('why'));
+      if(main.length<2||main[0].cells.length<=i) return;
       const asc=!th.classList.contains('asc');
       th.parentElement.querySelectorAll('th').forEach(x=>x.classList.remove('asc','desc'));
       th.classList.add(asc?'asc':'desc');
       const val=c=>{const d=c.dataset.v; if(d!==undefined) return parseFloat(d);
         const t=c.textContent.replace(/[$,%배원만억\s]/g,'').replace('−','-'); const n=parseFloat(t);
         return isNaN(n)?c.textContent.trim():n;};
-      rows.sort((a,b)=>{const x=val(a.cells[i]),y=val(b.cells[i]);
+      main.sort((a,b)=>{const x=val(a.cells[i]),y=val(b.cells[i]);
         const r=(typeof x==='number'&&typeof y==='number')?x-y:String(x).localeCompare(String(y),'ko');
         return asc?r:-r;});
-      rows.forEach(r=>tb.appendChild(r));
+      // 설명 줄(tr.why)은 바로 위 종목 줄과 함께 움직인다 (P3.7).
+      main.forEach(r=>{ const w=r.nextElementSibling; tb.appendChild(r);
+        if(w && w.classList.contains('why')) tb.appendChild(w); });
     });
   });
 });
+// 선별 이유 펼치기 (P3.7)
+function setWhy(btn,open){ const w=btn.closest('tr').nextElementSibling;
+  if(!w||!w.classList.contains('why')) return;
+  w.classList.toggle('open',open); btn.setAttribute('aria-expanded',open?'true':'false'); btn.textContent=open?'닫기':'왜?'; }
+document.querySelectorAll('.whybtn[aria-expanded]').forEach(b=>{
+  b.addEventListener('click',()=>setWhy(b,b.getAttribute('aria-expanded')!=='true'));
+});
+const whyAll=document.getElementById('whyAll');
+if(whyAll) whyAll.addEventListener('click',()=>{
+  const open=whyAll.getAttribute('aria-pressed')!=='true';
+  whyAll.setAttribute('aria-pressed',open?'true':'false'); whyAll.textContent=open?'모든 설명 접기':'모든 설명 펼치기';
+  document.querySelectorAll('.whybtn[aria-expanded]').forEach(b=>setWhy(b,open));
+});
+// "읽는 법" 바로가기 (P3.7)
+document.querySelectorAll('[data-goto]').forEach(a=>a.addEventListener('click',()=>{
+  const t=document.querySelector('.tabs button[data-tab="'+a.dataset.goto+'"]'); if(t){ t.click(); t.scrollIntoView({block:'nearest'}); }
+}));
 </script>
 </body>
 </html>
