@@ -154,26 +154,54 @@ def test_p4_switches_to_defensive_below_sma_and_back_above():
     assert result.trade_count >= 2  # 방어 전환 1회 + 복귀 1회 이상
 
 
-def test_p4_uses_sma_source_df_warmup_instead_of_defaulting_full(monkeypatch):
-    """P6-1.1 1번 회귀 방지: qqq_df 자체 길이가 200일 미만이라 이동평균이 정의되지
-    않는 구간이라도, sma_source_df(^NDX 워밍업 접합)에 그 이전 이력이 있으면 첫날부터
-    유효한 국면 판정을 써야 한다. 예전에는 qqq_df만 보고 계산해 워밍업 동안 판정이
-    없어(None) P4가 계속 기본값 FULL로 굳어 있었다(1999년 P3·P4·P5가 똑같이 나온 원인)."""
+def _extend_with_warmup(data: pf.PortfolioData, dates: list[str], qqq_prices: list[float], warmup_price: float = 100.0):
+    """sma_source_df 앞에 249일치 warmup_price를 붙인 확장 시리즈로 바꿔치기한다(테스트 헬퍼)."""
     import dataclasses
-
-    n = 10
-    dates = pd.bdate_range("2021-06-01", periods=n).strftime("%Y-%m-%d").tolist()
-    qqq_prices = [90.0] * n  # sma_source_df의 워밍업 평균(100)보다 낮은 국면
-    data = _mk_data(dates, qqq_prices)
 
     lead_dates = pd.bdate_range(end=pd.Timestamp(dates[0]) - pd.Timedelta(days=1), periods=249)
     lead_dates = lead_dates.strftime("%Y-%m-%d").tolist()
     extended_dates = lead_dates + dates
-    extended_prices = [100.0] * len(lead_dates) + qqq_prices
-    data = dataclasses.replace(data, sma_source_df=_flat_df(extended_dates, extended_prices))
+    extended_prices = [warmup_price] * len(lead_dates) + qqq_prices
+    return dataclasses.replace(data, sma_source_df=_flat_df(extended_dates, extended_prices))
+
+
+def test_p4_starts_fully_invested_when_day_one_is_already_above_sma():
+    """P6-1.2 회귀 방지: P4는 원래 100% 투자가 기본이고 이동평균 아래일 때만 40%를
+    대기로 뺀다. 그런데 첫날 배분을 P3/P5처럼 항상 60/40으로 고정해 두면, 첫날 신호가
+    이미 "위 국면"이어도 크로스 이벤트가 한 번 일어나기 전까지 계속 60/40에 머물렀다
+    (1999년에 QQQ가 200일선 위에 있었는데도 P4가 P3처럼 +36.6%로 나온 원인). 첫날의
+    실제 국면을 보고 위 국면이면 바로 100% 투자로 시작해야 한다."""
+    n = 5
+    dates = pd.bdate_range("2021-06-01", periods=n).strftime("%Y-%m-%d").tolist()
+    qqq_prices = [110.0] * n  # 워밍업 평균(100)보다 위
+    data = _mk_data(dates, qqq_prices)
+    data = _extend_with_warmup(data, dates, qqq_prices)
 
     result = pf.simulate_portfolio(data, CFG, pd.Timestamp(dates[0]).date(), pd.Timestamp(dates[-1]).date(), "P4", sma_days=200)
-    assert result.trade_count >= 1  # 첫날부터 200일선 아래 국면이 인식되어 방어 전환이 일어난다
+    total_usd = CFG["backtest"]["total_krw"] / 1300.0 * (1 - 0.001)
+    expected_shares_full = total_usd / 110.0
+    assert result.broker.core.shares == pytest.approx(expected_shares_full, rel=1e-6)
+    assert result.broker.reserve_usd == pytest.approx(0.0)
+    assert result.trade_count == 0  # 위 국면이 계속 유지되므로 이후에도 크로스 매매가 없다
+
+
+def test_p4_starts_defensive_60_40_when_day_one_is_already_below_sma():
+    """P6-1.2 회귀 방지(반대 방향): 첫날이 이미 이동평균 아래라면 60:40으로 시작해야
+    한다 — sma_source_df(^NDX 워밍업 접합, P6-1.1)가 없으면 이 신호 자체가 None이라
+    100% 투자로 잘못 시작하므로, 이 테스트는 워밍업 접합이 실제로 쓰이는지도 함께
+    검증한다."""
+    n = 5
+    dates = pd.bdate_range("2021-06-01", periods=n).strftime("%Y-%m-%d").tolist()
+    qqq_prices = [90.0] * n  # 워밍업 평균(100)보다 아래
+    data = _mk_data(dates, qqq_prices)
+    data = _extend_with_warmup(data, dates, qqq_prices)
+
+    result = pf.simulate_portfolio(data, CFG, pd.Timestamp(dates[0]).date(), pd.Timestamp(dates[-1]).date(), "P4", sma_days=200)
+    total_usd = CFG["backtest"]["total_krw"] / 1300.0 * (1 - 0.001)
+    expected_core_shares = (total_usd * 0.6) / 90.0
+    assert result.broker.core.shares == pytest.approx(expected_core_shares, rel=1e-6)
+    assert result.broker.reserve_usd > 0
+    assert result.trade_count == 0  # 아래 국면이 계속 유지되므로 이후에도 크로스 매매가 없다
 
 
 # ── QQQM 상장 전 접합(가격·배당) ─────────────────────────────────────────────

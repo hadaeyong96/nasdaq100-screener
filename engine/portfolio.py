@@ -405,12 +405,26 @@ def simulate_portfolio(
     spread = costs["fx_spread_pct"] / 100 if apply_costs else 0.0
     initial_usd = total_krw / fx0 * (1 - spread)
     broker.cash_usd = initial_usd
+    day0_iso = day0.date().isoformat()
+    # P4는 "코어 60%+대기 40%"가 기본 배분이 아니라 원래 100% 투자이고, 이동평균 아래로
+    # 내려갔을 때만 40%를 대기로 뺀다 — 그런데 첫날 배분을 항상 60/40으로 고정해 두면
+    # (아래 P3/P5와 같은 취급), 첫날 신호가 이미 "위 국면"이어도 크로스 이벤트가 한 번
+    # 일어나기 전까지는 계속 60/40에 머문다(P6-1.2 진단 — 1999년에 QQQ가 200일선 위에
+    # 있었는데도 P4가 P3처럼 60/40으로 시작해 +36.6%로 나온 원인). 첫날의 실제 국면을
+    # 보고 100%(위)/60:40(아래)를 바로 정한다.
+    day0_above_sma = sma_ok.get(day0_iso) if candidate == "P4" else None
 
     if candidate == "P0":
-        broker.buy_core(initial_usd, core_price0, cfg, day0.date().isoformat())
-    elif candidate in ("P3", "P4", "P5"):
-        broker.buy_core(initial_usd * 0.6, core_price0, cfg, day0.date().isoformat())
-        broker.move_cash_to_reserve(initial_usd * 0.4, cfg, day0.date().isoformat())
+        broker.buy_core(initial_usd, core_price0, cfg, day0_iso)
+    elif candidate == "P4":
+        if day0_above_sma is False:
+            broker.buy_core(initial_usd * 0.6, core_price0, cfg, day0_iso)
+            broker.move_cash_to_reserve(initial_usd * 0.4, cfg, day0_iso)
+        else:  # 위 국면이거나(True) 국면 미상(None) — 100% 투자로 시작
+            broker.buy_core(initial_usd, core_price0, cfg, day0_iso)
+    elif candidate in ("P3", "P5"):
+        broker.buy_core(initial_usd * 0.6, core_price0, cfg, day0_iso)
+        broker.move_cash_to_reserve(initial_usd * 0.4, cfg, day0_iso)
     else:
         raise ValueError(f"알 수 없는 후보: {candidate}")
 
@@ -419,7 +433,7 @@ def simulate_portfolio(
     # peak은 에피소드 도중(낙폭 진행 중)에는 갱신되지 않고 그대로 "직전 최고점" 역할을 한다
     # (새 고점을 찍는 순간 = 회복 조건도 동시에 참이 되므로 별도 변수가 필요 없다).
     triggered: set[float] = set()
-    core_state = "FULL"  # P4: FULL | DEFENSIVE
+    core_state = "DEFENSIVE" if day0_above_sma is False else "FULL"  # P4: FULL | DEFENSIVE — 첫날 실제 배분과 일치시킴
     qld_active = False
     pending: list = []  # [(action_name, usd_amount_or_None)] — 다음 거래일 시가에 실행
 
