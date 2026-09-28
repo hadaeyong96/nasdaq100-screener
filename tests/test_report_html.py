@@ -77,6 +77,17 @@ def test_render_report_paper_mode_label(tmp_path, cfg):
     assert "모의" in html
 
 
+def test_render_report_filenames_are_namespaced_by_mode(tmp_path, cfg):
+    """같은 날짜라도 live·paper 보고서 파일이 서로 덮어쓰면 안 된다."""
+    live_path = report_html.render_report(_empty_summary(mode="live"), cfg, tmp_path)
+    paper_path = report_html.render_report(_empty_summary(mode="paper"), cfg, tmp_path)
+
+    assert live_path != paper_path
+    assert live_path.name == "report_live_2026-09-23.html"
+    assert paper_path.name == "report_paper_2026-09-23.html"
+    assert live_path.exists() and paper_path.exists()
+
+
 def test_buy_rows_carry_data_stage_limit_stop_attributes(tmp_path, cfg):
     summary = _empty_summary()
     summary["buy_groups"]["b1"] = [

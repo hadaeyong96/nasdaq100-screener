@@ -1,8 +1,8 @@
 """보고서·텔레그램 글을 상태를 다시 계산하지 않고 다시 만드는 스크립트.
 
 state.db(또는 --mode paper의 paper_state.db)에 이미 저장된 포지션과 그 날짜의
-이벤트(store.db.get_events_for_date)만 읽어 outputs/report_YYYY-MM-DD.html과
-outputs/telegram_YYYY-MM-DD.txt를 다시 만든다. engine.daily.simulate_since를
+이벤트(store.db.get_events_for_date)만 읽어 outputs/report_{모드}_YYYY-MM-DD.html과
+outputs/telegram_{모드}_YYYY-MM-DD.txt를 다시 만든다. engine.daily.simulate_since를
 다시 돌리지 않으므로 DB에는 전혀 쓰지 않는다(읽기 전용) — last_processed_date도
 그대로다.
 
@@ -111,7 +111,7 @@ def regenerate(cfg: dict, mode: str, date_str: str | None = None) -> dict:
     as_of = summary["as_of"]
     as_of_str = as_of.date().isoformat() if as_of is not None else target_date
     OUTPUT_DIR.mkdir(exist_ok=True)
-    text_path = OUTPUT_DIR / f"telegram_{as_of_str}.txt"
+    text_path = OUTPUT_DIR / f"telegram_{mode}_{as_of_str}.txt"
     text_path.write_text(text, encoding="utf-8")
     summary["telegram_text"] = text
     summary["telegram_path"] = text_path

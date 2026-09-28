@@ -1,12 +1,16 @@
 """텔레그램 발송 (P3, 4번).
 
 토큰(.env의 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)이 없으면 보내지 않고
-outputs/telegram_YYYY-MM-DD.txt에 저장만 한다. 에러로 멈추지 않는다.
+outputs/telegram_{모드}_YYYY-MM-DD.txt에 저장만 한다. 에러로 멈추지 않는다.
 4096자를 넘으면 나눠 보내고, 실패하면 3번 재시도한다. 같은 기준일 중복 발송은
 store.db의 notifications 테이블로 막는다(성공적으로 다 보낸 뒤에만 기록한다).
 
 데이터 지연 모드(P3.2 2번)에는 `send_delay_notice`로 알림 한 통만 보내고
 (보고서 첨부 없음), 일반 브리핑(`send_briefing`)은 부르지 않는다.
+
+모의(paper) 모드는 두 함수 모두 --no-send 여부와 무관하게 절대 실제로 보내지
+않는다(파일 저장까지만 한다) — 모의를 실전과 매일 나란히 돌리기 시작하면서 생긴
+하드 가드다.
 """
 
 from __future__ import annotations
@@ -109,29 +113,33 @@ def report_attachment_name(as_of_str: str) -> str:
 
 
 def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = False) -> Path:
-    """브리핑을 보낸다(토큰 있으면). 항상 outputs/telegram_YYYY-MM-DD.txt에 본문을 남긴다.
+    """브리핑을 보낸다(토큰 있으면). 항상 outputs/telegram_{모드}_YYYY-MM-DD.txt에 본문을 남긴다.
 
     입력: text(본문, notify.briefing.build_briefing_text 결과), summary(engine의 결과 —
          as_of, mode, report_path 포함), cfg, force_no_send(--no-send 플래그)
     출력: 저장한 txt 파일 경로
+
+    모의(paper) 모드는 --no-send 여부와 관계없이 절대 텔레그램을 보내지 않는다(하드
+    가드) — 모의 모드를 실전과 매일 나란히 돌리기 시작하면서, 플래그를 깜빡해도
+    안전하도록 모드 자체로 막는다. 파일 저장은 모드와 무관하게 항상 한다.
     """
     as_of = summary.get("as_of")
     as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
+    mode = summary.get("mode", "live")
     out_dir = ROOT / "outputs"
     out_dir.mkdir(exist_ok=True)
-    out_path = out_dir / f"telegram_{as_of_str}.txt"
+    out_path = out_dir / f"telegram_{mode}_{as_of_str}.txt"
     out_path.write_text(text, encoding="utf-8")
+
+    if force_no_send or mode == "paper":
+        return out_path
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
-
-    if force_no_send:
-        return out_path
     if not token or not chat_id:
         print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
         return out_path
 
-    mode = summary.get("mode", "live")
     conn = db.connect(db.db_path_for_mode(mode))
     try:
         if db.has_notified(conn, as_of_str):
@@ -159,26 +167,29 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
     입력: summary(engine 결과 — mode, expected_date, actual_date 문자열 포함), cfg,
          force_no_send(--no-send 플래그)
     출력: 저장한 txt 파일 경로
+
+    모의(paper) 모드는 send_briefing과 마찬가지로 --no-send와 무관하게 절대 보내지
+    않는다(하드 가드).
     """
     expected = summary.get("expected_date") or "알수없음"
     actual = summary.get("actual_date") or "알수없음"
     text = f"데이터 지연: 기대 기준일 {expected}, 실제 {actual}. 오늘은 매매 신호 없음\n"
 
+    mode = summary.get("mode", "live")
     out_dir = ROOT / "outputs"
     out_dir.mkdir(exist_ok=True)
-    out_path = out_dir / f"telegram_{actual}_delay.txt"
+    out_path = out_dir / f"telegram_{mode}_{actual}_delay.txt"
     out_path.write_text(text, encoding="utf-8")
+
+    if force_no_send or mode == "paper":
+        return out_path
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
-
-    if force_no_send:
-        return out_path
     if not token or not chat_id:
         print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
         return out_path
 
-    mode = summary.get("mode", "live")
     conn = db.connect(db.db_path_for_mode(mode))
     try:
         dedup_key = f"{actual}:delay"
@@ -199,7 +210,8 @@ def resend_last(report_path: Path, text_path: Path, as_of_str: str, force_no_sen
     """--resend(P3.4 3번): 상태를 다시 처리하지 않고, 이미 만들어 둔 보고서·글
     파일을 다시 보낸다. 중복 발송 방지 기록(store.db)은 확인하지도, 남기지도 않는다.
 
-    입력: report_path(outputs/report_YYYY-MM-DD.html), text_path(outputs/telegram_YYYY-MM-DD.txt),
+    입력: report_path(outputs/report_live_YYYY-MM-DD.html — engine.daily.main은 항상 이 실전
+         파일만 넘긴다), text_path(outputs/telegram_live_YYYY-MM-DD.txt),
          as_of_str(첨부 파일 이름에 쓸 기준일), force_no_send(--no-send 플래그)
     출력: 발송(또는 --no-send 처리) 성공 여부
     """

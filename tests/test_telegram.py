@@ -61,6 +61,64 @@ def test_send_briefing_no_send_flag_never_calls_network(tmp_path, monkeypatch):
     assert path.exists()
 
 
+def test_send_briefing_paper_mode_never_calls_network_even_without_no_send_flag(tmp_path, monkeypatch):
+    """모의(paper) 모드는 --no-send를 깜빡 빼도(force_no_send=False) 절대 텔레그램
+    네트워크를 호출하면 안 된다 — 매일 실전과 나란히 돌리기 시작하면서 생긴 하드
+    가드(플래그가 아니라 모드 자체로 막는다)."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")
+    monkeypatch.setattr(telegram, "ROOT", tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("paper 모드는 절대 텔레그램 네트워크를 호출하면 안 된다")
+
+    monkeypatch.setattr(telegram, "_send_text", _boom)
+    monkeypatch.setattr(telegram, "_send_document", _boom)
+
+    summary = {"mode": "paper", "mode_label": "모의", "as_of": pd.Timestamp("2026-09-25")}
+    path = telegram.send_briefing("본문", summary, {}, force_no_send=False)
+
+    assert path.exists()
+    assert path.name == "telegram_paper_2026-09-25.txt"
+
+
+def test_send_delay_notice_paper_mode_never_calls_network_even_without_no_send_flag(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")
+    monkeypatch.setattr(telegram, "ROOT", tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("paper 모드는 절대 텔레그램 네트워크를 호출하면 안 된다")
+
+    monkeypatch.setattr(telegram, "_send_text", _boom)
+
+    summary = {"mode": "paper", "expected_date": "2026-09-25", "actual_date": "2026-09-24"}
+    path = telegram.send_delay_notice(summary, {}, force_no_send=False)
+
+    assert path.exists()
+    assert path.name == "telegram_paper_2026-09-24_delay.txt"
+
+
+def test_send_briefing_filenames_are_namespaced_by_mode(tmp_path, monkeypatch):
+    """같은 날짜라도 live·paper 보고서 글 파일이 서로 덮어쓰면 안 된다."""
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setattr(telegram, "ROOT", tmp_path)
+
+    live_path = telegram.send_briefing(
+        "실전 본문", {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-25")}, {}, force_no_send=False
+    )
+    paper_path = telegram.send_briefing(
+        "모의 본문", {"mode": "paper", "mode_label": "모의", "as_of": pd.Timestamp("2026-09-25")}, {}, force_no_send=False
+    )
+
+    assert live_path != paper_path
+    assert live_path.name == "telegram_live_2026-09-25.txt"
+    assert paper_path.name == "telegram_paper_2026-09-25.txt"
+    assert live_path.read_text(encoding="utf-8") == "실전 본문"
+    assert paper_path.read_text(encoding="utf-8") == "모의 본문"
+
+
 def test_send_briefing_skips_when_already_notified(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")

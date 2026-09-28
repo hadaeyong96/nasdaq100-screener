@@ -2,7 +2,7 @@
 
 docs/report_template.html의 구조·디자인·스크립트를 그대로 따르는 Jinja2 템플릿
 (notify/templates/report.html.j2)에 오늘 판정 결과를 채워
-outputs/report_YYYY-MM-DD.html(외부 파일 없이 한 파일)로 저장한다.
+outputs/report_{모드}_YYYY-MM-DD.html(외부 파일 없이 한 파일)로 저장한다.
 
 입력은 engine/daily.py의 run()이 만든 summary dict + cfg다. 이 모듈은 파일
 쓰기만 하고 네트워크·DB에 접근하지 않아 테스트에서 summary를 직접 만들어
@@ -308,11 +308,16 @@ def build_context(summary: dict, cfg: dict) -> dict:
 
 
 def render_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
-    """보고서 HTML을 렌더링해 outputs/report_YYYY-MM-DD.html로 저장하고 경로를 반환한다."""
+    """보고서 HTML을 렌더링해 outputs/report_{모드}_YYYY-MM-DD.html로 저장하고 경로를 반환한다.
+
+    파일 이름에 모드(live/paper)를 넣어 실전·모의 보고서가 같은 날짜여도 서로 덮어쓰지
+    않게 한다(모의를 매일 나란히 돌리기 시작하면서 생긴 요구사항).
+    """
     context = build_context(summary, cfg)
     template = _env.get_template("report.html.j2")
     html = template.render(**context)
     output_dir.mkdir(exist_ok=True, parents=True)
-    path = output_dir / f"report_{context['as_of_str']}.html"
+    mode = summary.get("mode", "live")
+    path = output_dir / f"report_{mode}_{context['as_of_str']}.html"
     path.write_text(html, encoding="utf-8")
     return path

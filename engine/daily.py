@@ -462,7 +462,7 @@ def _unfilled_rows_from_events(today_events: list[dict], name_map, mode: str) ->
 def _compute_funnel(today_events: list[dict], indicator_map: dict, as_of_by_ticker: dict) -> dict:
     """통과 현황(1차 RSI 30 돌파 → 2차 골든크로스 → 3차 구름 4요소 → 4차 매매금지 → 5차 보유한도).
 
-    보고서에는 표시하지 않고 outputs/funnel_YYYY-MM-DD.csv와 events에만 남긴다 (지시문 3번).
+    보고서에는 표시하지 않고 outputs/funnel_{모드}_YYYY-MM-DD.csv와 events에만 남긴다 (지시문 3번).
     """
     stage1 = stage2 = 0
     for ticker, df in indicator_map.items():
@@ -1395,7 +1395,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
 
     # ── 통과 현황(5단계 funnel): 보고서에는 안 쓰고 CSV·events에만 남긴다 ───────
     if as_of is not None:
-        _write_funnel(funnel, as_of)
+        _write_funnel(funnel, as_of, mode)
         if not dry_run:
             db.record_events(conn, [{"date": str(as_of.date()), "ticker": "", "kind": "FUNNEL", **funnel}])
 
@@ -1434,11 +1434,11 @@ def _to_markdown_table(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _write_funnel(funnel: dict, as_of) -> None:
+def _write_funnel(funnel: dict, as_of, mode: str) -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
     as_of_str = as_of.date().isoformat()
     pd.DataFrame([{"단계": k, "건수": v} for k, v in funnel.items()]).to_csv(
-        OUTPUT_DIR / f"funnel_{as_of_str}.csv", index=False, encoding="utf-8-sig"
+        OUTPUT_DIR / f"funnel_{mode}_{as_of_str}.csv", index=False, encoding="utf-8-sig"
     )
 
 
@@ -1446,12 +1446,13 @@ def _write_outputs(summary: dict) -> None:
     OUTPUT_DIR.mkdir(exist_ok=True)
     as_of = summary["as_of"]
     as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
+    mode = summary.get("mode", "live")
 
     all_buy_rows = [r for rows in summary["buy_groups"].values() for r in rows]
-    pd.DataFrame(all_buy_rows).to_csv(OUTPUT_DIR / f"signals_{as_of_str}_buy.csv", index=False, encoding="utf-8-sig")
-    pd.DataFrame(summary["sell_rows"]).to_csv(OUTPUT_DIR / f"signals_{as_of_str}_sell.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame(all_buy_rows).to_csv(OUTPUT_DIR / f"signals_{mode}_{as_of_str}_buy.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame(summary["sell_rows"]).to_csv(OUTPUT_DIR / f"signals_{mode}_{as_of_str}_sell.csv", index=False, encoding="utf-8-sig")
     pd.DataFrame(summary["filtered_rows"]).to_csv(
-        OUTPUT_DIR / f"signals_{as_of_str}_blocked.csv", index=False, encoding="utf-8-sig"
+        OUTPUT_DIR / f"signals_{mode}_{as_of_str}_blocked.csv", index=False, encoding="utf-8-sig"
     )
 
     lines = [f"# 나스닥100 신호 — 기준일 {as_of_str} ({summary['mode_label']})", ""]
@@ -1475,21 +1476,28 @@ def _write_outputs(summary: dict) -> None:
     lines.append("")
     lines.append(f"data_gap 종목: {', '.join(summary['data_gap_tickers']) or '없음'}")
     lines.append(f"실적일 확인불가 종목 수: {summary['earnings_unknown_count']}")
-    (OUTPUT_DIR / f"signals_{as_of_str}.md").write_text("\n".join(lines), encoding="utf-8")
+    (OUTPUT_DIR / f"signals_{mode}_{as_of_str}.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def _resend_last(cfg: dict, mode: str, force_no_send: bool) -> None:
     """--resend(P3.4 3번): 상태를 다시 처리하지 않고 마지막 기준일의 보고서·글을
-    다시 보낸다. 중복 발송 방지 기록(store.db의 notifications)은 확인하지 않는다."""
-    conn = db.connect(db.db_path_for_mode(mode))
+    다시 보낸다. 중복 발송 방지 기록(store.db의 notifications)은 확인하지 않는다.
+
+    모의(paper) 모드는 텔레그램을 아예 보내지 않으므로(notify.telegram의 하드 가드)
+    재발송 대상이 될 수 없다 — --mode로 무엇을 넘기든 항상 실전(live) 기록·파일만
+    다시 보낸다.
+    """
+    if mode != "live":
+        print(f"[daily] --resend: {_MODE_LABEL.get(mode, mode)} 모드는 텔레그램을 보내지 않으므로, --resend는 항상 실전(live) 기록을 재발송합니다.")
+    conn = db.connect(db.db_path_for_mode("live"))
     last_date = db.get_meta(conn, "last_processed_date")
     conn.close()
     if last_date is None:
-        print(f"[daily] --resend: {_MODE_LABEL[mode]} 모드에 처리된 기준일 기록이 없습니다.")
+        print(f"[daily] --resend: {_MODE_LABEL['live']} 모드에 처리된 기준일 기록이 없습니다.")
         return
 
-    report_path = OUTPUT_DIR / f"report_{last_date}.html"
-    text_path = OUTPUT_DIR / f"telegram_{last_date}.txt"
+    report_path = OUTPUT_DIR / f"report_live_{last_date}.html"
+    text_path = OUTPUT_DIR / f"telegram_live_{last_date}.txt"
     print(f"[daily] --resend: 기준일 {last_date} 재발송")
     ok = telegram.resend_last(report_path, text_path, last_date, force_no_send=force_no_send)
     print(f"[daily] 재발송 {'성공' if ok else '실패'}")
