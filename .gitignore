@@ -20,6 +20,7 @@ data/fills_csv_backup.csv
 # 캐시·산출물
 data/cache/
 outputs/
+logs/
 
 # 파이썬
 __pycache__/

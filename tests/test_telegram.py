@@ -119,6 +119,28 @@ def test_send_briefing_filenames_are_namespaced_by_mode(tmp_path, monkeypatch):
     assert paper_path.read_text(encoding="utf-8") == "모의 본문"
 
 
+def test_notify_ops_error_without_token_only_reports_and_returns_false(monkeypatch, capsys):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+
+    assert telegram.notify_ops_error("예약 작업 실패") is False
+    out = capsys.readouterr().out
+    assert "오류 알림을 보낼 수 없습니다" in out
+
+
+def test_notify_ops_error_sends_text_without_dedup_or_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")
+    monkeypatch.setattr(telegram, "ROOT", tmp_path)
+
+    sent: list[str] = []
+    monkeypatch.setattr(telegram, "_send_text", lambda token, chat_id, text: sent.append(text) or True)
+
+    assert telegram.notify_ops_error("실전 단계 실패: 종료 코드 1") is True
+    assert sent == ["실전 단계 실패: 종료 코드 1"]
+    assert list(tmp_path.iterdir()) == []  # 파일로 남기지 않는다(브리핑과 다름)
+
+
 def test_send_briefing_skips_when_already_notified(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")

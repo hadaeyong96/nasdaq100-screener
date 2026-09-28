@@ -107,6 +107,24 @@ def env_status() -> str:
     )
 
 
+def notify_ops_error(message: str) -> bool:
+    """운영 자동화(예약 작업 등)가 실패했을 때 텔레그램으로 짧은 오류 메시지만 보낸다.
+
+    입력: message(호출한 쪽이 만든 짧은 오류 설명)
+    출력: 발송 성공 여부(토큰이 없으면 False — 값은 절대 출력하지 않고 길이만 확인한다)
+
+    live/paper 브리핑과 달리 모드 구분·중복 발송 방지·파일 저장이 없다 — 실행 자체가
+    실패했다는 운영 알림이라 매번 보내는 게 맞고, 로그는 호출한 쪽(run_daily.ps1)이
+    이미 남긴다.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+    if not token or not chat_id:
+        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 오류 알림을 보낼 수 없습니다. ({env_status()})")
+        return False
+    return all(_send_text(token, chat_id, chunk) for chunk in split_message(message))
+
+
 def report_attachment_name(as_of_str: str) -> str:
     """휴대폰 파일 목록에서 알아보기 쉬운 첨부 파일 이름 (P3.4 2번): 나스닥100_YYYY-MM-DD.html"""
     return f"나스닥100_{as_of_str}.html"
