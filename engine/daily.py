@@ -1337,7 +1337,11 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
             else pd.Timestamp(actual_date)  # 이 모드로 처음 실행 — 오늘부터 시작(과거로 replay하지 않는다)
         )
 
-        states = {t: st.init_state(t, name_map.get(t, "")) for t in indicator_map}
+        # last_processed_date까지 저장된 실제 보유 상태를 이어받는다 — 아니면 이번
+        # 증분 구간에서 새 이벤트가 없는 종목은 매번 대기로 되돌아가 버려서, 이미
+        # 보유 중인 포지션(단계·수량·손절가)이 저장할 때마다 지워진다(발견된 버그).
+        positions = db.load_all_positions(conn)
+        states = {t: positions.get(t) or st.init_state(t, name_map.get(t, "")) for t in indicator_map}
         per_ticker_dates = {t: _dates_since_start(df, next_start) for t, df in indicator_map.items()}
         fx_rate_by_date = fx.get_usd_krw_rate_map(sorted({d for dates in per_ticker_dates.values() for d in dates}))
         sim = simulate_since(
