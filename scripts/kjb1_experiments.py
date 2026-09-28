@@ -70,8 +70,26 @@ def build_kjb_cfg(prereg: dict) -> dict:
 
 
 def scaled_cfg(cfg: dict, fraction: float) -> dict:
+    """이 fraction만큼만 굴리는 다리(코어70/위성30 등)용 cfg를 만든다.
+
+    account.total_krw를 반드시 backtest.total_krw와 "같은 값"으로 맞춰야 한다.
+    core.sizing.slot_krw·strategy_limit_krw·funding_qty(B0.5가 매수 수량을 정할
+    때 쓰는 core.sizing.size_buy_signals 전체)가 실제 시뮬레이션 자금인
+    backtest.total_krw가 아니라 account.total_krw(기본 1억원, 라이브 계좌
+    기본값 — 이 백테스트의 backtest.total_krw 4천만원과 원래부터 다른 값)를
+    기준으로 슬롯·위험 상한을 계산한다.
+
+    처음에는 account.total_krw도 그냥 fraction을 곱해 같이 줄였는데(둘 다 30%),
+    원래 두 값의 비율이 2.5배(1억/4천만) 나 있어서 그 비율이 그대로 남아 여전히
+    위성 자기 자본의 최대 121.8%까지 포지션이 잡히는 걸 실제 2016~2021 데이터로
+    돌려서 확인했다(완료 보고 KJB-1.1, outputs/backtest/kjb1/.../report.md 0번
+    참고). account.total_krw를 backtest.total_krw와 정확히 같게 맞춰야
+    plan.strategy_limit_pct(60%)가 진짜 "위성 자기 자본의 60%"가 되어 실제
+    최대 노출이 항상 100% 아래로 묶인다.
+    """
     out = copy.deepcopy(cfg)
     out["backtest"]["total_krw"] = cfg["backtest"]["total_krw"] * fraction
+    out["account"]["total_krw"] = out["backtest"]["total_krw"]
     return out
 
 
