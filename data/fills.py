@@ -35,9 +35,13 @@ FILLS_XLSX = DATA_DIR / "fills.xlsx"
 FILLS_CSV = DATA_DIR / "fills.csv"
 
 XLSX_SHEET_FILLS = "체결기록"
+XLSX_SHEET_PLAN = "계획"  # 라이브 어드바이저 1단계(docs/design/live_advisor.md 1번) — 선택 사항, 없어도 오류 아님
 _LOCKED_WARNING = "체결 기록 오류: 체결 기록 파일이 열려 있음, 저장 후 닫아 주세요"
 
 _COLUMNS = ["date", "ticker", "unit", "side", "price", "qty"]
+
+_PLAN_COLUMNS = ["ticker", "budget_krw", "memo"]
+_PLAN_KR_COLUMN_MAP = {"티커": "ticker", "계획금액": "budget_krw", "메모": "memo"}
 
 # 한글 열 이름 -> 영어 내부 열 이름
 _KR_COLUMN_MAP = {
@@ -249,6 +253,90 @@ def parse_fill_records(records: list[dict]) -> FillsResult:
 
     rows, cash_rows, errors = _rows_from_records(raw.to_dict(orient="records"))
     return FillsResult(df=_to_frame(rows), errors=errors, cash_rows=_to_frame(cash_rows))
+
+
+def _parse_budget_cell(raw) -> float | None:
+    try:
+        value = float(_cell_to_str(raw).replace(",", ""))
+    except (ValueError, TypeError):
+        return None
+    return value if value >= 0 else None
+
+
+def _is_blank_plan_record(record: dict) -> bool:
+    return all(_cell_to_str(v) == "" for v in record.values())
+
+
+def parse_plan_records(records: list[dict]) -> tuple[pd.DataFrame, list[str]]:
+    """계획 탭/시트의 행 dict 목록을 파싱한다 (라이브 어드바이저 1단계,
+    docs/design/live_advisor.md 1번, 2번). 열 이름은 한글(티커/계획금액/메모)
+    또는 이미 영어(ticker/budget_krw/memo)면 그대로 받는다. 빈 줄은 조용히
+    건너뛴다. 잘못된 줄(티커 없음, 계획금액이 숫자가 아니거나 음수)은
+    반환 DataFrame에서 빠지고 errors에 "N번째 줄 ..."로 남는다.
+
+    data/sheets.py(구글 시트 "계획" 탭)와 이 파일의 load_plan()(fills.xlsx의
+    "계획" 시트) 둘 다 이 함수 하나를 재사용한다 — 새 파서를 만들지 않는다.
+
+    출력: (DataFrame(ticker, budget_krw, memo), 오류 메시지 목록).
+    """
+    rows: list[dict] = []
+    errors: list[str] = []
+    for i, record in enumerate(records, start=1):
+        if _is_blank_plan_record(record):
+            continue
+        normalized = {_PLAN_KR_COLUMN_MAP.get(str(k).strip(), str(k).strip()): v for k, v in record.items()}
+
+        problems: list[str] = []
+
+        ticker = _cell_to_str(normalized.get("ticker")).upper()
+        if not ticker:
+            problems.append("티커가 비어 있음")
+
+        budget_raw = normalized.get("budget_krw", "")
+        budget = _parse_budget_cell(budget_raw)
+        if budget is None:
+            problems.append(f"계획금액이 올바르지 않음({budget_raw!r})")
+
+        memo = _cell_to_str(normalized.get("memo"))
+
+        if problems:
+            errors.append(f"계획 기록 오류: {i}번째 줄 - {', '.join(problems)}")
+            continue
+
+        rows.append({"ticker": ticker, "budget_krw": budget, "memo": memo})
+
+    df = pd.DataFrame(rows, columns=_PLAN_COLUMNS) if rows else pd.DataFrame(columns=_PLAN_COLUMNS)
+    return df, errors
+
+
+def load_plan(path: Path | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """fills.xlsx의 "계획" 시트를 읽는다 (라이브 어드바이저 1단계 1e — 구글
+    시트 연동(1g) 전까지 로컬 임시 입력처). 시트가 아예 없으면(기존
+    fills.xlsx에는 없던, 새로 추가하는 선택 시트) 오류 없이 빈 결과를 낸다 —
+    계획을 아직 안 올린 종목이 있을 뿐이므로.
+
+    path를 주면 그 파일만 읽는다(테스트용). path가 없으면 data/fills.xlsx를
+    쓰고, 그 파일 자체가 없으면 빈 결과.
+
+    출력: (DataFrame(ticker, budget_krw, memo), 오류 메시지 목록)
+    """
+    target = path if path is not None else FILLS_XLSX
+    if not target.exists():
+        return pd.DataFrame(columns=_PLAN_COLUMNS), []
+    if _is_xlsx_locked(target):
+        return pd.DataFrame(columns=_PLAN_COLUMNS), [_LOCKED_WARNING.replace("체결 기록", "계획")]
+
+    try:
+        raw = pd.read_excel(target, sheet_name=XLSX_SHEET_PLAN, engine="openpyxl")
+    except ValueError:  # 시트가 없음 — 선택 사항이므로 조용히 빈 결과
+        return pd.DataFrame(columns=_PLAN_COLUMNS), []
+    except Exception as exc:  # 엑셀이 파일을 잠그고 있거나 그 밖의 읽기 오류
+        return pd.DataFrame(columns=_PLAN_COLUMNS), [f"계획 기록 오류: 파일을 읽을 수 없음 ({exc})"]
+
+    if raw.empty:
+        return pd.DataFrame(columns=_PLAN_COLUMNS), []
+
+    return parse_plan_records(raw.to_dict(orient="records"))
 
 
 def _load_csv(path: Path) -> FillsResult:

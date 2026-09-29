@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 from core import state as st
-from data.fills import fills_for, load_fills, summarize_cash_rows
+from data.fills import fills_for, load_fills, load_plan, summarize_cash_rows
 
 
 def test_load_fills_empty_file_returns_empty_frame(tmp_path):
@@ -291,6 +291,75 @@ def test_load_fills_prefers_xlsx_over_csv_with_warning(tmp_path, monkeypatch):
     result = load_fills()
     assert list(result.df["ticker"]) == ["NVDA"]  # xlsx 우선
     assert any("모두 있어" in e for e in result.errors)
+
+
+# ── 라이브 어드바이저 1단계: fills.xlsx의 "계획" 시트 (load_plan) ───────────
+
+
+def _write_plan_xlsx(path, plan_rows, include_plan_sheet=True):
+    """fills.xlsx와 같은 파일에 "계획" 시트를 (선택적으로) 추가한 파일을 만든다."""
+    headers = ["티커", "계획금액", "메모"]
+    wb = openpyxl.Workbook()
+    ws_fills = wb.active
+    ws_fills.title = "체결기록"
+    ws_fills.append(["날짜", "종목", "차수", "매수매도", "체결가", "수량"])
+
+    if include_plan_sheet:
+        ws_plan = wb.create_sheet("계획")
+        ws_plan.append(headers)
+        for row in plan_rows:
+            ws_plan.append(list(row))
+
+    wb.save(path)
+
+
+def test_load_plan_reads_계획_sheet(tmp_path):
+    path = tmp_path / "fills.xlsx"
+    _write_plan_xlsx(path, plan_rows=[("NVDA", 3_000_000, "1차 대기")])
+    plan_df, errors = load_plan(path)
+    assert errors == []
+    assert len(plan_df) == 1
+    row = plan_df.iloc[0]
+    assert row["ticker"] == "NVDA"
+    assert row["budget_krw"] == 3_000_000.0
+    assert row["memo"] == "1차 대기"
+
+
+def test_load_plan_missing_sheet_returns_empty_without_error(tmp_path):
+    """계획 시트는 선택 사항 — 기존 fills.xlsx(계획 시트 없음)를 그대로 써도 오류가 아니다."""
+    path = tmp_path / "fills.xlsx"
+    _write_plan_xlsx(path, plan_rows=[], include_plan_sheet=False)
+    plan_df, errors = load_plan(path)
+    assert plan_df.empty
+    assert errors == []
+
+
+def test_load_plan_missing_file_returns_empty_without_error(tmp_path):
+    plan_df, errors = load_plan(tmp_path / "no_such_file.xlsx")
+    assert plan_df.empty
+    assert errors == []
+
+
+def test_load_plan_reports_invalid_rows(tmp_path):
+    path = tmp_path / "fills.xlsx"
+    _write_plan_xlsx(path, plan_rows=[("", 1_000_000, ""), ("AVGO", "많이", "")])
+    plan_df, errors = load_plan(path)
+    assert plan_df.empty
+    assert len(errors) == 2
+    assert "티커가 비어 있음" in errors[0]
+    assert "계획금액이 올바르지 않음" in errors[1]
+
+
+def test_load_plan_defaults_to_project_fills_xlsx_path(monkeypatch, tmp_path):
+    import data.fills as fills_module
+
+    path = tmp_path / "fills.xlsx"
+    _write_plan_xlsx(path, plan_rows=[("NVDA", 3_000_000, "")])
+    monkeypatch.setattr(fills_module, "FILLS_XLSX", path)
+
+    plan_df, errors = load_plan()
+    assert errors == []
+    assert list(plan_df["ticker"]) == ["NVDA"]
 
 
 def test_load_fills_falls_back_to_csv_when_no_xlsx(tmp_path, monkeypatch):

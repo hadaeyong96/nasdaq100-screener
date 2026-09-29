@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from data.fills import FillsResult, parse_fill_records
+from data.fills import FillsResult, parse_fill_records, parse_plan_records
 
 _SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -33,7 +33,6 @@ SHEET_PLAN = "계획"
 SHEET_FILLS = "체결"
 
 _PLAN_COLUMNS = ["ticker", "budget_krw", "memo"]
-_PLAN_KR_COLUMN_MAP = {"티커": "ticker", "계획금액": "budget_krw", "메모": "memo"}
 
 
 class SheetsConfigError(RuntimeError):
@@ -88,56 +87,6 @@ def get_client():
     info = load_credentials_info()
     creds = Credentials.from_service_account_info(info, scopes=_SCOPES)
     return gspread.authorize(creds)
-
-
-def _parse_budget_cell(raw) -> float | None:
-    try:
-        value = float(str(raw).replace(",", "").strip())
-    except (ValueError, TypeError):
-        return None
-    return value if value >= 0 else None
-
-
-def _is_blank_plan_record(record: dict) -> bool:
-    return all(str(v).strip() == "" for v in record.values())
-
-
-def parse_plan_records(records: list[dict]) -> tuple[pd.DataFrame, list[str]]:
-    """계획 탭의 행 dict 목록을 파싱한다. 열 이름은 한글(티커/계획금액/메모)
-    또는 이미 영어(ticker/budget_krw/memo)면 그대로 받는다. 빈 줄은 조용히
-    건너뛴다. 잘못된 줄(티커 없음, 계획금액이 숫자가 아니거나 음수)은
-    plan_df에서 빠지고 errors에 "N번째 줄 ..."로 남는다.
-
-    출력: (DataFrame(ticker, budget_krw, memo), 오류 메시지 목록).
-    """
-    rows: list[dict] = []
-    errors: list[str] = []
-    for i, record in enumerate(records, start=1):
-        if _is_blank_plan_record(record):
-            continue
-        normalized = {_PLAN_KR_COLUMN_MAP.get(str(k).strip(), str(k).strip()): v for k, v in record.items()}
-
-        problems: list[str] = []
-
-        ticker = str(normalized.get("ticker", "")).strip().upper()
-        if not ticker:
-            problems.append("티커가 비어 있음")
-
-        budget_raw = normalized.get("budget_krw", "")
-        budget = _parse_budget_cell(budget_raw)
-        if budget is None:
-            problems.append(f"계획금액이 올바르지 않음({budget_raw!r})")
-
-        memo = str(normalized.get("memo", "") or "").strip()
-
-        if problems:
-            errors.append(f"계획 기록 오류: {i}번째 줄 - {', '.join(problems)}")
-            continue
-
-        rows.append({"ticker": ticker, "budget_krw": budget, "memo": memo})
-
-    df = pd.DataFrame(rows, columns=_PLAN_COLUMNS) if rows else pd.DataFrame(columns=_PLAN_COLUMNS)
-    return df, errors
 
 
 def read_sheets(client=None) -> SheetsResult:
