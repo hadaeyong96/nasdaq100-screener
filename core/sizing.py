@@ -267,6 +267,47 @@ def size_buy_signals(signals: list[dict], held: list[dict], cfg: dict, fx_rate: 
     return {"rows": rows, "funding_plan": funding_plan}
 
 
+# ── 계획금액 기반 차수·수량 (라이브 어드바이저 1단계, docs/design/live_advisor.md 2번) ──
+# 계좌 총액(cfg["account"]["total_krw"])과 완전히 분리된 계산이다. 위 slot_krw·
+# funding_qty류(계좌 총액 기반, paper·P5·KJB가 계속 씀)는 그대로 두고 새 함수만
+# 추가한다. 위험 예산(2% 룰) 기반 상한은 "자금 배분 로직"의 일부로 보고 여기서는
+# 뺀다 — 계획금액 자체가 사용자가 이미 정한 위험 한도라고 본다.
+
+
+def plan_tranche_krw(budget_krw: float, stage: str) -> float:
+    """계획금액 기준 차수별 목표 금액(원) = 계획금액 × 차수 비중(1차 1/9, 2차 2/9,
+    3차 6/9, 재진입 1)."""
+    return budget_krw * STAGE_SLOT_FRACTION[stage]
+
+
+def plan_tranche_qty(budget_krw: float, stage: str, entry_price: float | None, fx_rate: float | None) -> dict:
+    """계획금액 기준 차수별 추천 수량. 위험 상한 없이
+    수량 = 내림(차수별 목표 금액 ÷ 환율 ÷ 지정가) 만 쓴다.
+
+    입력: budget_krw(계획 시트의 계획금액, 원), stage(A1|A2|A3|B), entry_price(지정가,
+         달러 — 없거나 0 이하면 qty=0), fx_rate(원/달러 환율 — 없거나 0 이하면 qty=0)
+    출력: {"tranche_krw"(차수별 목표 금액, 원), "tranche_usd"(달러, 계산 불가면 None),
+          "qty"(정수 주식 수)}
+    """
+    tranche_krw = plan_tranche_krw(budget_krw, stage)
+    if not fx_rate or fx_rate <= 0 or entry_price is None or pd.isna(entry_price) or entry_price <= 0:
+        return {"tranche_krw": tranche_krw, "tranche_usd": None, "qty": 0}
+    tranche_usd = tranche_krw / fx_rate
+    qty = max(int(math.floor(tranche_usd / entry_price)), 0)
+    return {"tranche_krw": tranche_krw, "tranche_usd": tranche_usd, "qty": qty}
+
+
+def min_budget_for_one_share_krw(entry_price: float, fx_rate: float, stage: str = "A1") -> float:
+    """이 차수에서 1주라도 사려면 필요한 최소 계획금액(원) — 계획 경고용
+    (docs/design/live_advisor.md 7번: "1차 금액으로 1주도 못 사면 경고").
+
+    입력: entry_price(지정가, 달러), fx_rate(원/달러 환율), stage(기본 A1)
+    출력: 최소 계획금액(원) = 1주 금액(원) ÷ 그 차수 비중
+    """
+    one_share_krw = entry_price * fx_rate
+    return one_share_krw / STAGE_SLOT_FRACTION[stage]
+
+
 _KRW_UNIT = 10_000
 
 

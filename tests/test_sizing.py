@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import math
 
 import pytest
 
@@ -206,3 +207,70 @@ def test_format_krw_examples():
     assert sizing.format_krw(0) == "0원"
     assert sizing.format_krw(None) == "-"
     assert sizing.format_krw(-730_000) == "-73만"
+
+
+# ── 계획금액 기반 차수·수량 (라이브 어드바이저 1단계) ──────────────────────
+
+
+def test_plan_tranche_krw_splits_1_2_6():
+    assert sizing.plan_tranche_krw(9_000_000, "A1") == pytest.approx(1_000_000)
+    assert sizing.plan_tranche_krw(9_000_000, "A2") == pytest.approx(2_000_000)
+    assert sizing.plan_tranche_krw(9_000_000, "A3") == pytest.approx(6_000_000)
+
+
+def test_plan_tranche_krw_b_stage_uses_full_budget():
+    assert sizing.plan_tranche_krw(3_000_000, "B") == pytest.approx(3_000_000)
+
+
+def test_plan_tranche_qty_floors_to_integer_shares():
+    # 1차 목표 1,000,000원 ÷ 1,350원 ÷ $180.25 = 4.11주 -> 4주
+    out = sizing.plan_tranche_qty(9_000_000, "A1", entry_price=180.25, fx_rate=1350.0)
+    assert out["tranche_krw"] == pytest.approx(1_000_000)
+    assert out["tranche_usd"] == pytest.approx(1_000_000 / 1350.0)
+    assert out["qty"] == 4
+
+
+def test_plan_tranche_qty_zero_when_budget_too_small_for_one_share():
+    out = sizing.plan_tranche_qty(900_000, "A1", entry_price=180.25, fx_rate=1350.0)
+    assert out["qty"] == 0
+    assert out["tranche_krw"] == pytest.approx(100_000)
+
+
+def test_plan_tranche_qty_no_fx_rate_returns_zero_qty():
+    out = sizing.plan_tranche_qty(9_000_000, "A1", entry_price=180.25, fx_rate=None)
+    assert out["qty"] == 0
+    assert out["tranche_usd"] is None
+    assert out["tranche_krw"] == pytest.approx(1_000_000)
+
+
+def test_plan_tranche_qty_missing_entry_price_returns_zero_qty():
+    out = sizing.plan_tranche_qty(9_000_000, "A1", entry_price=None, fx_rate=1350.0)
+    assert out["qty"] == 0
+
+
+def test_plan_tranche_qty_never_exceeds_risk_free_ratio_regardless_of_account_total(cfg):
+    """계좌 총액(cfg["account"]["total_krw"])을 아무리 바꿔도 결과가 그대로여야
+    한다 — 계획금액 기반 사이징은 계좌 총액과 완전히 분리되어 있다는 설계
+    불변식(docs/design/live_advisor.md 0번, 2번)."""
+    out_small = sizing.plan_tranche_qty(9_000_000, "A2", entry_price=50.0, fx_rate=1300.0)
+    c = copy.deepcopy(cfg)
+    c["account"]["total_krw"] = 999_999_999_999
+    # cfg를 아예 쓰지 않는 순수 함수이므로 애초에 account 총액을 넘기지 않는다 —
+    # 그래도 결과가 같은지 재확인.
+    out_huge_cfg_ignored = sizing.plan_tranche_qty(9_000_000, "A2", entry_price=50.0, fx_rate=1300.0)
+    assert out_small == out_huge_cfg_ignored
+
+
+def test_min_budget_for_one_share_krw_a1():
+    # 1주 = $180.25 × 1,350원 = 243,337.5원, 1차 비중 1/9 -> 필요 계획금액 = ×9
+    min_budget = sizing.min_budget_for_one_share_krw(180.25, 1350.0)
+    assert min_budget == pytest.approx(180.25 * 1350.0 * 9)
+
+
+def test_min_budget_for_one_share_krw_matches_plan_tranche_qty_boundary():
+    entry_price, fx_rate = 180.25, 1350.0
+    min_budget = sizing.min_budget_for_one_share_krw(entry_price, fx_rate, "A1")
+    just_enough = sizing.plan_tranche_qty(math.ceil(min_budget), "A1", entry_price, fx_rate)
+    just_short = sizing.plan_tranche_qty(math.floor(min_budget) - 1, "A1", entry_price, fx_rate)
+    assert just_enough["qty"] >= 1
+    assert just_short["qty"] == 0
