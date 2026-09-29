@@ -38,11 +38,11 @@ from core import state as st  # noqa: E402
 from core.indicators import compute_indicators  # noqa: E402
 from data import fx  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
-from data.fills import load_fills  # noqa: E402
+from data.fills import load_fills, load_plan  # noqa: E402
 from data.prices import fetch_universe_prices  # noqa: E402
 from data.universe import get_universe  # noqa: E402
 from engine.daily import OUTPUT_DIR, build_report_summary, load_config, resolve_mode  # noqa: E402
-from engine.daily import _write_outputs  # noqa: E402
+from engine.daily import _plan_budget_map, _write_outputs, compute_live_judgments  # noqa: E402
 from notify import briefing, report_html, telegram  # noqa: E402
 from store import db  # noqa: E402
 
@@ -82,6 +82,12 @@ def regenerate(cfg: dict, mode: str, date_str: str | None = None) -> dict:
     earnings_map = get_earnings_dates(list(indicator_map.keys()))
     fills_result = load_fills()
 
+    if mode == "live":
+        plan_df, plan_errors = load_plan()
+    else:
+        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "memo"]), []
+    plan_by_ticker = _plan_budget_map(plan_df)
+
     target_ts = pd.Timestamp(target_date)
     as_of_by_ticker = {t: target_ts for t, df in indicator_map.items() if target_ts in df.index}
     missing = set(indicator_map) - set(as_of_by_ticker)
@@ -90,17 +96,27 @@ def regenerate(cfg: dict, mode: str, date_str: str | None = None) -> dict:
     data_gap_tickers = [t for t, gaps in price_result.data_gap.items() if target_ts in {pd.Timestamp(d) for d in gaps}]
 
     max_concurrent = cfg["risk"]["max_concurrent_positions"]
-    run_warnings = list(fills_result.errors)
+    run_warnings = list(fills_result.errors) + list(plan_errors)
 
     fx_result = fx.get_usd_krw_rate(target_date)
     if fx_result.warning:
         run_warnings.append(fx_result.warning)
         print(f"[regenerate] {fx_result.warning}")
 
+    # live만: 판정을 다시 계산한다(읽기 전용 — DB에 쓰지 않으므로 positions의
+    # last_judgment는 이미 실제 실행이 저장해 둔 값과 같다 — "바뀐 판정" 비교는
+    # 여기서는 항상 changed=False로 나온다, 재생성 스크립트의 구조적 한계).
+    live_judgment_rows = []
+    if mode == "live":
+        live_judgment_rows = compute_live_judgments(
+            positions, today_events, indicator_map, as_of_by_ticker, name_map,
+            plan_by_ticker, fills_result.df, fx_result.rate if fx_result else None, cfg,
+        )
+
     summary = build_report_summary(
         mode, cfg, indicator_map, name_map, earnings_map, positions, today_events,
         as_of_by_ticker, data_gap_tickers, fills_result, run_warnings, max_concurrent,
-        fx_result,
+        fx_result, plan_by_ticker=plan_by_ticker, live_judgment_rows=live_judgment_rows,
     )
 
     _write_outputs(summary)

@@ -64,7 +64,7 @@ from core.indicators import compute_indicators  # noqa: E402
 from data import fx  # noqa: E402
 from data import macro as macrodata  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
-from data.fills import fills_for, load_fills, summarize_cash_rows  # noqa: E402
+from data.fills import fills_for, load_fills, load_plan, summarize_cash_rows  # noqa: E402
 from data.market_calendar import latest_closed_trading_day, trading_days_between  # noqa: E402
 from data.prices import US_EASTERN, fetch_universe_prices  # noqa: E402
 from data.universe import get_universe  # noqa: E402
@@ -108,6 +108,16 @@ _MODE_LABEL = {"live": "실전", "paper": "모의"}
 _FILTER_REASON_LABEL = {
     "골든크로스 당일 RSI 70 이상": "과열 (RSI 70 이상)",
 }
+
+# ── 라이브 어드바이저 1단계 (docs/design/live_advisor.md 3번) ──────────────
+# core.state.process_day가 내는 이벤트를 새 신호 로직 없이 4가지 판정으로 재분류한다.
+_JUDGMENT_HOLD = "보유"
+_JUDGMENT_ADD = "추가매수"
+_JUDGMENT_TRIM = "일부매도 검토"
+_JUDGMENT_SELL = "매도"
+# 우선순위: 매도 > 일부매도 검토 > 추가매수 > 보유 (같은 날 여러 이벤트가 겹치면 더 급한 쪽).
+_SELL_JUDGMENT_KINDS = ("E3", "STOP", "A1_EXPIRE")
+_TRIM_JUDGMENT_KINDS = ("E1", "E2")
 
 
 def _stop_alert_candidates(
@@ -167,6 +177,150 @@ def _order_guidance(kind: str, qty: int, stop_price: float | None, cfg: dict) ->
             f"체결 안 됐으면 다음 거래일 장 시작 시 {qty}주 전량 {fallback} 매도 예약"
         )
     return f"다음 거래일 장 시작 시 {qty}주 매도 주문 예약"
+
+
+def _judgment_for_events(events: list[dict]) -> tuple[str, dict | None]:
+    """오늘 이벤트를 4가지 판정(보유·추가매수·일부매도 검토·매도)으로 재분류한다
+    (docs/design/live_advisor.md 3번 — 새 신호 로직 없음, core.state의 이벤트 종류를
+    그대로 재분류만 한다). 우선순위는 모듈 상수 _SELL_JUDGMENT_KINDS 등 주석 참고.
+
+    출력: (판정 문자열, 그 판정을 낸 이벤트 dict 또는 None(보유일 때))
+    """
+    by_kind = {e["kind"]: e for e in events}
+    for kind in _SELL_JUDGMENT_KINDS:
+        if kind in by_kind:
+            return _JUDGMENT_SELL, by_kind[kind]
+    for kind in _TRIM_JUDGMENT_KINDS:
+        if kind in by_kind:
+            return _JUDGMENT_TRIM, by_kind[kind]
+    for kind in _BUY_KINDS:
+        if kind in by_kind:
+            return _JUDGMENT_ADD, by_kind[kind]
+    return _JUDGMENT_HOLD, None
+
+
+def _judgment_reason(judgment: str, event: dict | None) -> str:
+    """판정 카드에 보일 이유 한 줄 (docs/design/live_advisor.md 3번, 7번)."""
+    if judgment == _JUDGMENT_HOLD or event is None:
+        return "오늘 신호 없음"
+    if judgment in (_JUDGMENT_SELL, _JUDGMENT_TRIM):
+        suffix = "매도" if judgment == _JUDGMENT_SELL else "매도 검토"
+        return f"{_SELL_REASON[event['kind']]} · {_SELL_RANGE_LABEL[event['kind']]} {suffix}"
+    return f"{_STAGE_LABEL[event['kind']]} 신호"
+
+
+def _live_target_tickers(plan_by_ticker: dict[str, float], fills_df: pd.DataFrame) -> set[str]:
+    """계획∪체결 종목 (docs/design/live_advisor.md 3·7번) — 라이브 판정 카드는 이
+    종목들만 대상으로 한다. "오늘의 추천" 탭(build_report_summary의 buy_groups)은
+    이 함수와 무관하게 여전히 전체 스캔 결과를 그대로 보여준다."""
+    fills_tickers = set(fills_df["ticker"].unique()) if fills_df is not None and not fills_df.empty else set()
+    return set(plan_by_ticker) | fills_tickers
+
+
+def _plan_budget_map(plan_df: pd.DataFrame) -> dict[str, float]:
+    """계획 DataFrame(ticker, budget_krw, memo)을 {ticker: budget_krw}로 바꾼다."""
+    if plan_df is None or plan_df.empty:
+        return {}
+    return dict(zip(plan_df["ticker"], plan_df["budget_krw"]))
+
+
+def _reference_entry_price(
+    ticker: str, today_events: list[dict], indicator_map: dict, as_of_by_ticker: dict, cfg: dict
+) -> float | None:
+    """이 종목의 오늘 참조 진입가(달러, 지정가 기준). 오늘 매수 신호(A1·A2·A3·B)가
+    있으면 그 신호의 지정가를 그대로 쓰고, 없으면(판정이 보유·매도라 신호가 없는
+    날에도) 오늘 종가 기준 지정가를 참고용으로 쓴다 — 계획금액이 1주도 못 사는지
+    신호 여부와 무관하게 상시 경고하기 위해 필요하다(docs/design/live_advisor.md 7번).
+    """
+    for e in today_events:
+        if e["ticker"] == ticker and e["kind"] in _BUY_KINDS:
+            return sig.entry_limit_price(e["price"], cfg)
+    df = indicator_map.get(ticker)
+    date = as_of_by_ticker.get(ticker)
+    if df is None or date is None or date not in df.index:
+        return None
+    close = df.loc[date, "close"]
+    if pd.isna(close):
+        return None
+    return sig.entry_limit_price(float(close), cfg)
+
+
+def compute_live_judgments(
+    states: dict,
+    today_events: list[dict],
+    indicator_map: dict,
+    as_of_by_ticker: dict,
+    name_map: dict,
+    plan_by_ticker: dict[str, float],
+    fills_df: pd.DataFrame,
+    fx_rate: float | None,
+    cfg: dict,
+) -> list[dict]:
+    """라이브 전용: 계획∪체결 종목마다 오늘 판정을 정하고 states[ticker]["last_judgment"]를
+    그 자리에서 갱신한다 (docs/design/live_advisor.md 3·7번). 호출부(run())가 이 함수를
+    부른 뒤에 db.save_position으로 저장해야 오늘 판정이 다음 실행의 "바뀐 판정" 비교
+    기준이 된다 — 이 함수 자체는 DB에 쓰지 않는다.
+
+    paper 모드는 이 함수를 부르지 않는다(호출부 책임) — states에 last_judgment를 남기지
+    않는다(engine/daily.py 모듈 설명의 P5-1 0번 예외 참고).
+
+    입력: states(오늘 시뮬레이션 반영 후 상태), today_events, indicator_map, as_of_by_ticker,
+         name_map, plan_by_ticker({ticker: 계획금액(원)}), fills_df(계획∪체결 종목 판단용),
+         fx_rate(원/달러, 없으면 수량·경고 계산 생략), cfg
+    출력: [{"ticker","name_kr","judgment","reason","changed","stop_price","has_plan",
+          "plan_budget_krw","qty","tranche_krw","tranche_usd","one_share_warning"}, ...]
+          티커 오름차순. one_share_warning은 {"min_budget_krw","ref_price"} 또는 None.
+    """
+    target_tickers = _live_target_tickers(plan_by_ticker, fills_df)
+    events_by_ticker: dict[str, list[dict]] = {}
+    for e in today_events:
+        events_by_ticker.setdefault(e["ticker"], []).append(e)
+
+    rows = []
+    for ticker in sorted(target_tickers):
+        state_ = states.get(ticker)
+        if state_ is None:  # 지표를 못 받은 종목(상장폐지 등) — 판정 불가
+            continue
+        events = events_by_ticker.get(ticker, [])
+        judgment, event = _judgment_for_events(events)
+        reason = _judgment_reason(judgment, event)
+
+        previous = state_.get("last_judgment")
+        changed = previous is not None and previous != judgment
+        state_["last_judgment"] = judgment
+
+        has_plan = ticker in plan_by_ticker
+        budget = plan_by_ticker.get(ticker)
+        qty = tranche_krw = tranche_usd = None
+        if judgment == _JUDGMENT_ADD and has_plan and fx_rate:
+            sized = sizing.plan_tranche_qty(budget, event["kind"], sig.entry_limit_price(event["price"], cfg), fx_rate)
+            qty, tranche_krw, tranche_usd = sized["qty"], sized["tranche_krw"], sized["tranche_usd"]
+
+        one_share_warning = None
+        if has_plan and fx_rate:
+            ref_price = _reference_entry_price(ticker, today_events, indicator_map, as_of_by_ticker, cfg)
+            if ref_price is not None:
+                min_budget = sizing.min_budget_for_one_share_krw(ref_price, fx_rate)
+                if budget < min_budget:
+                    one_share_warning = {"min_budget_krw": min_budget, "ref_price": ref_price}
+
+        rows.append(
+            {
+                "ticker": ticker,
+                "name_kr": name_map.get(ticker, "") or ticker,
+                "judgment": judgment,
+                "reason": reason,
+                "changed": changed,
+                "stop_price": state_.get("stop"),
+                "has_plan": has_plan,
+                "plan_budget_krw": budget,
+                "qty": qty,
+                "tranche_krw": tranche_krw,
+                "tranche_usd": tranche_usd,
+                "one_share_warning": one_share_warning,
+            }
+        )
+    return rows
 
 
 def load_config() -> dict:
@@ -804,6 +958,8 @@ def _empty_run_summary(
         "buy_risk_sum_krw": 0,
         "buy_risk_pct": None,
         "macro_rows": [],
+        "plan_by_ticker": {},
+        "live_judgment_rows": [],
     }
 
 
@@ -822,6 +978,8 @@ def build_report_summary(
     max_concurrent: int,
     fx_result,
     replay_needed: bool = False,
+    plan_by_ticker: dict[str, float] | None = None,
+    live_judgment_rows: list[dict] | None = None,
 ) -> dict:
     """오늘 이벤트·현재 상태·시세로 보고서·텔레그램용 summary dict를 만든다 (DB에 쓰지 않는다).
 
@@ -836,7 +994,14 @@ def build_report_summary(
          run()이면 sim["today_events"], 재생성이면 db에 저장된 이벤트),
          as_of_by_ticker, data_gap_tickers, fills_result(data.fills.load_fills
          결과), run_warnings, max_concurrent, fx_result(data.fx.get_usd_krw_rate
-         결과 — 오늘 자금 계획·원화 표기에 쓴다), replay_needed
+         결과 — 오늘 자금 계획·원화 표기에 쓴다), replay_needed, plan_by_ticker
+         (live 전용 — {ticker: 계획금액(원)}, docs/design/live_advisor.md 2번),
+         live_judgment_rows(live 전용 — compute_live_judgments 결과)
+
+    mode == "live"이면 계좌 총액 기반 자금 계획(core.sizing.size_buy_signals)을 전혀
+    쓰지 않고 종목별 계획금액만으로 수량을 정한다(docs/design/live_advisor.md 0번) —
+    funding_plan은 항상 None. mode == "paper"면 이 부분은 이전과 완전히 같다(engine/
+    daily.py 모듈 설명의 P5-1 0번 예외 — 일부러 live/paper 수량 공식을 다르게 둔다).
     출력: summary dict ("report_path" 제외 — render_report 호출은 호출부 몫)
     """
     fills_errors = fills_result.errors
@@ -858,68 +1023,95 @@ def build_report_summary(
     buy_count = sum(len(v) for v in buy_groups.values())
     all_buy_rows = [r for stage_rows in buy_groups.values() for r in stage_rows]
 
-    # ── 자금 계획 (P3.6 6-2·6-3번 / P5-1 0번): core.sizing.size_buy_signals 하나로
-    # 오늘의 모든 매수 신호 수량을 한 번에 정한다 — 라이브 보고서·paper 가상 체결·
-    # 백테스트가 항상 같은 수량을 내게 하기 위해서다(engine/daily.py 모듈 설명 참고).
-    # positions는 종목마다 기준일이 다를 수 있어(재생성 등) as_of_by_ticker로 종목별 날짜를 쓴다
-    # (_held_signals_snapshot은 날짜 하나만 받아 simulate_since 안에서만 쓴다).
-    held = []
-    for ticker, state_ in positions.items():
-        qty_held = sum(q for q in state_["units"].values() if q > 0)
-        if qty_held <= 0:
-            continue
-        date = as_of_by_ticker.get(ticker)
-        close = None
-        if date is not None and ticker in indicator_map and date in indicator_map[ticker].index:
-            c = indicator_map[ticker].loc[date, "close"]
-            close = float(c) if not pd.isna(c) else None
-        state_label = state_["state"]
-        if state_label == "주문대기" and state_.get("pending"):
-            state_label = state_["pending"].get("prev_state", state_label)
-        held.append({"ticker": ticker, "qty": qty_held, "close": close, "state_label": state_label})
+    if mode == "live":
+        # ── 계획 기반 사이징 (docs/design/live_advisor.md 0·2·6번): 계좌 총액·
+        # allocate_remaining_limit류 "남은 한도 배분" 없이, 종목별 계획금액만으로
+        # 독립적으로 차수·수량을 정한다. 계획 없는 종목은 1차 진입가·손절가·조건은
+        # 그대로 보이고(위에서 이미 buy_groups에 다 들어감) 금액만 비운다.
+        plan_by_ticker = plan_by_ticker or {}
+        for r in all_buy_rows:
+            has_plan = r["ticker"] in plan_by_ticker
+            r["has_plan"] = has_plan
+            if has_plan and r["stop"] is not None and fx_rate:
+                sized_row = sizing.plan_tranche_qty(plan_by_ticker[r["ticker"]], r["stage"], r["limit"], fx_rate)
+                r["qty"] = sized_row["qty"]
+                r["amount_krw"] = round(sized_row["tranche_krw"]) if sized_row["qty"] else 0
+                if sized_row["qty"] == 0:
+                    r["note"] = " · ".join(p for p in (r["note"], "계획금액으로 1주 미만") if p)
+            else:
+                r["qty"] = 0
+                r["amount_krw"] = 0
+                if not has_plan:
+                    r["note"] = " · ".join(p for p in (r["note"], "계획 없음") if p)
+            r["max_loss_krw"] = 0  # 위험 예산(2% 룰) 상한 없음 — 계획금액 자체가 위험 한도
+            r["risk_capped"] = False
+            r["limited"] = False
+            r["explain"] = expl.explain_buy(r["stage"], r, cfg) if r["stop"] is not None else None
+        funding_plan = None
+        buy_risk_sum_krw = 0
+    else:
+        # ── 자금 계획 (P3.6 6-2·6-3번 / P5-1 0번): core.sizing.size_buy_signals 하나로
+        # 오늘의 모든 매수 신호 수량을 한 번에 정한다 — 라이브 보고서·paper 가상 체결·
+        # 백테스트가 항상 같은 수량을 내게 하기 위해서다(engine/daily.py 모듈 설명 참고).
+        # positions는 종목마다 기준일이 다를 수 있어(재생성 등) as_of_by_ticker로 종목별 날짜를 쓴다
+        # (_held_signals_snapshot은 날짜 하나만 받아 simulate_since 안에서만 쓴다).
+        held = []
+        for ticker, state_ in positions.items():
+            qty_held = sum(q for q in state_["units"].values() if q > 0)
+            if qty_held <= 0:
+                continue
+            date = as_of_by_ticker.get(ticker)
+            close = None
+            if date is not None and ticker in indicator_map and date in indicator_map[ticker].index:
+                c = indicator_map[ticker].loc[date, "close"]
+                close = float(c) if not pd.isna(c) else None
+            state_label = state_["state"]
+            if state_label == "주문대기" and state_.get("pending"):
+                state_label = state_["pending"].get("prev_state", state_label)
+            held.append({"ticker": ticker, "qty": qty_held, "close": close, "state_label": state_label})
 
-    signals = [
-        {
-            "key": r["key"],
-            "stage": r["stage"],
-            "entry_price": r["limit"],
-            "stop_price": r["stop"],
-            "score": r["score"],
-            "is_new_position": r["is_new_position"],
-        }
-        for r in all_buy_rows
-    ]
-    sized = sizing.size_buy_signals(signals, held, cfg, fx_rate)
-    for r in all_buy_rows:
-        s = sized["rows"].get(r["key"], {"qty": 0, "amount_krw": 0, "max_loss_krw": 0, "risk_capped": False, "limited": False})
-        r["qty"] = s["qty"]
-        r["amount_krw"] = s["amount_krw"]
-        r["max_loss_krw"] = s["max_loss_krw"]
-        r["risk_capped"] = s["risk_capped"]
-        r["limited"] = s["limited"]
-        extra_notes = []
-        if s["risk_capped"] and s["qty"] > 0:
-            extra_notes.append("손절이 멀어 수량 축소")
-        if s["limited"]:
-            extra_notes.append("남은 한도 부족" if s["qty"] > 0 else "남은 한도 부족 — 매수 보류")
-        if extra_notes:
-            r["note"] = " · ".join(p for p in (r["note"], *extra_notes) if p)
-        r["explain"] = expl.explain_buy(r["stage"], r, cfg) if r["stop"] is not None else None
+        signals = [
+            {
+                "key": r["key"],
+                "stage": r["stage"],
+                "entry_price": r["limit"],
+                "stop_price": r["stop"],
+                "score": r["score"],
+                "is_new_position": r["is_new_position"],
+            }
+            for r in all_buy_rows
+        ]
+        sized = sizing.size_buy_signals(signals, held, cfg, fx_rate)
+        for r in all_buy_rows:
+            s = sized["rows"].get(r["key"], {"qty": 0, "amount_krw": 0, "max_loss_krw": 0, "risk_capped": False, "limited": False})
+            r["qty"] = s["qty"]
+            r["amount_krw"] = s["amount_krw"]
+            r["max_loss_krw"] = s["max_loss_krw"]
+            r["risk_capped"] = s["risk_capped"]
+            r["limited"] = s["limited"]
+            extra_notes = []
+            if s["risk_capped"] and s["qty"] > 0:
+                extra_notes.append("손절이 멀어 수량 축소")
+            if s["limited"]:
+                extra_notes.append("남은 한도 부족" if s["qty"] > 0 else "남은 한도 부족 — 매수 보류")
+            if extra_notes:
+                r["note"] = " · ".join(p for p in (r["note"], *extra_notes) if p)
+            r["explain"] = expl.explain_buy(r["stage"], r, cfg) if r["stop"] is not None else None
 
-    funding_plan = None
-    buy_risk_sum_krw = sum(r.get("max_loss_krw") or 0 for r in all_buy_rows)
-    if sized["funding_plan"] is not None:
-        total_krw = cfg["account"]["total_krw"]
-        new_spend_krw = sum(r.get("amount_krw") or 0 for r in all_buy_rows)
-        qqqm_target_krw = total_krw * (1 - cfg["plan"]["cash_buffer_pct"] / 100) - sized["funding_plan"]["held_krw"] - new_spend_krw
-        funding_plan = {
-            **sized["funding_plan"],
-            "fx_rate": fx_rate,
-            "fx_date": fx_result.rate_date if fx_result else None,
-            "fx_is_fallback": bool(fx_result and fx_result.is_fallback),
-            "total_krw": total_krw,
-            "qqqm_target_krw": qqqm_target_krw,
-        }
+        funding_plan = None
+        buy_risk_sum_krw = sum(r.get("max_loss_krw") or 0 for r in all_buy_rows)
+        if sized["funding_plan"] is not None:
+            total_krw = cfg["account"]["total_krw"]
+            new_spend_krw = sum(r.get("amount_krw") or 0 for r in all_buy_rows)
+            qqqm_target_krw = total_krw * (1 - cfg["plan"]["cash_buffer_pct"] / 100) - sized["funding_plan"]["held_krw"] - new_spend_krw
+            funding_plan = {
+                **sized["funding_plan"],
+                "fx_rate": fx_rate,
+                "fx_date": fx_result.rate_date if fx_result else None,
+                "fx_is_fallback": bool(fx_result and fx_result.is_fallback),
+                "total_krw": total_krw,
+                "qqqm_target_krw": qqqm_target_krw,
+            }
 
     # ── 오늘 걸러진 신호 (매매 금지·동시 보유 한도) ────────────────────────────
     filtered_rows = []
@@ -1231,7 +1423,13 @@ def build_report_summary(
         "funnel": funnel,
         "funding_plan": funding_plan,
         "buy_risk_sum_krw": buy_risk_sum_krw,
-        "buy_risk_pct": (buy_risk_sum_krw / cfg["account"]["total_krw"] * 100) if cfg["account"].get("total_krw") else None,
+        "buy_risk_pct": (
+            None
+            if mode == "live"
+            else ((buy_risk_sum_krw / cfg["account"]["total_krw"] * 100) if cfg["account"].get("total_krw") else None)
+        ),
+        "plan_by_ticker": plan_by_ticker or {},
+        "live_judgment_rows": live_judgment_rows or [],
     }
 
 
@@ -1287,9 +1485,19 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
     for line in fills_errors:
         print(f"  {line}")
 
+    # ── 계획(라이브 어드바이저 1단계, docs/design/live_advisor.md 2번): live만 쓴다.
+    # 구글 시트 연동(1g) 전까지는 fills.xlsx의 "계획" 시트를 임시로 쓴다.
+    if mode == "live":
+        plan_df, plan_errors = load_plan()
+    else:
+        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "memo"]), []
+    plan_by_ticker = _plan_budget_map(plan_df)
+    for line in plan_errors:
+        print(f"  {line}")
+
     conn = db.connect(db.db_path_for_mode(mode))
     max_concurrent = cfg["risk"]["max_concurrent_positions"]
-    run_warnings: list[str] = list(fills_errors)
+    run_warnings: list[str] = list(fills_errors) + list(plan_errors)
 
     # ── 환율 (P3.6 6-4번): 기준일 종가 환율을 받는다. 못 받으면 직전 캐시 값 + 경고 ──
     if actual_date is not None:
@@ -1360,6 +1568,17 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
     as_of_by_ticker = sim["as_of_by_ticker"]
 
     positions = states
+
+    # ── 라이브 판정 (docs/design/live_advisor.md 3·7번): paper는 절대 부르지 않는다 —
+    # states에 last_judgment를 남기지 않아야 한다(모듈 설명의 P5-1 0번 예외 참고).
+    # 저장(db.save_position) 전에 states를 갱신해야 오늘 판정이 이번 실행에 저장된다.
+    live_judgment_rows: list[dict] = []
+    if mode == "live":
+        live_judgment_rows = compute_live_judgments(
+            states, today_events, indicator_map, as_of_by_ticker, name_map,
+            plan_by_ticker, fills_df, fx_result.rate if fx_result else None, cfg,
+        )
+
     for ticker, state_ in states.items():
         if not dry_run:
             db.save_position(conn, state_)
@@ -1392,6 +1611,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
         mode, cfg, indicator_map, name_map, earnings_map, positions, today_events,
         as_of_by_ticker, data_gap_tickers, fills_result, run_warnings, max_concurrent,
         fx_result, replay_needed=replay_needed,
+        plan_by_ticker=plan_by_ticker, live_judgment_rows=live_judgment_rows,
     )
     summary["macro_rows"] = macro_rows
     as_of = summary["as_of"]
