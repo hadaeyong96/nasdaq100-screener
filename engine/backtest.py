@@ -413,6 +413,21 @@ def simulate_portfolio(
     """
     bt_cfg = cfg["backtest"]
     total_krw = bt_cfg["total_krw"]
+    # 사이징 기준 보호막(KJB-1.1에서 발견): 이 함수가 부르는 core.sizing.size_buy_signals
+    # (slot_krw·strategy_limit_krw·funding_qty)는 이 함수가 실제로 넣는 자금인
+    # backtest.total_krw가 아니라 cfg["account"]["total_krw"](라이브 계좌 기본값)를
+    # 기준으로 슬롯·위험 상한을 계산한다. 두 값이 다르면 포지션이 실제 시뮬레이션
+    # 자금의 100%를 훌쩍 넘게 잡힐 수 있다(2016~2021 실측 최대 404%, 현금이
+    # -2,490만원까지 마이너스로 내려간 사례 확인) — 조용히 잘못된 결과를 내는 대신
+    # 여기서 바로 멈춘다. 스케일된 부분 시뮬레이션(코어+위성 조합 등)을 쓰려면
+    # cfg["account"]["total_krw"]도 반드시 cfg["backtest"]["total_krw"]와 같게 맞춰서 넘겨라.
+    if cfg["account"]["total_krw"] != total_krw:
+        raise ValueError(
+            "cfg[\"account\"][\"total_krw\"]"
+            f"({cfg['account']['total_krw']:,.0f})와 cfg[\"backtest\"][\"total_krw\"]({total_krw:,.0f})가 다릅니다 — "
+            "core.sizing이 account.total_krw 기준으로 슬롯을 계산해 실제 백테스트 자금을 벗어난 포지션을 잡습니다"
+            "(KJB-1.1). 백테스트용 cfg에서는 두 값을 반드시 같게 맞추세요."
+        )
     cash_buffer_krw = total_krw * cfg["plan"]["cash_buffer_pct"] / 100
     max_slots = max_slots if max_slots is not None else cfg["plan"]["max_slots"]
     costs = bt_cfg["costs"]

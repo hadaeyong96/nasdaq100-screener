@@ -37,8 +37,11 @@ def make_df(n: int = 400, seed: int = 0, start: str = "2020-01-02") -> pd.DataFr
 
 @pytest.fixture
 def full_cfg(cfg):
+    # account.total_krw는 반드시 backtest.total_krw와 같아야 한다(KJB-1.1) — engine.backtest.
+    # simulate_portfolio가 이 둘이 다르면 바로 멈춘다(core.sizing이 account.total_krw
+    # 기준으로 슬롯을 계산해 실제 백테스트 자금을 벗어난 포지션을 잡으므로).
     out = {**cfg}
-    out["account"] = {"total_krw": 100_000_000}
+    out["account"] = {"total_krw": 40_000_000}
     out["plan"] = {"strategy_limit_pct": 60, "cash_buffer_pct": 5, "max_slots": 8}
     out["backtest"] = {
         "total_krw": 40_000_000,
@@ -263,6 +266,24 @@ def test_splice_pre_inception_series_is_continuous_at_boundary():
     assert abs(before / after - 1) < 0.05  # 하루 전후 괴리가 크면(예전처럼 반토막) 안 된다
 
 
+def test_simulate_portfolio_raises_when_account_and_backtest_total_krw_differ(full_cfg):
+    """KJB-1.1 가드: account.total_krw와 backtest.total_krw가 다르면 core.sizing이
+    실제 백테스트 자금이 아니라 account.total_krw 기준으로 슬롯을 계산해 포지션이
+    자금의 100%를 훌쩍 넘게 잡힐 수 있다(2016~2021 실측 최대 404%) — 조용히 잘못된
+    결과를 내는 대신 바로 멈춰야 한다."""
+    mismatched_cfg = {**full_cfg, "account": {"total_krw": full_cfg["backtest"]["total_krw"] * 2.5}}
+    idx = pd.bdate_range("2020-01-02", periods=5, name="date")
+    df = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1_000_000}, index=idx)
+    data = bt.BacktestData(
+        indicator_map={"AAA": df}, dividends={"AAA": pd.Series(dtype=float)}, checkpoints=[],
+        fx_by_date={d.date().isoformat(): 1_300.0 for d in idx}, universe_mode="CURRENT_CONSTITUENTS",
+        survivorship_bias="TRUE", failed_tickers={}, data_gap={}, qqq_df=df, qqq_dividends=pd.Series(dtype=float),
+        cash_etf_df=df, cash_etf_dividends=pd.Series(dtype=float),
+    )
+    with pytest.raises(ValueError, match="account"):
+        bt.simulate_portfolio(data, mismatched_cfg, idx[0].date(), idx[-1].date())
+
+
 def test_simulate_portfolio_produces_closeable_positions_with_initial_risk(full_cfg):
     """회귀 방지: simulate_portfolio가 만드는 진입 행에 initial_risk_krw가 실제로 채워져
     있어야 aggregate_positions가 포지션을 청산 완료로 인식한다 — 예전에는 이 값을
@@ -368,10 +389,11 @@ def _plan_cfg_base() -> dict:
     with open(bt.ROOT / "config.yaml", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     cfg = dict(cfg)
-    cfg["account"] = {"total_krw": 100_000_000}
     cfg["plan"] = {"strategy_limit_pct": 60, "cash_buffer_pct": 5, "max_slots": 8}
     cfg["backtest"] = dict(cfg["backtest"])
     cfg["backtest"]["total_krw"] = 40_000_000
+    # account.total_krw는 반드시 backtest.total_krw와 같아야 한다(KJB-1.1 가드).
+    cfg["account"] = {"total_krw": cfg["backtest"]["total_krw"]}
     return cfg
 
 
