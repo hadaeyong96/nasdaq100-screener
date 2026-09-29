@@ -300,6 +300,101 @@ def test_hold_row_renders_stop_alert_badge(tmp_path, cfg):
     assert '<span class="badge b-warn">손절 근접 · 예약 $212.80 확인</span>' in html
 
 
+# ── 라이브 어드바이저 1단계 (docs/design/live_advisor.md 3·6·7번) ──────────
+
+
+def _live_judgment_row(**overrides):
+    row = {
+        "ticker": "NVDA", "name_kr": "엔비디아", "judgment": "추가매수", "reason": "1차 · RSI 30 탈출 신호",
+        "changed": False, "stop_price": 170.0, "has_plan": True, "plan_budget_krw": 9_000_000.0,
+        "qty": 5, "tranche_krw": 1_000_000.0, "tranche_usd": 740.7, "one_share_warning": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_live_mode_hides_total_krw_in_header(tmp_path, cfg):
+    path = report_html.render_report(_empty_summary(mode="live"), cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    header = html.split("<nav")[0]
+    assert "총자금" not in header
+
+
+def test_paper_mode_still_shows_total_krw_in_header(tmp_path, cfg):
+    path = report_html.render_report(_empty_summary(mode="paper"), cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    header = html.split("<nav")[0]
+    assert "총자금" in header
+
+
+def test_live_mode_renders_judgment_table_row(cfg):
+    summary = _empty_summary(mode="live")
+    summary["live_judgment_rows"] = [_live_judgment_row()]
+    context = report_html.build_context(summary, cfg)
+    assert context["is_live"] is True
+    row = context["live_judgment_rows"][0]
+    assert row["badge_class"] == "b-buy"
+    assert row["plan_budget_krw_str"] == "900만"
+    assert row["tranche_krw_str"] == "100만"
+
+
+def test_live_judgment_table_appears_in_rendered_html(tmp_path, cfg):
+    summary = _empty_summary(mode="live")
+    summary["live_judgment_rows"] = [_live_judgment_row()]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "NVDA" in html
+    assert '<span class="badge b-buy">추가매수</span>' in html
+
+
+def test_paper_mode_never_renders_live_judgment_table(tmp_path, cfg):
+    """live_judgment_rows가 어쩌다 섞여 들어와도 paper 보고서에는 안 나와야 한다."""
+    summary = _empty_summary(mode="paper")
+    summary["live_judgment_rows"] = [_live_judgment_row()]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "계획·체결 종목" not in html
+
+
+def test_changed_judgment_banner_appears_only_when_changed_rows_exist(tmp_path, cfg):
+    summary = _empty_summary(mode="live")
+    summary["live_judgment_rows"] = [_live_judgment_row(changed=True)]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "판정이 바뀐 종목" in html
+    assert "NVDA(추가매수)" in html
+
+
+def test_changed_judgment_banner_absent_when_nothing_changed(tmp_path, cfg):
+    summary = _empty_summary(mode="live")
+    summary["live_judgment_rows"] = [_live_judgment_row(changed=False)]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "판정이 바뀐 종목" not in html
+
+
+def test_one_share_warning_banner_appears_when_present(tmp_path, cfg):
+    summary = _empty_summary(mode="live")
+    summary["live_judgment_rows"] = [
+        _live_judgment_row(
+            qty=0, tranche_krw=None,
+            one_share_warning={"min_budget_krw": 1_800_000.0, "ref_price": 180.0},
+        )
+    ]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "1차 매수 0주" in html
+    assert "180만" in html or "1,800,000" in html or "180" in html
+
+
+def test_one_share_warning_banner_absent_when_no_warnings(tmp_path, cfg):
+    summary = _empty_summary(mode="live")
+    summary["live_judgment_rows"] = [_live_judgment_row(one_share_warning=None)]
+    path = report_html.render_report(summary, cfg, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "1차 매수 0주" not in html
+
+
 def test_sell_row_renders_order_guidance_column(tmp_path, cfg):
     """P3.5 5번: 매도·손절 탭에 주문 안내 칸이 있다."""
     summary = _empty_summary()

@@ -248,6 +248,37 @@ def test_build_briefing_text_unfilled_line_only_when_present():
     assert "⚠️" not in text_none
 
 
+# ── 라이브 어드바이저 1단계 (docs/design/live_advisor.md 3·7번) ──────────
+
+
+def test_build_briefing_text_changed_judgment_line_only_when_present():
+    summary = _base_summary(
+        live_judgment_rows=[
+            {"ticker": "NVDA", "judgment": "매도", "changed": True, "one_share_warning": None},
+            {"ticker": "AVGO", "judgment": "보유", "changed": False, "one_share_warning": None},
+        ]
+    )
+    text = briefing.build_briefing_text(summary, {})
+    assert "🔄 판정 변경 1 · NVDA(매도)" in text
+    assert "AVGO" not in text.split("🔄")[1].split("\n")[0]  # 안 바뀐 종목은 이 줄에 없음
+
+    text_none = briefing.build_briefing_text(_base_summary(), {})
+    assert "🔄" not in text_none
+
+
+def test_build_briefing_text_one_share_warning_line_only_when_present():
+    summary = _base_summary(
+        live_judgment_rows=[
+            {"ticker": "NVDA", "judgment": "추가매수", "changed": False, "one_share_warning": {"min_budget_krw": 1_800_000.0, "ref_price": 180.0}},
+        ]
+    )
+    text = briefing.build_briefing_text(summary, {})
+    assert "⚠️ 계획금액으로 1차 매수 0주 · NVDA" in text
+
+    text_none = briefing.build_briefing_text(_base_summary(), {})
+    assert "1차 매수 0주" not in text_none
+
+
 def test_report_attachment_name_uses_korean_title_and_date():
     assert telegram.report_attachment_name("2026-09-23") == "나스닥100_2026-09-23.html"
 

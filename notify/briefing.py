@@ -113,6 +113,18 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
         names = " ".join(r["티커"] for r in unfilled_rows)
         lines.append(f"⚠️ 미체결 {len(unfilled_rows)} · {names}")
 
+    # 라이브 어드바이저 1단계 (docs/design/live_advisor.md 3·7번): 판정이 바뀐 종목을
+    # 맨 위 근처에 강조하고, 계획금액으로 1주도 못 사는 종목은 항상 경고한다.
+    live_judgment_rows = summary.get("live_judgment_rows", [])
+    changed_rows = [r for r in live_judgment_rows if r.get("changed")]
+    if changed_rows:
+        items = " ".join(f"{r['ticker']}({r['judgment']})" for r in changed_rows)
+        lines.append(f"🔄 판정 변경 {len(changed_rows)} · {items}")
+    warning_rows = [r for r in live_judgment_rows if r.get("one_share_warning")]
+    if warning_rows:
+        items = " ".join(r["ticker"] for r in warning_rows)
+        lines.append(f"⚠️ 계획금액으로 1차 매수 0주 · {items}")
+
     stop_alerts = summary.get("stop_alerts", [])
     if stop_alerts:
         items = " ".join(f"{a['티커']}({a['type']})" for a in stop_alerts)

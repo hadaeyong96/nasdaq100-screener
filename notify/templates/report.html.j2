@@ -260,7 +260,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <div class="meta">
     기준일 <b>{{ as_of_str }} 종가</b><br>
     주문 가능일 <b>{{ order_date_str }}</b><br>
-    총자금 <b>{{ total_krw_str }} 원</b> · 환율 <b>₩{{ fx_rate_str }}/$</b>{% if fx_date_str %} ({{ fx_date_str }}){% endif %}{% if fx_is_fallback %} <span class="fx-warn">캐시값</span>{% endif %} · 생성 {{ generated_str }}
+    {% if not is_live %}총자금 <b>{{ total_krw_str }} 원</b> · {% endif %}환율 <b>₩{{ fx_rate_str }}/$</b>{% if fx_date_str %} ({{ fx_date_str }}){% endif %}{% if fx_is_fallback %} <span class="fx-warn">캐시값</span>{% endif %} · 생성 {{ generated_str }}
   </div>
 </header>
 
@@ -313,6 +313,17 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <span><i style="background:var(--warn)"></i>오늘 신규</span>
     <span><i style="background:var(--grid)"></i>남은 한도</span>
   </div>
+</div>
+{% endif %}
+
+{% if is_live and changed_judgment_rows %}
+<div class="plan" style="border-color:var(--warn)">
+  <div class="items"><span>🔄 판정이 바뀐 종목: <b>{% for r in changed_judgment_rows %}{{ r.ticker }}({{ r.judgment }}){% if not loop.last %} · {% endif %}{% endfor %}</b></span></div>
+</div>
+{% endif %}
+{% if is_live and one_share_warning_rows %}
+<div class="plan" style="border-color:var(--sell)">
+  <div class="items">{% for r in one_share_warning_rows %}<span>⚠️ {{ r.one_share_warning_str }}</span>{% endfor %}</div>
 </div>
 {% endif %}
 
@@ -411,6 +422,34 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 <!-- 보유 현황 -->
 <section class="panel" id="hold">
+  {% if is_live %}
+  <p class="desc">계획·체결 종목의 오늘 판정입니다. 판정은 core.state의 신호 이벤트를 그대로 재분류한 것으로, 새 신호 로직이 아닙니다.</p>
+  <div class="sheet"><table>
+  <thead><tr>
+    <th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">판정</th><th class="nosort">이유</th>
+    <th class="num">손절가</th><th class="num">계획금액</th><th class="num">이번 차수 금액</th><th class="num">수량</th><th class="nosort"></th>
+  </tr></thead>
+  <tbody>
+  {% if not live_judgment_rows %}
+  <tr><td colspan="9" class="empty">계획·체결 종목 없음</td></tr>
+  {% else %}
+  {% for r in live_judgment_rows %}
+  <tr>
+    <td class="nm">{{ r.name_kr }}</td>
+    <td>{{ finviz(r.ticker) }}</td>
+    <td><span class="badge {{ r.badge_class }}">{{ r.judgment }}</span></td>
+    <td class="note">{{ r.reason }}</td>
+    <td class="num">{{ '$%.2f'|format(r.stop_price) if r.stop_price is not none else '-' }}</td>
+    <td class="num">{{ r.plan_budget_krw_str if r.has_plan else '-' }}</td>
+    <td class="num">{{ r.tranche_krw_str if r.tranche_krw is not none else '-' }}</td>
+    <td class="num">{{ r.qty if r.qty is not none else '-' }}</td>
+    <td>{% if r.changed %}<span class="badge b-warn">🔄 바뀜</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  {% endif %}
+  </tbody></table></div>
+  <p class="desc" style="margin-top:14px">아래는 보유 현황(수량·평균단가·손익) 표입니다.</p>
+  {% endif %}
   <p class="desc">진행 칸은 1차·2차·3차 매수 여부입니다. 손절가는 증권사 예약 주문과 같아야 합니다.</p>
   <div class="sheet"><table>
   <thead><tr><th class="nosort">종목</th><th class="nosort">티커</th><th class="nosort">단계</th><th class="nosort">진행</th><th class="num">수량</th><th class="num">평균단가</th><th class="num">종가</th><th class="num">평가금액</th><th class="num">평가손익</th><th class="num">손익률</th><th class="num">손절가</th><th class="num">손절까지</th><th class="nosort">비고</th></tr></thead>

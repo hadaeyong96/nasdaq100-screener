@@ -960,6 +960,9 @@ def _empty_run_summary(
         "macro_rows": [],
         "plan_by_ticker": {},
         "live_judgment_rows": [],
+        "fx_rate": None,
+        "fx_date": None,
+        "fx_is_fallback": False,
     }
 
 
@@ -1430,6 +1433,11 @@ def build_report_summary(
         ),
         "plan_by_ticker": plan_by_ticker or {},
         "live_judgment_rows": live_judgment_rows or [],
+        # funding_plan과 별개로 항상 채운다 — live는 funding_plan이 없어도(mode=="live")
+        # 보고서가 오늘 환율을 그대로 보여줘야 한다(docs/design/live_advisor.md 6·7번).
+        "fx_rate": fx_rate,
+        "fx_date": fx_result.rate_date if fx_result else None,
+        "fx_is_fallback": bool(fx_result and fx_result.is_fallback),
     }
 
 

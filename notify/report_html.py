@@ -82,6 +82,9 @@ _BUY_TITLES = {
 }
 _NUM_HEADERS = {"지정가", "수량", "투입금액", "손절가", "손절폭", "최대손실", "점수"}
 
+# 라이브 어드바이저 1단계 (docs/design/live_advisor.md 3·7번) — 판정 배지 색상.
+_JUDGMENT_BADGE_CLASS = {"보유": "b-info", "추가매수": "b-buy", "일부매도 검토": "b-warn", "매도": "b-sell"}
+
 
 def _buy_row_ctx(r: dict, include_stage_label: bool) -> dict:
     ctx = {
@@ -123,6 +126,25 @@ def _macro_row_ctx(row: dict) -> dict:
     return {
         **row, "spark_points": spark_points, "ref_ys": ref_ys,
         "value_str": value_str, "change_str": change_str, "range_str": range_str,
+    }
+
+
+def _live_judgment_row_ctx(r: dict) -> dict:
+    """engine.daily.compute_live_judgments의 행 하나 -> 템플릿에 넘길 context
+    (docs/design/live_advisor.md 3·7번 — 판정 배지, 원화 표시, 1주 미만 경고 문구)."""
+    warning = r.get("one_share_warning")
+    warning_str = None
+    if warning:
+        warning_str = (
+            f"{r['name_kr']}({r['ticker']}): 계획금액 {_won(r.get('plan_budget_krw'))}으로 "
+            f"1차 매수 0주 (최소 {_won(warning['min_budget_krw'])} 필요)"
+        )
+    return {
+        **r,
+        "badge_class": _JUDGMENT_BADGE_CLASS.get(r["judgment"], "b-info"),
+        "plan_budget_krw_str": _won(r.get("plan_budget_krw")),
+        "tranche_krw_str": _won(r.get("tranche_krw")),
+        "one_share_warning_str": warning_str,
     }
 
 
@@ -248,21 +270,38 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "fx": macro_th.get("DEXKOUS") or {"pct_high": 80, "pct_low": 20},
     }
 
+    is_live = summary.get("mode") == "live"
+    live_judgment_rows = [_live_judgment_row_ctx(r) for r in summary.get("live_judgment_rows", [])]
+    changed_judgment_rows = [r for r in live_judgment_rows if r.get("changed")]
+    one_share_warning_rows = [r for r in live_judgment_rows if r.get("one_share_warning")]
+
+    # fx_rate는 funding_plan과 별개로 summary 최상위에 항상 있다(engine/daily.py) —
+    # live는 funding이 없어도(계좌 총액 기반 자금 계획을 안 쓴다) 오늘 환율은 보여줘야 한다.
+    fx_rate = summary.get("fx_rate")
+    fx_date_str = summary.get("fx_date") or ""
+    fx_is_fallback = bool(summary.get("fx_is_fallback"))
+
     return {
         "stale": bool(summary.get("stale")),
         "expected_date_str": summary.get("expected_date") or "",
         "actual_date_str": summary.get("actual_date") or "",
         "mode_label": summary.get("mode_label", "실전"),
+        "is_live": is_live,
         "as_of_str": as_of_str,
         "order_date_str": order_date,
         "generated_str": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        # live는 계좌 총액 기반 자금 계획을 아예 안 쓰므로(docs/design/live_advisor.md 0번)
+        # 총자금·전략 한도는 paper에서만 의미가 있다 — 템플릿이 is_live로 숨긴다.
         "total_krw": total_krw,
         "total_krw_str": _won(total_krw),
         "strategy_limit_pct": plan_cfg.get("strategy_limit_pct", 60),
-        "fx_rate": funding["fx_rate"] if funding else None,
-        "fx_rate_str": f"{funding['fx_rate']:,.0f}" if funding else "-",
-        "fx_date_str": (funding["fx_date"] or "") if funding else "",
-        "fx_is_fallback": bool(funding and funding["fx_is_fallback"]),
+        "fx_rate": fx_rate,
+        "fx_rate_str": f"{fx_rate:,.0f}" if fx_rate else "-",
+        "fx_date_str": fx_date_str,
+        "fx_is_fallback": fx_is_fallback,
+        "live_judgment_rows": live_judgment_rows,
+        "changed_judgment_rows": changed_judgment_rows,
+        "one_share_warning_rows": one_share_warning_rows,
         "cfg_js": cfg_js,
         "buy_count": buy_count,
         "sell_count": len(sell_rows),
