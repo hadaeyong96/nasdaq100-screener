@@ -21,8 +21,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
 from data.fills import FillsResult, parse_fill_records, parse_plan_records
+
+ROOT = Path(__file__).resolve().parents[1]
+# notify/telegram.py와 같은 패턴: 이 모듈만 단독으로 쓰는 스크립트(scripts/drive_sync.py
+# 등, notify.telegram을 안 거치는 경로)도 .env를 확실히 읽도록 여기서 직접 불러온다.
+# override=True: 이 프로세스에 같은 이름의 빈 환경변수가 이미 있어도 .env 값으로 덮는다.
+load_dotenv(ROOT / ".env", override=True)
 
 _SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
