@@ -67,6 +67,7 @@ from data.earnings import get_earnings_dates  # noqa: E402
 from data.fills import fills_for, load_fills, load_plan, summarize_cash_rows  # noqa: E402
 from data.market_calendar import latest_closed_trading_day, trading_days_between  # noqa: E402
 from data.prices import US_EASTERN, fetch_universe_prices  # noqa: E402
+from data import sheets  # noqa: E402
 from data.universe import get_universe  # noqa: E402
 from notify import briefing, report_html, telegram  # noqa: E402
 from store import db  # noqa: E402
@@ -1441,8 +1442,17 @@ def build_report_summary(
     }
 
 
-def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
-    """엔진을 한 번 실행한다. 결과 요약 dict를 반환한다 (완료 보고·보고서·텔레그램용)."""
+def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None) -> dict:
+    """엔진을 한 번 실행한다. 결과 요약 dict를 반환한다 (완료 보고·보고서·텔레그램용).
+
+    sheets_client: live 모드에서 data.sheets.read_sheets에 그대로 넘기는 테스트용
+    주입 값(기본 None → 실제 인증). 계획·체결 입력 소스는 live만 다음 우선순위:
+    1) 구글 시트(GOOGLE_SERVICE_ACCOUNT_JSON·GOOGLE_SHEETS_ID가 있으면),
+    2) 없으면(SheetsConfigError) 로컬 fills.xlsx로 조용히 폴백(경고만 남김) —
+    로컬 개발·기존 테스트가 구글 인증 없이 그대로 돌게 하기 위해서다. 시트는
+    설정돼 있는데 읽다가 실패하면(네트워크·인증 오류 등) 조용히 넘기지 않고
+    그대로 실패시킨다(CLAUDE.md 보안·네트워크 실패 원칙) — GitHub Actions가
+    실패 알림을 보낸다."""
     print(f"[모드: {_MODE_LABEL[mode]} ({mode})]")
     print(f"[daily] {telegram.env_status()}")  # 값은 절대 출력하지 않는다 (CLAUDE.md 보안, P3.2 0번)
     print("나스닥 100 구성 종목 목록을 가져오는 중...")
@@ -1487,18 +1497,25 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool) -> dict:
     print("실적 발표일을 확인하는 중...")
     earnings_map = get_earnings_dates(list(indicator_map.keys()))
 
-    fills_result = load_fills()
+    # ── 계획·체결 입력 (docs/design/live_advisor.md 1·2번): live는 구글 시트를 먼저
+    # 시도하고, 인증 정보가 없으면(로컬 개발) fills.xlsx로 조용히 폴백한다. paper는
+    # 지금처럼 fills.xlsx만 쓴다(계획 개념 자체가 paper에는 없다).
+    if mode == "live":
+        try:
+            sheets_result = sheets.read_sheets(client=sheets_client)
+            fills_result = sheets_result.fills
+            plan_df, plan_errors = sheets_result.plan_df, sheets_result.plan_errors
+        except sheets.SheetsConfigError:
+            print("[daily] 구글 시트 인증 정보가 없어 로컬 fills.xlsx를 대신 씁니다.")
+            fills_result = load_fills()
+            plan_df, plan_errors = load_plan()
+    else:
+        fills_result = load_fills()
+        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "memo"]), []
     fills_df = fills_result.df
     fills_errors = fills_result.errors
     for line in fills_errors:
         print(f"  {line}")
-
-    # ── 계획(라이브 어드바이저 1단계, docs/design/live_advisor.md 2번): live만 쓴다.
-    # 구글 시트 연동(1g) 전까지는 fills.xlsx의 "계획" 시트를 임시로 쓴다.
-    if mode == "live":
-        plan_df, plan_errors = load_plan()
-    else:
-        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "memo"]), []
     plan_by_ticker = _plan_budget_map(plan_df)
     for line in plan_errors:
         print(f"  {line}")

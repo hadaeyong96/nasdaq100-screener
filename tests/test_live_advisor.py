@@ -339,3 +339,115 @@ def test_build_report_summary_default_plan_by_ticker_and_judgment_rows_are_empty
     summary = _buy_summary("paper")
     assert summary["plan_by_ticker"] == {}
     assert summary["live_judgment_rows"] == []
+
+
+# ── run(): 구글 시트 우선, 인증 정보 없으면 fills.xlsx로 폴백 (1g) ─────────────
+
+
+def _patch_run_io(monkeypatch, tmp_path):
+    """run()의 네트워크·DB·현재 시각 접근을 모두 가짜로 바꾼다 (tests/test_stale_guard.py와 같은 패턴)."""
+    import numpy as np
+    from datetime import datetime
+
+    from data.prices import US_EASTERN, PriceFetchResult
+    from engine import daily as engine_daily
+    from store import db
+
+    last_date = "2026-09-25"
+    rng = np.random.default_rng(0)
+    periods = 60
+    close = np.clip(100 + np.cumsum(rng.normal(0.05, 1.2, periods)), 5, None)
+    df = pd.DataFrame(
+        {"open": close - 0.05, "high": close + 0.3, "low": close - 0.3, "close": close, "volume": np.full(periods, 2_000_000)},
+        index=pd.bdate_range(end=last_date, periods=periods, name="date"),
+    )
+    df["close_source"] = "yahoo"
+    df.attrs["warnings"] = []
+    df.attrs["close_meta_time"] = None
+
+    monkeypatch.setattr(engine_daily, "get_universe", lambda: pd.DataFrame({"ticker": ["TEST"], "name_kr": ["테스트"]}))
+    monkeypatch.setattr(engine_daily, "fetch_universe_prices", lambda tickers, cfg: PriceFetchResult(prices={"TEST": df}))
+    monkeypatch.setattr(engine_daily, "get_earnings_dates", lambda tickers: {t: None for t in tickers})
+    monkeypatch.setattr(engine_daily, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "state.db")
+
+    now_et = datetime.fromisoformat(f"{last_date}T20:00:00").replace(tzinfo=US_EASTERN)
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now_et if tz is not None else now_et.replace(tzinfo=None)
+
+    monkeypatch.setattr(engine_daily, "datetime", _FrozenDateTime)
+    return engine_daily
+
+
+def test_run_live_falls_back_to_local_fills_xlsx_without_sheets_credentials(monkeypatch, tmp_path, cfg):
+    """GOOGLE_SERVICE_ACCOUNT_JSON·GOOGLE_SHEETS_ID가 없으면(로컬 개발) 조용히
+    fills.xlsx/load_plan으로 폴백해야 한다 — 실제 네트워크를 타면 안 된다."""
+    engine_daily = _patch_run_io(monkeypatch, tmp_path)
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_SHEETS_ID", raising=False)
+    monkeypatch.setattr(engine_daily, "load_fills", lambda: FillsResult())
+    monkeypatch.setattr(
+        engine_daily, "load_plan", lambda: (pd.DataFrame({"ticker": ["TEST"], "budget_krw": [3_000_000.0], "memo": [""]}), [])
+    )
+
+    summary = engine_daily.run(cfg, "live", do_replay=False, dry_run=True)
+
+    assert summary["plan_by_ticker"] == {"TEST": 3_000_000.0}
+
+
+def test_run_live_uses_injected_sheets_client_when_sheet_id_configured(monkeypatch, tmp_path, cfg):
+    """GOOGLE_SHEETS_ID가 있고 sheets_client가 주입되면 그 시트의 계획을 쓴다
+    (fills.xlsx의 load_plan은 전혀 안 불려야 한다)."""
+    engine_daily = _patch_run_io(monkeypatch, tmp_path)
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-123")
+
+    def _load_plan_should_not_be_called():
+        raise AssertionError("구글 시트가 설정돼 있으면 load_plan()을 부르면 안 된다")
+
+    monkeypatch.setattr(engine_daily, "load_plan", _load_plan_should_not_be_called)
+
+    class _FakeWorksheet:
+        def __init__(self, records):
+            self._records = records
+
+        def get_all_records(self):
+            return self._records
+
+    class _FakeSpreadsheet:
+        def worksheet(self, name):
+            if name == "계획":
+                return _FakeWorksheet([{"티커": "TEST", "계획금액": "5000000", "메모": ""}])
+            return _FakeWorksheet([])
+
+    class _FakeClient:
+        def open_by_key(self, sheet_id):
+            assert sheet_id == "sheet-123"
+            return _FakeSpreadsheet()
+
+    summary = engine_daily.run(cfg, "live", do_replay=False, dry_run=True, sheets_client=_FakeClient())
+
+    assert summary["plan_by_ticker"] == {"TEST": 5_000_000.0}
+
+
+def test_run_paper_never_touches_sheets_even_when_credentials_configured(monkeypatch, tmp_path, cfg):
+    """paper 모드는 시트 인증이 있어도 절대 시도하지 않는다 — fills.xlsx만 쓴다
+    (docs/design/live_advisor.md 0번 — paper 경로 무변경)."""
+    engine_daily = _patch_run_io(monkeypatch, tmp_path)
+    from store import db as db_module
+
+    monkeypatch.setattr(db_module, "PAPER_DB_PATH", tmp_path / "paper_state.db")
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-123")
+    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", '{"type": "service_account"}')
+    monkeypatch.setattr(engine_daily, "load_fills", lambda: FillsResult())
+
+    def _read_sheets_should_not_be_called(client=None):
+        raise AssertionError("paper 모드는 read_sheets를 절대 부르면 안 된다")
+
+    monkeypatch.setattr(engine_daily.sheets, "read_sheets", _read_sheets_should_not_be_called)
+
+    summary = engine_daily.run(cfg, "paper", do_replay=False, dry_run=True)
+
+    assert summary["plan_by_ticker"] == {}

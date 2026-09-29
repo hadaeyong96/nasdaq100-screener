@@ -51,7 +51,13 @@ def _patch_io(monkeypatch, tmp_path, last_date: str, fixed_now_et: datetime, mod
     )
     monkeypatch.setattr(engine_daily, "get_earnings_dates", lambda tickers: {t: None for t in tickers})
     monkeypatch.setattr(engine_daily, "load_fills", lambda: FillsResult())
+    monkeypatch.setattr(engine_daily, "load_plan", lambda: (pd.DataFrame(columns=["ticker", "budget_krw", "memo"]), []))
     monkeypatch.setattr(engine_daily, "OUTPUT_DIR", tmp_path)
+    # live 모드는 구글 시트를 먼저 시도한다 — 개발자의 실제 .env에 시트 인증 정보가
+    # 있어도 이 테스트가 실제 네트워크를 타지 않도록 강제로 없앤다
+    # (CLAUDE.md 네트워크 없는 테스트 원칙).
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_SHEETS_ID", raising=False)
     db_attr = "DB_PATH" if mode == "live" else "PAPER_DB_PATH"
     monkeypatch.setattr(db, db_attr, tmp_path / f"{mode}_state.db")
 
