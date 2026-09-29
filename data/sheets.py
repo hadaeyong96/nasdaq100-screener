@@ -56,7 +56,7 @@ class SheetsResult:
     read_at_kst: pd.Timestamp | None = None
 
 
-def _load_credentials_info() -> dict:
+def load_credentials_info() -> dict:
     """GOOGLE_SERVICE_ACCOUNT_JSON을 읽어 서비스 계정 정보 dict로 만든다.
     "{"로 시작하면 JSON 문자열(Actions Secret), 아니면 JSON 키 파일 경로(로컬)."""
     raw = (os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON") or "").strip()
@@ -85,7 +85,7 @@ def get_client():
     import gspread
     from google.oauth2.service_account import Credentials
 
-    info = _load_credentials_info()
+    info = load_credentials_info()
     creds = Credentials.from_service_account_info(info, scopes=_SCOPES)
     return gspread.authorize(creds)
 

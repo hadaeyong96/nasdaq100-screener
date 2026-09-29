@@ -184,20 +184,20 @@ def test_read_sheets_propagates_plan_and_fills_errors(monkeypatch):
 def test_load_credentials_info_missing_env_raises(monkeypatch):
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
     with pytest.raises(sheets.SheetsConfigError):
-        sheets._load_credentials_info()
+        sheets.load_credentials_info()
 
 
 def test_load_credentials_info_from_json_string(monkeypatch):
     info = {"type": "service_account", "client_email": "svc@example.com"}
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", json.dumps(info))
-    loaded = sheets._load_credentials_info()
+    loaded = sheets.load_credentials_info()
     assert loaded == info
 
 
 def test_load_credentials_info_from_invalid_json_string_raises(monkeypatch):
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", "{not valid json")
     with pytest.raises(sheets.SheetsConfigError):
-        sheets._load_credentials_info()
+        sheets.load_credentials_info()
 
 
 def test_load_credentials_info_from_file_path(monkeypatch, tmp_path):
@@ -205,14 +205,14 @@ def test_load_credentials_info_from_file_path(monkeypatch, tmp_path):
     key_path = tmp_path / "key.json"
     key_path.write_text(json.dumps(info), encoding="utf-8")
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", str(key_path))
-    loaded = sheets._load_credentials_info()
+    loaded = sheets.load_credentials_info()
     assert loaded == info
 
 
 def test_load_credentials_info_from_missing_file_path_raises(monkeypatch, tmp_path):
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_JSON", str(tmp_path / "no_such_key.json"))
     with pytest.raises(sheets.SheetsConfigError):
-        sheets._load_credentials_info()
+        sheets.load_credentials_info()
 
 
 def test_get_client_builds_credentials_and_authorizes(monkeypatch):
