@@ -10,3 +10,6 @@ python-dotenv
 jinja2 # HTML 보고서 템플릿 (notify/report_html.py, P3)
 pandas_market_calendars # NYSE 거래일 달력 (data/market_calendar.py, P3.2)
 openpyxl # 체결 기록 엑셀(data/fills.xlsx) 읽기 (data/fills.py, P3.4)
+gspread # 계획·체결 구글 스프레드시트 읽기 (data/sheets.py, 라이브 어드바이저 1단계)
+google-auth # 서비스 계정 인증 (data/sheets.py, store/drive.py)
+google-api-python-client # 구글 드라이브 상태 저장 (store/drive.py, 라이브 어드바이저 1단계)

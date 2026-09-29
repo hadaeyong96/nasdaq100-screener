@@ -229,6 +229,28 @@ def _to_frame(rows: list[dict]) -> pd.DataFrame:
     return df
 
 
+def parse_fill_records(records: list[dict]) -> FillsResult:
+    """행 dict 목록(구글 시트 get_all_records() 등)을 체결 기록으로 파싱한다.
+    열 이름은 한글(날짜/종목/차수/매수매도/체결가/수량) 또는 영어(P2 레거시)
+    모두 받는다. _load_csv/_load_xlsx와 완전히 같은 검증 로직을 쓴다
+    (data/sheets.py의 "체결" 탭 읽기가 이 함수를 재사용한다).
+    """
+    if not records:
+        return FillsResult(df=pd.DataFrame(columns=_COLUMNS))
+
+    raw = pd.DataFrame(records)
+    if raw.empty:
+        return FillsResult(df=pd.DataFrame(columns=_COLUMNS))
+
+    try:
+        raw = _normalize_columns(raw)
+    except ValueError as exc:
+        return FillsResult(df=pd.DataFrame(columns=_COLUMNS), errors=[f"체결 기록 오류: 헤더 오류 - {exc}"])
+
+    rows, cash_rows, errors = _rows_from_records(raw.to_dict(orient="records"))
+    return FillsResult(df=_to_frame(rows), errors=errors, cash_rows=_to_frame(cash_rows))
+
+
 def _load_csv(path: Path) -> FillsResult:
     """fills.csv(폴백)를 읽는다. 파일이 없거나 헤더만 있으면 빈 DataFrame.
 
@@ -244,13 +266,7 @@ def _load_csv(path: Path) -> FillsResult:
     if raw.empty:
         return FillsResult(df=pd.DataFrame(columns=_COLUMNS))
 
-    try:
-        raw = _normalize_columns(raw)
-    except ValueError as exc:
-        return FillsResult(df=pd.DataFrame(columns=_COLUMNS), errors=[f"체결 기록 오류: 헤더 오류 - {exc}"])
-
-    rows, cash_rows, errors = _rows_from_records(raw.to_dict(orient="records"))
-    return FillsResult(df=_to_frame(rows), errors=errors, cash_rows=_to_frame(cash_rows))
+    return parse_fill_records(raw.to_dict(orient="records"))
 
 
 def _is_xlsx_locked(path: Path) -> bool:
@@ -275,13 +291,7 @@ def _load_xlsx(path: Path) -> FillsResult:
     if raw.empty:
         return FillsResult(df=pd.DataFrame(columns=_COLUMNS))
 
-    try:
-        raw = _normalize_columns(raw)
-    except ValueError as exc:
-        return FillsResult(df=pd.DataFrame(columns=_COLUMNS), errors=[f"체결 기록 오류: 헤더 오류 - {exc}"])
-
-    rows, cash_rows, errors = _rows_from_records(raw.to_dict(orient="records"))
-    return FillsResult(df=_to_frame(rows), errors=errors, cash_rows=_to_frame(cash_rows))
+    return parse_fill_records(raw.to_dict(orient="records"))
 
 
 def load_fills(path: Path | None = None) -> FillsResult:
