@@ -36,6 +36,7 @@ _POSITION_FIELDS = [
     "b_entry_date",
     "b_total_qty",
     "pending",
+    "last_judgment",
 ]
 _JSON_FIELDS = {"units", "entries", "sent_alerts", "pending"}
 _DATE_FIELDS = {"a1_date", "cooldown_until", "updated_at", "b_entry_date"}
@@ -65,13 +66,16 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             updated_at TEXT,
             b_entry_date TEXT,
             b_total_qty INTEGER,
-            pending TEXT
+            pending TEXT,
+            last_judgment TEXT
         )
         """
     )
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
     if "pending" not in existing_columns:  # 기존 DB(P3.1 이전) 마이그레이션
         conn.execute("ALTER TABLE positions ADD COLUMN pending TEXT")
+    if "last_judgment" not in existing_columns:  # 기존 DB(라이브 어드바이저 1단계 이전) 마이그레이션
+        conn.execute("ALTER TABLE positions ADD COLUMN last_judgment TEXT")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS events (
@@ -120,6 +124,37 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS notifications (
             as_of_date TEXT PRIMARY KEY,
             sent_at TEXT
+        )
+        """
+    )
+    # 라이브 어드바이저 1단계(docs/design/live_advisor.md 9번): 월간 비교(2단계)에
+    # 쓸 데이터를 1단계부터 append-only로 쌓아 둔다. 기존 positions·events는 안 건드림.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fill_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            mode TEXT,
+            ticker TEXT,
+            side TEXT,
+            qty INTEGER,
+            price_usd REAL,
+            fx_rate REAL,
+            amount_krw REAL,
+            qqqm_close REAL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS daily_mark (
+            date TEXT,
+            mode TEXT,
+            ticker TEXT,
+            qty INTEGER,
+            price_usd REAL,
+            fx_rate REAL,
+            PRIMARY KEY (date, mode, ticker)
         )
         """
     )
@@ -273,3 +308,66 @@ def record_run(conn: sqlite3.Connection, run_at: str, as_of_date: str, ticker_co
         (run_at, as_of_date, ticker_count, warning_count),
     )
     conn.commit()
+
+
+_FILL_LEDGER_FIELDS = ["date", "mode", "ticker", "side", "qty", "price_usd", "fx_rate", "amount_krw", "qqqm_close"]
+_DAILY_MARK_FIELDS = ["date", "mode", "ticker", "qty", "price_usd", "fx_rate"]
+
+
+def record_fill_ledger(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """체결/판정 이벤트마다 한 줄을 append한다 (실제 체결 live, 가상 체결 paper
+    둘 다 여기 쌓는다 — docs/design/live_advisor.md 9번, 2단계 월간 비교용).
+
+    입력: rows([{date, mode(live|paper), ticker, side(buy|sell), qty, price_usd,
+         fx_rate, amount_krw, qqqm_close(그날 QQQM 종가, 그림자 계산용 — 없으면
+         None)}, ...])
+    """
+    for r in rows:
+        row = {f: r.get(f) for f in _FILL_LEDGER_FIELDS}
+        conn.execute(
+            "INSERT INTO fill_ledger (date, mode, ticker, side, qty, price_usd, fx_rate, amount_krw, qqqm_close) "
+            "VALUES (:date, :mode, :ticker, :side, :qty, :price_usd, :fx_rate, :amount_krw, :qqqm_close)",
+            row,
+        )
+    conn.commit()
+
+
+def get_fill_ledger(conn: sqlite3.Connection, mode: str | None = None) -> list[dict]:
+    """fill_ledger를 id 순서(기록 순)로 읽는다. mode를 주면 그 모드만."""
+    if mode is None:
+        cur = conn.execute(f"SELECT {', '.join(_FILL_LEDGER_FIELDS)} FROM fill_ledger ORDER BY id")
+    else:
+        cur = conn.execute(
+            f"SELECT {', '.join(_FILL_LEDGER_FIELDS)} FROM fill_ledger WHERE mode = ? ORDER BY id", (mode,)
+        )
+    return [dict(zip(_FILL_LEDGER_FIELDS, row)) for row in cur.fetchall()]
+
+
+def record_daily_mark(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    """보유 중인 종목마다 매일 한 줄을 남긴다 (같은 date+mode+ticker로 다시
+    실행하면 덮어쓴다 — docs/design/live_advisor.md 9번). 새 체결이 없는 날에도
+    매일 찍어 수익률 곡선을 거래일 사이에도 매끈하게 그릴 수 있게 한다.
+
+    입력: rows([{date, mode(live|paper), ticker, qty, price_usd, fx_rate}, ...])
+    """
+    for r in rows:
+        row = {f: r.get(f) for f in _DAILY_MARK_FIELDS}
+        conn.execute(
+            "INSERT INTO daily_mark (date, mode, ticker, qty, price_usd, fx_rate) "
+            "VALUES (:date, :mode, :ticker, :qty, :price_usd, :fx_rate) "
+            "ON CONFLICT(date, mode, ticker) DO UPDATE SET "
+            "qty=excluded.qty, price_usd=excluded.price_usd, fx_rate=excluded.fx_rate",
+            row,
+        )
+    conn.commit()
+
+
+def get_daily_mark(conn: sqlite3.Connection, mode: str | None = None) -> list[dict]:
+    """daily_mark를 (date, ticker) 순으로 읽는다. mode를 주면 그 모드만."""
+    if mode is None:
+        cur = conn.execute(f"SELECT {', '.join(_DAILY_MARK_FIELDS)} FROM daily_mark ORDER BY date, ticker")
+    else:
+        cur = conn.execute(
+            f"SELECT {', '.join(_DAILY_MARK_FIELDS)} FROM daily_mark WHERE mode = ? ORDER BY date, ticker", (mode,)
+        )
+    return [dict(zip(_DAILY_MARK_FIELDS, row)) for row in cur.fetchall()]

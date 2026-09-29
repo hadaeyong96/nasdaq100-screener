@@ -125,3 +125,125 @@ def test_get_events_for_date_matches_timestamp_string_form(tmp_path):
     events = db.get_events_for_date(conn, "2026-09-23")
     assert len(events) == 1
     assert events[0]["ticker"] == "CMCSA"
+
+
+# ── 라이브 어드바이저 1단계: last_judgment, fill_ledger, daily_mark ──────────
+
+
+def test_position_last_judgment_round_trips_and_defaults_to_none(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    state = st.init_state("NVDA", "엔비디아")  # core.state.init_state는 last_judgment를 모른다
+    db.save_position(conn, state)
+    assert db.load_position(conn, "NVDA")["last_judgment"] is None
+
+    state["last_judgment"] = "추가매수"
+    db.save_position(conn, state)
+    assert db.load_position(conn, "NVDA")["last_judgment"] == "추가매수"
+
+
+def test_last_judgment_column_migrates_onto_pre_existing_db(tmp_path):
+    """1단계 이전에 만들어진 DB(last_judgment 컬럼 없음)에 connect()하면
+    마이그레이션으로 컬럼이 생겨야 한다 (pending 컬럼과 같은 패턴)."""
+    path = tmp_path / "state.db"
+    import sqlite3
+
+    raw = sqlite3.connect(path)
+    raw.execute(
+        """
+        CREATE TABLE positions (
+            ticker TEXT PRIMARY KEY, name_kr TEXT, state TEXT, units TEXT, entries TEXT,
+            stop REAL, a1_date TEXT, cooldown_until TEXT, sent_alerts TEXT, updated_at TEXT,
+            b_entry_date TEXT, b_total_qty INTEGER, pending TEXT
+        )
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    conn = db.connect(path)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(positions)")}
+    assert "last_judgment" in columns
+
+
+def test_record_and_get_fill_ledger_round_trip(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    db.record_fill_ledger(
+        conn,
+        [
+            {
+                "date": "2026-09-25",
+                "mode": "live",
+                "ticker": "NVDA",
+                "side": "buy",
+                "qty": 4,
+                "price_usd": 180.25,
+                "fx_rate": 1350.0,
+                "amount_krw": 973_350,
+                "qqqm_close": 220.10,
+            },
+        ],
+    )
+    rows = db.get_fill_ledger(conn)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["ticker"] == "NVDA"
+    assert row["mode"] == "live"
+    assert row["side"] == "buy"
+    assert row["qty"] == 4
+    assert row["amount_krw"] == 973_350
+    assert row["qqqm_close"] == 220.10
+
+
+def test_get_fill_ledger_filters_by_mode_and_preserves_insertion_order(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    db.record_fill_ledger(
+        conn,
+        [
+            {"date": "2026-09-24", "mode": "paper", "ticker": "AAPL", "side": "buy", "qty": 1, "price_usd": 1, "fx_rate": 1, "amount_krw": 1, "qqqm_close": 1},
+            {"date": "2026-09-25", "mode": "live", "ticker": "NVDA", "side": "buy", "qty": 4, "price_usd": 180.25, "fx_rate": 1350.0, "amount_krw": 973_350, "qqqm_close": 220.10},
+            {"date": "2026-09-26", "mode": "live", "ticker": "AVGO", "side": "sell", "qty": 2, "price_usd": 300, "fx_rate": 1350, "amount_krw": 810_000, "qqqm_close": 222.0},
+        ],
+    )
+    live_rows = db.get_fill_ledger(conn, mode="live")
+    assert [r["ticker"] for r in live_rows] == ["NVDA", "AVGO"]
+
+    all_rows = db.get_fill_ledger(conn)
+    assert [r["ticker"] for r in all_rows] == ["AAPL", "NVDA", "AVGO"]
+
+
+def test_get_fill_ledger_empty_when_none_recorded(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    assert db.get_fill_ledger(conn) == []
+
+
+def test_record_daily_mark_upserts_same_day_ticker_mode(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    db.record_daily_mark(
+        conn, [{"date": "2026-09-25", "mode": "live", "ticker": "NVDA", "qty": 4, "price_usd": 180.25, "fx_rate": 1350.0}]
+    )
+    db.record_daily_mark(
+        conn, [{"date": "2026-09-25", "mode": "live", "ticker": "NVDA", "qty": 4, "price_usd": 183.00, "fx_rate": 1352.0}]
+    )
+    rows = db.get_daily_mark(conn)
+    assert len(rows) == 1  # 같은 날짜+모드+종목은 덮어쓴다(행이 늘지 않는다)
+    assert rows[0]["price_usd"] == 183.00
+    assert rows[0]["fx_rate"] == 1352.0
+
+
+def test_get_daily_mark_filters_by_mode_and_orders_by_date_then_ticker(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    db.record_daily_mark(
+        conn,
+        [
+            {"date": "2026-09-25", "mode": "paper", "ticker": "ZZZ", "qty": 1, "price_usd": 1, "fx_rate": 1},
+            {"date": "2026-09-24", "mode": "live", "ticker": "AAPL", "qty": 1, "price_usd": 1, "fx_rate": 1},
+            {"date": "2026-09-25", "mode": "live", "ticker": "NVDA", "qty": 4, "price_usd": 180.25, "fx_rate": 1350.0},
+        ],
+    )
+    live_rows = db.get_daily_mark(conn, mode="live")
+    assert [(r["date"], r["ticker"]) for r in live_rows] == [("2026-09-24", "AAPL"), ("2026-09-25", "NVDA")]
+
+
+def test_get_daily_mark_empty_when_none_recorded(tmp_path):
+    conn = db.connect(tmp_path / "state.db")
+    assert db.get_daily_mark(conn) == []
