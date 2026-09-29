@@ -180,10 +180,32 @@ def _base_summary(**overrides):
 
 def test_build_briefing_text_no_signals_is_one_line():
     text = briefing.build_briefing_text(_base_summary(), {})
-    assert "오늘 매매 신호 없음" in text
+    assert "🎯 오늘의 신호" in text
+    assert "- 오늘 매매 신호 없음" in text
     assert "🟢" not in text and "🔴" not in text
     assert "9/23(수)" in text
-    assert "📎" in text
+    assert "📎" not in text  # "보고서를 열어 확인하세요" 문구를 뺐다(사용자 확정)
+
+
+def test_build_briefing_text_groups_market_temp_and_signals_with_dash_lines():
+    summary = _base_summary(
+        macro_rows=[{"name": "공포·탐욕 지수", "value": 58, "badge": {"status": "warn", "label": "탐욕"}}],
+        buy_groups={"b1": [{"ticker": "CMCSA", "kr": "컴캐스트"}], "b2": [], "b3": [], "b9": []},
+        buy_count=1,
+    )
+    text = briefing.build_briefing_text(summary, {})
+    lines = text.splitlines()
+
+    assert "📈 시장 온도" in lines
+    assert "🎯 오늘의 신호" in lines
+    market_idx = lines.index("📈 시장 온도")
+    signal_idx = lines.index("🎯 오늘의 신호")
+    assert market_idx < signal_idx  # 시장 온도가 먼저, 오늘의 신호가 나중
+
+    market_items = [l for l in lines[market_idx + 1 : signal_idx] if l]
+    assert all(l.startswith("- ") for l in market_items)
+    signal_items = [l for l in lines[signal_idx + 1 :] if l]
+    assert all(l.startswith("- ") for l in signal_items)
 
 
 def test_build_briefing_text_buy_only_shows_ticker_and_stage():
@@ -242,7 +264,7 @@ def test_build_briefing_text_stop_alerts_line_only_when_present():
 def test_build_briefing_text_unfilled_line_only_when_present():
     summary = _base_summary(unfilled_rows=[{"티커": "CMCSA", "종목명": "컴캐스트"}])
     text = briefing.build_briefing_text(summary, {})
-    assert "⚠️ 미체결 1 · CMCSA" in text
+    assert "- 미체결 1 · CMCSA" in text  # 경고 이모지는 뺀다(사용자 확정), 내용은 유지
 
     text_none = briefing.build_briefing_text(_base_summary(), {})
     assert "⚠️" not in text_none
@@ -273,7 +295,7 @@ def test_build_briefing_text_one_share_warning_line_only_when_present():
         ]
     )
     text = briefing.build_briefing_text(summary, {})
-    assert "⚠️ 계획금액으로 1차 매수 0주 · NVDA" in text
+    assert "- 계획금액으로 1차 매수 0주 · NVDA" in text  # 경고 이모지는 뺀다(사용자 확정), 내용은 유지
 
     text_none = briefing.build_briefing_text(_base_summary(), {})
     assert "1차 매수 0주" not in text_none

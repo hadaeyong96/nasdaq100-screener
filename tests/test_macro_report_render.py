@@ -120,8 +120,10 @@ def test_build_macro_line_none_when_no_rows():
     assert briefing.build_macro_line([]) is None
 
 
-def test_briefing_text_includes_macro_line_near_top():
+def test_briefing_text_includes_market_temp_group_near_top():
     summary = _empty_summary(_SAMPLE_MACRO_ROWS)
     text = briefing.build_briefing_text(summary, _CFG)
     lines = text.splitlines()
-    assert any(l.startswith("시장 온도:") for l in lines[:2])
+    market_idx = lines.index("📈 시장 온도")
+    assert market_idx <= 2  # 헤더 줄 바로 다음(빈 줄 하나 포함)
+    assert lines[market_idx + 1].startswith("- ")

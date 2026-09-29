@@ -69,7 +69,12 @@ def _sell_short_label(row: dict) -> str:
 
 
 def build_briefing_text(summary: dict, cfg: dict) -> str:
-    """summary + cfg -> 텔레그램에 보낼 본문 문자열 (최소 형식, P3.4 2번)."""
+    """summary + cfg -> 텔레그램에 보낼 본문 문자열 (최소 형식, P3.4 2번).
+
+    "📈 시장 온도"·"🎯 오늘의 신호" 두 묶음으로 나누고, 각 항목을 "- "로 시작하는
+    한 줄씩 쓴다. 경고 이모지(⚠️)는 빼되 내용은 그대로 남긴다(사용자 확정).
+    HTML 보고서 첨부는 이 함수와 무관하게 notify.telegram.send_briefing이 그대로 한다.
+    """
     as_of = summary.get("as_of")
     mode_label = summary.get("mode_label", "실전")
     if as_of is not None:
@@ -79,9 +84,14 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
         date_str = "알수없음"
 
     lines = [f"📊 나스닥100 · {date_str} 마감 · {mode_label}"]
-    macro_line = build_macro_line(summary.get("macro_rows", []))
-    if macro_line:
-        lines.append(macro_line)
+
+    macro_rows = summary.get("macro_rows", [])
+    if macro_rows:
+        lines.append("")
+        lines.append("📈 시장 온도")
+        lines.extend(f"- {_macro_item_text(r)}" for r in macro_rows)
+
+    signal_lines: list[str] = []
 
     buy_groups = summary.get("buy_groups", {})
     buy_items = [
@@ -96,22 +106,22 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     sell_count = len(sell_rows)
 
     if buy_count == 0 and sell_count == 0:
-        lines.append("오늘 매매 신호 없음")
+        signal_lines.append("오늘 매매 신호 없음")
     else:
         buy_line = f"🟢 매수 {buy_count}"
         if buy_items:
             buy_line += " · " + " ".join(buy_items)
-        lines.append(buy_line)
+        signal_lines.append(buy_line)
 
         sell_line = f"🔴 매도 {sell_count}"
         if sell_items:
             sell_line += " · " + " ".join(sell_items)
-        lines.append(sell_line)
+        signal_lines.append(sell_line)
 
     unfilled_rows = summary.get("unfilled_rows", [])
     if unfilled_rows:
         names = " ".join(r["티커"] for r in unfilled_rows)
-        lines.append(f"⚠️ 미체결 {len(unfilled_rows)} · {names}")
+        signal_lines.append(f"미체결 {len(unfilled_rows)} · {names}")
 
     # 라이브 어드바이저 1단계 (docs/design/live_advisor.md 3·7번): 판정이 바뀐 종목을
     # 맨 위 근처에 강조하고, 계획금액으로 1주도 못 사는 종목은 항상 경고한다.
@@ -119,16 +129,19 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     changed_rows = [r for r in live_judgment_rows if r.get("changed")]
     if changed_rows:
         items = " ".join(f"{r['ticker']}({r['judgment']})" for r in changed_rows)
-        lines.append(f"🔄 판정 변경 {len(changed_rows)} · {items}")
+        signal_lines.append(f"🔄 판정 변경 {len(changed_rows)} · {items}")
     warning_rows = [r for r in live_judgment_rows if r.get("one_share_warning")]
     if warning_rows:
         items = " ".join(r["ticker"] for r in warning_rows)
-        lines.append(f"⚠️ 계획금액으로 1차 매수 0주 · {items}")
+        signal_lines.append(f"계획금액으로 1차 매수 0주 · {items}")
 
     stop_alerts = summary.get("stop_alerts", [])
     if stop_alerts:
         items = " ".join(f"{a['티커']}({a['type']})" for a in stop_alerts)
-        lines.append(f"🛡️ 손절 예약 · {items}")
+        signal_lines.append(f"🛡️ 손절 예약 · {items}")
 
-    lines.append("📎 보고서를 열어 확인하세요")
+    lines.append("")
+    lines.append("🎯 오늘의 신호")
+    lines.extend(f"- {s}" for s in signal_lines)
+
     return "\n".join(lines) + "\n"
