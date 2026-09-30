@@ -11,6 +11,17 @@ store.db의 notifications 테이블로 막는다(성공적으로 다 보낸 뒤�
 모의(paper) 모드는 두 함수 모두 --no-send 여부와 무관하게 절대 실제로 보내지
 않는다(파일 저장까지만 한다) — 모의를 실전과 매일 나란히 돌리기 시작하면서 생긴
 하드 가드다.
+
+## 단체방(투자클럽) 공개 발송
+
+`send_group_briefing`은 TELEGRAM_GROUP_CHAT_ID(선택, 없으면 조용히 건너뜀)로
+공개용 브리핑(notify.briefing.build_public_briefing_text)만 보낸다. paper 모드는
+send_briefing과 같은 이유로 절대 보내지 않는다(하드 가드). 실패해도 예외를
+던지지 않고 결과 dict로 돌려준다 — 호출부(engine.daily)가 개인 채팅에 경고 한
+줄만 남기고 실행을 계속하기 위해서다. 그룹이 슈퍼그룹으로 전환돼 텔레그램이
+'group chat was upgraded to a supergroup'(migrate_to_chat_id) 오류를 주면
+재시도하지 않고 새 chat_id를 결과에 담는다 — `group_send_warning_line`이 그
+값을 경고 문구에 포함시킨다.
 """
 
 from __future__ import annotations
@@ -93,6 +104,60 @@ def _send_document(token: str, chat_id: str, path: Path, filename: str | None = 
     return _request_with_retry(_do, "sendDocument")
 
 
+def _extract_migrate_id(resp) -> int | None:
+    """텔레그램 오류 응답 본문에서 migrate_to_chat_id(슈퍼그룹 전환 새 chat_id)를 꺼낸다."""
+    try:
+        body = resp.json()
+    except Exception:
+        return None
+    return (body.get("parameters") or {}).get("migrate_to_chat_id")
+
+
+def _post_checked(request_fn, description: str) -> tuple[bool, int | None, str | None]:
+    """단체방 발송 전용 재시도 래퍼 (P-group 지시문).
+
+    슈퍼그룹 전환 오류(migrate_to_chat_id)는 재시도해도 chat_id가 바뀌지 않는 한
+    똑같이 실패하므로 즉시 멈추고 새 chat_id를 돌려준다. 그 밖의 실패는 기존
+    _request_with_retry와 같이 MAX_RETRIES번 재시도한다.
+
+    출력: (성공 여부, migrate_to_chat_id 또는 None, 마지막 오류 설명 또는 None)
+    """
+    last_error: str | None = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = request_fn()
+            if resp.ok:
+                return True, None, None
+            migrate_id = _extract_migrate_id(resp)
+            if migrate_id:
+                return False, migrate_id, f"{description}: group chat was upgraded to a supergroup chat"
+            last_error = f"{description} 실패({resp.status_code}): {resp.text[:200]}"
+        except Exception as exc:
+            last_error = f"{description} 실패: {exc}"
+        print(f"[telegram] {last_error} (시도 {attempt}/{MAX_RETRIES})")
+        if attempt < MAX_RETRIES:
+            time.sleep(1.5 * attempt)
+    return False, None, last_error
+
+
+def _send_text_checked(token: str, chat_id: str, text: str) -> tuple[bool, int | None, str | None]:
+    url = TELEGRAM_API.format(token=token, method="sendMessage")
+    return _post_checked(
+        lambda: requests.post(url, data={"chat_id": chat_id, "text": text}, timeout=20), "sendMessage"
+    )
+
+
+def _send_document_checked(token: str, chat_id: str, path: Path, filename: str | None = None) -> tuple[bool, int | None, str | None]:
+    url = TELEGRAM_API.format(token=token, method="sendDocument")
+    display_name = filename or path.name
+
+    def _do():
+        with open(path, "rb") as f:
+            return requests.post(url, data={"chat_id": chat_id}, files={"document": (display_name, f)}, timeout=60)
+
+    return _post_checked(_do, "sendDocument")
+
+
 def env_status() -> str:
     """텔레그램 토큰 관련 환경변수 진단 문구 (P3.2 0번 — 존재 여부와 길이만, 값은 금지).
 
@@ -101,9 +166,11 @@ def env_status() -> str:
     """
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+    group_chat_id = os.environ.get("TELEGRAM_GROUP_CHAT_ID") or ""
     return (
         f".env 파일: {'있음' if ENV_PATH.exists() else '없음'}({ENV_PATH}) · "
-        f"TELEGRAM_BOT_TOKEN 길이 {len(token)} · TELEGRAM_CHAT_ID 길이 {len(chat_id)}"
+        f"TELEGRAM_BOT_TOKEN 길이 {len(token)} · TELEGRAM_CHAT_ID 길이 {len(chat_id)} · "
+        f"TELEGRAM_GROUP_CHAT_ID 길이 {len(group_chat_id)}"
     )
 
 
@@ -222,6 +289,112 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
     finally:
         conn.close()
     return out_path
+
+
+def send_group_briefing(
+    text: str, report_path: Path | None, summary: dict, cfg: dict, force_no_send: bool = False
+) -> dict:
+    """단체방(투자클럽, TELEGRAM_GROUP_CHAT_ID)에 공개용 브리핑을 보낸다.
+
+    입력: text(notify.briefing.build_public_briefing_text 결과), report_path(공개용
+         HTML — engine.daily가 render_public_report로 만든 경로, 없으면 첨부 생략),
+         summary, cfg, force_no_send(--no-send 플래그)
+    출력: {"attempted": bool, "ok": bool, "skipped_reason": str|None, "error": str|None,
+          "migrate_to_chat_id": int|None, "out_path": Path}
+
+    TELEGRAM_GROUP_CHAT_ID가 없으면(Secret 미설정) 조용히 건너뛴다(skipped_reason =
+    "no_group_chat_id") — 이 기능을 아직 안 쓰는 사용자에게 영향이 없어야 한다.
+    paper 모드는 send_briefing과 같은 이유로 절대 실제 발송을 하지 않는다(하드 가드,
+    --no-send 여부와 무관) — 항상 live 전용으로 부르지만(호출부 책임) 방어적으로 한
+    번 더 막는다. 실패해도 예외를 던지지 않는다 — 호출부가 개인 채팅에 경고 한 줄만
+    남기고 실행을 계속해야 하기 때문이다(P-group 지시문).
+    """
+    mode = summary.get("mode", "live")
+    as_of = summary.get("as_of")
+    as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
+    out_dir = ROOT / "outputs"
+    out_dir.mkdir(exist_ok=True)
+    out_path = out_dir / f"telegram_group_{mode}_{as_of_str}.txt"
+    out_path.write_text(text, encoding="utf-8")
+
+    result: dict = {
+        "attempted": False,
+        "ok": False,
+        "skipped_reason": None,
+        "error": None,
+        "migrate_to_chat_id": None,
+        "out_path": out_path,
+    }
+
+    if force_no_send or mode == "paper":
+        result["skipped_reason"] = "no_send" if force_no_send else "paper_mode"
+        return result
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    group_chat_id = os.environ.get("TELEGRAM_GROUP_CHAT_ID") or ""
+    if not group_chat_id:
+        result["skipped_reason"] = "no_group_chat_id"
+        return result
+    if not token:
+        result["skipped_reason"] = "no_token"
+        return result
+
+    result["attempted"] = True
+    conn = db.connect(db.db_path_for_mode(mode))
+    try:
+        dedup_key = f"{as_of_str}:group"
+        if db.has_notified(conn, dedup_key) and not summary.get("rebuilt_from"):
+            print(f"[telegram] {as_of_str} 기준 단체방에 이미 보낸 기록이 있어 다시 보내지 않습니다.")
+            result["ok"] = True
+            result["skipped_reason"] = "already_sent"
+            return result
+
+        ok = True
+        migrate_id: int | None = None
+        error: str | None = None
+        for chunk in split_message(text):
+            c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
+            ok = ok and c_ok
+            migrate_id = migrate_id or c_migrate
+            error = error or c_err
+            if not c_ok:
+                break  # 슈퍼그룹 전환 등으로 실패하면 뒤 청크를 더 보내도 소용없다
+
+        if ok and report_path and Path(report_path).exists():
+            time.sleep(1)
+            d_ok, d_migrate, d_err = _send_document_checked(
+                token, group_chat_id, Path(report_path), report_attachment_name(as_of_str)
+            )
+            ok = ok and d_ok
+            migrate_id = migrate_id or d_migrate
+            error = error or d_err
+
+        result["ok"] = ok
+        result["migrate_to_chat_id"] = migrate_id
+        result["error"] = error
+        if ok:
+            db.record_notified(conn, dedup_key, datetime.now().isoformat(timespec="seconds"))
+        else:
+            print(f"[telegram] 단체방 발송에 실패해 발송 기록을 남기지 않습니다: {error}")
+    finally:
+        conn.close()
+    return result
+
+
+def group_send_warning_line(result: dict | None) -> str | None:
+    """send_group_briefing 결과 -> 개인 채팅에 남길 경고 한 줄 (성공·건너뜀이면 None).
+
+    슈퍼그룹 전환 오류(migrate_to_chat_id)면 새 chat_id를 함께 알려줘 사용자가
+    TELEGRAM_GROUP_CHAT_ID Secret을 바꿀 수 있게 한다.
+    """
+    if not result or result.get("ok") or not result.get("attempted"):
+        return None
+    if result.get("migrate_to_chat_id"):
+        return (
+            f"⚠️ 단체방 발송 실패: 그룹이 슈퍼그룹으로 전환됐습니다. "
+            f"TELEGRAM_GROUP_CHAT_ID를 {result['migrate_to_chat_id']}로 바꿔주세요."
+        )
+    return f"⚠️ 단체방 발송 실패: {result.get('error') or '알 수 없는 오류'}"
 
 
 def resend_last(report_path: Path, text_path: Path, as_of_str: str, force_no_send: bool = False) -> bool:

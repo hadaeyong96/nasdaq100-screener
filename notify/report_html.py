@@ -19,6 +19,7 @@ import pandas as pd
 
 from core import macro_status
 from notify import macro_explain
+from notify.briefing import PUBLIC_DISCLAIMER
 from core.sizing import format_krw
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -376,5 +377,69 @@ def render_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
     output_dir.mkdir(exist_ok=True, parents=True)
     mode = summary.get("mode", "live")
     path = output_dir / f"report_{mode}_{context['as_of_str']}.html"
+    path.write_text(html, encoding="utf-8")
+    return path
+
+
+# ── 단체방 공개용 HTML (투자클럽) ─────────────────────────────────────
+# 시장 온도 + 오늘의 추천(진입가·손절가·조건)만 담는다. 보유·수량·평단·손익·
+# 계획금액·체결 내역은 build_context와 달리 애초에 읽지 않는다 — 새는 값이
+# 없다는 걸 코드 구조로도 보장하기 위해서다 (build_context를 재사용하지 않음).
+_PUBLIC_STAGE_ORDER = ("b1", "b2", "b3", "b9")
+
+
+def _public_buy_row_ctx(r: dict) -> dict:
+    """buy_groups 행 하나 -> 공개용 템플릿 context. r["note"]·수량·금액은 담지 않는다."""
+    return {
+        "ticker": r["ticker"],
+        "kr": r["kr"],
+        "stage_label": r.get("stage_label", ""),
+        "limit": _num(r["limit"]),
+        "stop": _num(r["stop"]),
+        "stop_pct": r.get("stop_pct"),
+        "decision": r["decision"],
+        "condition": r.get("condition_summary") or "",
+    }
+
+
+def build_public_context(summary: dict, cfg: dict) -> dict:
+    """summary + cfg -> 단체방 공개용 Jinja2 템플릿 context.
+
+    build_context와 달리 funding_plan·hold_rows·sell_rows·pending_order_rows 등
+    보유·자금 관련 값은 아예 만들지 않는다 (P-group 지시문 — 공개용 결과물에 보유·
+    금액 정보가 새지 않아야 한다).
+    """
+    as_of = summary.get("as_of")
+    as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
+
+    buy_groups = summary.get("buy_groups", {"b1": [], "b2": [], "b3": [], "b9": []})
+    all_rows = sorted(
+        (r for key in _PUBLIC_STAGE_ORDER for r in buy_groups.get(key, [])),
+        key=lambda r: r.get("score", 0),
+        reverse=True,
+    )
+
+    return {
+        "as_of_str": as_of_str,
+        "generated_str": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "buy_rows": [_public_buy_row_ctx(r) for r in all_rows],
+        "buy_count": len(all_rows),
+        "macro_rows": [_macro_row_ctx(r) for r in summary.get("macro_rows", [])],
+        "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
+        "macro_disclaimer": macro_explain.DISCLAIMER,
+        "public_disclaimer": PUBLIC_DISCLAIMER,
+    }
+
+
+def render_public_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
+    """단체방 공개용 보고서 HTML을 outputs/report_public_YYYY-MM-DD.html로 저장하고 경로를 반환한다.
+
+    live 전용(호출부 책임) — paper는 애초에 텔레그램을 보내지 않으므로 부르지 않는다.
+    """
+    context = build_public_context(summary, cfg)
+    template = _env.get_template("report_public.html.j2")
+    html = template.render(**context)
+    output_dir.mkdir(exist_ok=True, parents=True)
+    path = output_dir / f"report_public_{context['as_of_str']}.html"
     path.write_text(html, encoding="utf-8")
     return path

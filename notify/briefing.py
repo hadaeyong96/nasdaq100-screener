@@ -7,6 +7,9 @@
 
 from __future__ import annotations
 
+# 단체방 공개용 고지 문구 (텔레그램 본문·공개 HTML 맨 아래 모두 이 상수를 쓴다).
+PUBLIC_DISCLAIMER = "개인 학습용 참고 자료이며 투자 권유가 아닙니다. 투자 판단과 책임은 본인에게 있습니다."
+
 _STAGE_ORDER = ["b1", "b2", "b3", "b9"]
 _BUY_STAGE_SHORT = {"b1": "1차", "b2": "2차", "b3": "3차", "b9": "재진입"}
 _KOREAN_WEEKDAY = ["월", "화", "수", "목", "금", "토", "일"]
@@ -186,5 +189,70 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     if alert_lines:
         lines.append("")
         lines.extend(alert_lines)
+
+    return "\n".join(lines) + "\n"
+
+
+# ── 단체방 공개용 (투자클럽) ──────────────────────────────────────────
+# 개인 채팅과 달리 시장 온도 + 오늘의 추천(1차 진입가·손절가·2·3차 조건)만
+# 보낸다. 보유 종목·수량·평단·손익·계획금액·체결 내역은 절대 넣지 않는다.
+
+
+def _public_recommend_line(r: dict) -> str:
+    """buy_groups 행 하나 -> "AAPL(1차 정찰) 진입가 $190.20 · 손절가 $182.10 · RSI 28 → 32".
+
+    limit·stop은 지표로만 정해지는 가격(개인 계획금액과 무관)이라 공개해도 된다.
+    조건 설명은 r["condition_summary"](engine.daily._build_buy_row가 자금 계획
+    문구가 섞이기 전에 따로 남겨 둔 필드)만 쓴다 — r["note"]는 "계획 없음"·
+    "남은 한도 부족" 같은 개인 자금 문구가 섞여 있어 쓰지 않는다.
+    """
+    stop = r.get("stop")
+    stop_str = f"${stop:,.2f}" if stop is not None else "미확인"
+    head = f"{r['ticker']}({r.get('stage_label', '')}) 진입가 ${r['limit']:,.2f}"
+    parts = [head, f"손절가 {stop_str}"]
+    condition = r.get("condition_summary")
+    if condition:
+        parts.append(condition)
+    return " · ".join(parts)
+
+
+def build_public_briefing_text(summary: dict, cfg: dict) -> str:
+    """summary + cfg -> 단체방(투자클럽)에 보낼 공개용 본문.
+
+    "📈 시장 온도"·"🎯 오늘의 추천" 두 묶음만 담는다. 오늘의 추천은 오늘 발생한
+    모든 매수 신호(1차 정찰·2차 확인·3차 확정·재진입)를 점수순으로 보여준다 —
+    종목·진입가·손절가·조건뿐이고 수량·투입금액·최대손실은 넣지 않는다.
+    """
+    as_of = summary.get("as_of")
+    if as_of is not None:
+        d = as_of.date()
+        date_str = f"{d.month}/{d.day}({_KOREAN_WEEKDAY[as_of.dayofweek]})"
+    else:
+        date_str = "알수없음"
+
+    lines = [f"📊 나스닥100 · {date_str} 마감 · 공개용"]
+
+    macro_rows = summary.get("macro_rows", [])
+    if macro_rows:
+        lines.append("")
+        lines.append("📈 시장 온도")
+        lines.extend(f"- {_macro_item_text(r)}" for r in macro_rows)
+
+    buy_groups = summary.get("buy_groups", {})
+    all_rows = sorted(
+        (r for key in _STAGE_ORDER for r in buy_groups.get(key, [])),
+        key=lambda r: r.get("score", 0),
+        reverse=True,
+    )
+
+    lines.append("")
+    lines.append("🎯 오늘의 추천")
+    if not all_rows:
+        lines.append("- 오늘 추천 종목 없음")
+    else:
+        lines.extend(f"- {_public_recommend_line(r)}" for r in all_rows)
+
+    lines.append("")
+    lines.append(PUBLIC_DISCLAIMER)
 
     return "\n".join(lines) + "\n"
