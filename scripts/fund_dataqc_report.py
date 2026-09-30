@@ -202,6 +202,27 @@ def build_missing_ticker_rows(
     return rows
 
 
+def annotate_known_defects(extreme_move_issues: list, known_defects: list[dict]) -> list[dict]:
+    """이상치·분할 누락 의심 목록에 config.yaml known_data_defects와 겹치는 건을
+    "알려진 결함"으로 표시한다 (순수 함수).
+
+    입력: extreme_move_issues(engine.dataqc.ExtremeMoveIssue 목록), known_defects
+         (config.yaml known_data_defects — [{"ticker","date","issue",...}, ...])
+    출력: [{"ticker","date","pct_change","known": bool, "known_issue": str | None}, ...]
+    """
+    by_key = {(d["ticker"], d["date"]): d["issue"] for d in known_defects}
+    out = []
+    for issue in extreme_move_issues:
+        known_issue = by_key.get((issue.ticker, issue.date))
+        out.append(
+            {
+                "ticker": issue.ticker, "date": issue.date, "pct_change": issue.pct_change,
+                "known": known_issue is not None, "known_issue": known_issue,
+            }
+        )
+    return out
+
+
 ALT_SOURCE_DIR = ROOT / "data" / "cache" / "alt_prices" / "tiingo"
 
 
@@ -273,7 +294,16 @@ def main() -> None:
     overall_judgement = "PASS" if not overall_report.inconclusive else "INCONCLUSIVE"
     log(f"전체({train_start}~{train_end}): 확보율 {overall_report.coverage_pct}% -> {overall_judgement}")
     log(f"구성종목 수 범위 이상 체크포인트: {len(overall_report.constituent_count_issues)}건")
-    log(f"이상치·분할 누락 의심(±{cfg['dataqc']['extreme_daily_move_pct']}%): {len(overall_report.extreme_move_issues)}건")
+
+    annotated_extreme_moves = annotate_known_defects(overall_report.extreme_move_issues, cfg.get("known_data_defects", []))
+    known_defect_count = sum(1 for a in annotated_extreme_moves if a["known"])
+    log(
+        f"이상치·분할 누락 의심(±{cfg['dataqc']['extreme_daily_move_pct']}%): {len(annotated_extreme_moves)}건 "
+        f"(그중 알려진 결함 {known_defect_count}건)"
+    )
+    for a in annotated_extreme_moves:
+        tag = f"[알려진 결함: {a['known_issue']}]" if a["known"] else ""
+        log(f"  {a['ticker']} {a['date']} {a['pct_change']:+.1f}% {tag}")
 
     # ── 빠진 종목 목록 ──────────────────────────────────────────────────────
     log("빠진 종목의 소속 기간·편출 사유를 위키백과 변경 이력에서 찾는 중...")
@@ -320,7 +350,9 @@ def main() -> None:
             "coverage_pct": overall_report.coverage_pct,
             "judgement": overall_judgement,
             "constituent_count_issue_count": len(overall_report.constituent_count_issues),
-            "extreme_move_issue_count": len(overall_report.extreme_move_issues),
+            "extreme_move_issue_count": len(annotated_extreme_moves),
+            "extreme_move_issues": annotated_extreme_moves,
+            "known_defect_count": known_defect_count,
         },
         "missing_ticker_count": len(missing_rows),
         "missing_ticker_count_in_scope": len(in_scope_rows),
@@ -359,7 +391,12 @@ def main() -> None:
         f"| 전체({train_start.year}~{train_end.year}) | {overall_report.coverage_pct}% | {overall_report.ticker_days_priced}/{overall_report.ticker_days_expected} | **{overall_judgement}** |",
         "",
         f"- 구성종목 수 범위(config.yaml dataqc.expected_constituent_count) 이상 체크포인트: {len(overall_report.constituent_count_issues)}건",
-        f"- 하루 등락률 ±{cfg['dataqc']['extreme_daily_move_pct']}% 이상(이상치·분할 누락 의심): {len(overall_report.extreme_move_issues)}건",
+        f"- 하루 등락률 ±{cfg['dataqc']['extreme_daily_move_pct']}% 이상(이상치·분할 누락 의심): {len(annotated_extreme_moves)}건 (그중 알려진 결함 {known_defect_count}건 — 가격 보정은 아직 안 함)",
+    ]
+    for a in annotated_extreme_moves:
+        tag = f" — **알려진 결함**: {a['known_issue']}" if a["known"] else " — 확인 필요"
+        md_lines.append(f"  - {a['ticker']} {a['date']} {a['pct_change']:+.1f}%{tag}")
+    md_lines += [
         "",
         "## 빠진 종목 (yfinance 기준)",
         "",

@@ -148,3 +148,26 @@ def test_load_alt_source_indicator_map_skips_csv_without_close_column(tmp_path):
     alt_dir.mkdir()
     pd.DataFrame({"open": [1.0]}, index=pd.to_datetime(["2020-01-02"])).to_csv(alt_dir / "BAD.csv")
     assert rpt.load_alt_source_indicator_map(alt_dir) == {}
+
+
+def test_annotate_known_defects_marks_matching_ticker_and_date():
+    from engine.dataqc import ExtremeMoveIssue
+
+    issues = [
+        ExtremeMoveIssue(ticker="DISCK", date="2014-08-07", pct_change=-51.02),
+        ExtremeMoveIssue(ticker="GMCR", date="2015-12-07", pct_change=71.93),
+    ]
+    known = [{"ticker": "DISCK", "date": "2014-08-07", "issue": "분할 누락"}]
+    out = rpt.annotate_known_defects(issues, known)
+    assert out[0]["known"] is True
+    assert out[0]["known_issue"] == "분할 누락"
+    assert out[1]["known"] is False
+    assert out[1]["known_issue"] is None
+
+
+def test_annotate_known_defects_empty_known_list_marks_nothing():
+    from engine.dataqc import ExtremeMoveIssue
+
+    issues = [ExtremeMoveIssue(ticker="AAA", date="2020-01-01", pct_change=60.0)]
+    out = rpt.annotate_known_defects(issues, [])
+    assert out[0]["known"] is False

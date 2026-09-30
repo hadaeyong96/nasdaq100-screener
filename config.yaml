@@ -211,3 +211,16 @@ fund_sim:
 eodhd_delisted_check:
   exchange_code: US # EODHD exchange-symbol-list 코드
   cache_path: data/cache/eodhd_delisted_us.json # 하루 호출 한도(무료 20회) 아끼려고 캐시
+
+# ── 알려진 데이터 결함 (F2, scripts/fund_fetch_missing_prices.py 대체 출처) ────────
+# 대체 출처(Tiingo)로 받은 가격에서 발견된, 아직 안 고친 결함 목록. dataqc 보고서
+# (scripts/fund_dataqc_report.py)가 이상치·분할 누락 의심 목록과 대조해 "알려진 결함"
+# 표시를 붙인다. 가격 값 자체는 아직 보정하지 않았다(2026-10-01 사용자 지시 — 보정은
+# 나중에).
+known_data_defects:
+  - ticker: DISCK
+    date: "2014-08-07"
+    source: tiingo
+    issue: "실제 2:1 주식분할이 있었는데 Tiingo의 splitFactor에 기록이 안 돼, 그 날 raw_close가
+      반토막 난 것처럼(-51%) 보인다(engine/dataqc.py 이상치 검사에서 발견, 2026-10-01). 이
+      날짜 이전 가격을 실제로 쓰려면 2로 나누는 보정이 필요하지만 아직 안 했다."
