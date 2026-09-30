@@ -1835,6 +1835,12 @@ def main() -> None:
     print(f"단계별 종목 수: {summary['stage_counts']} (보유 {summary['held_tickers_count']} / 한도 {summary['max_concurrent']})")
     print(f"오늘 매수 신호 {summary['buy_count']}건, 걸러진 신호 {len(summary['filtered_rows'])}건, 매도·손절 신호 {len(summary['sell_rows'])}건")
     print(f"경고 {len(summary['warn_rows'])}건, data_gap 종목 {len(summary['data_gap_tickers'])}개")
+    held_names = sorted({r["티커"] for r in summary.get("hold_rows", [])})
+    print(f"보유 종목: {', '.join(held_names) if held_names else '없음'}")
+    if summary.get("rebuilt_from"):
+        print(f"체결 기록 변경 반영: {summary['rebuilt_from']}부터 재계산")
+    if summary.get("input_errors"):
+        print(f"시트 입력 오류 {len(summary['input_errors'])}건")
     print(f"보고서: {summary['report_path']}")
 
     if not args.dry_run:
