@@ -202,3 +202,12 @@ dataqc:
 # 백테스트 엔진·시도 로그 스키마·B0.5 재현 테스트뿐이다(F3 이후 미구현).
 fund_sim:
   b05_reproduction_tolerance_pct: 0.1 # [가정] B0.5 재현(설계 5.8 1번)에서 기존 +19.78%(세후a)와 이 오차(%p) 안이면 "일치"로 본다
+
+# ── EODHD 상장폐지 종목 조회 (F2, scripts/fund_check_eodhd_delisted.py) ──────────
+# API 키 자체는 여기 안 둔다 — config.yaml은 커밋되는 파일이라 CLAUDE.md 보안 규칙
+# ("토큰·키는 환경변수·.env로만 읽고 절대 커밋 안 함")에 어긋난다. 기존 FRED_API_KEY와
+# 같은 방식으로 .env의 EODHD_API_KEY=에 채워 넣는다(.env.example 참고). 여기는 비밀이
+# 아닌 설정값만 둔다.
+eodhd_delisted_check:
+  exchange_code: US # EODHD exchange-symbol-list 코드
+  cache_path: data/cache/eodhd_delisted_us.json # 하루 호출 한도(무료 20회) 아끼려고 캐시
