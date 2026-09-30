@@ -385,7 +385,11 @@ def render_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
 # 시장 온도 + 오늘의 추천(진입가·손절가·조건)만 담는다. 보유·수량·평단·손익·
 # 계획금액·체결 내역은 build_context와 달리 애초에 읽지 않는다 — 새는 값이
 # 없다는 걸 코드 구조로도 보장하기 위해서다 (build_context를 재사용하지 않음).
-_PUBLIC_STAGE_ORDER = ("b1", "b2", "b3", "b9")
+#
+# 오늘의 추천은 신규 진입(b1, A1 정찰) 신호만 담는다 — b2·b3·b9는 라이브에서
+# 실제 보유했거나 보유 중인 종목에만 나오는 신호라 종목명 자체가 보유를 드러낸다
+# (notify.briefing 모듈 위 주석 참고).
+_PUBLIC_RECOMMEND_BUCKET = "b1"
 
 
 def _public_buy_row_ctx(r: dict) -> dict:
@@ -413,17 +417,15 @@ def build_public_context(summary: dict, cfg: dict) -> dict:
     as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
 
     buy_groups = summary.get("buy_groups", {"b1": [], "b2": [], "b3": [], "b9": []})
-    all_rows = sorted(
-        (r for key in _PUBLIC_STAGE_ORDER for r in buy_groups.get(key, [])),
-        key=lambda r: r.get("score", 0),
-        reverse=True,
+    new_entry_rows = sorted(
+        buy_groups.get(_PUBLIC_RECOMMEND_BUCKET, []), key=lambda r: r.get("score", 0), reverse=True
     )
 
     return {
         "as_of_str": as_of_str,
         "generated_str": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "buy_rows": [_public_buy_row_ctx(r) for r in all_rows],
-        "buy_count": len(all_rows),
+        "buy_rows": [_public_buy_row_ctx(r) for r in new_entry_rows],
+        "buy_count": len(new_entry_rows),
         "macro_rows": [_macro_row_ctx(r) for r in summary.get("macro_rows", [])],
         "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
         "macro_disclaimer": macro_explain.DISCLAIMER,

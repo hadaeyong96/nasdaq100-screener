@@ -194,12 +194,18 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
 
 
 # ── 단체방 공개용 (투자클럽) ──────────────────────────────────────────
-# 개인 채팅과 달리 시장 온도 + 오늘의 추천(1차 진입가·손절가·2·3차 조건)만
-# 보낸다. 보유 종목·수량·평단·손익·계획금액·체결 내역은 절대 넣지 않는다.
+# 개인 채팅과 달리 시장 온도 + 오늘의 추천(1차 진입가·손절가·조건)만 보낸다.
+# 보유 종목·수량·평단·손익·계획금액·체결 내역은 절대 넣지 않는다.
+#
+# 오늘의 추천은 신규 진입(b1, A1 정찰) 신호만 보여준다 — b2(2차 확인)·b3(3차
+# 확정)·b9(재진입)는 라이브 모드에서 실제 보유 중이거나 과거에 보유했던 종목에만
+# 나오는 신호라(core/state.py: A2·A3는 대기 상태에서 A1 이후에만 판정되고, B는
+# 이전에 보유했다가 나간 종목의 재진입이다) 종목명만으로도 내 보유가 드러난다.
+_PUBLIC_RECOMMEND_BUCKET = "b1"
 
 
 def _public_recommend_line(r: dict) -> str:
-    """buy_groups 행 하나 -> "AAPL(1차 정찰) 진입가 $190.20 · 손절가 $182.10 · RSI 28 → 32".
+    """buy_groups["b1"] 행 하나 -> "AAPL(1차 정찰) 진입가 $190.20 · 손절가 $182.10 · RSI 28 → 32".
 
     limit·stop은 지표로만 정해지는 가격(개인 계획금액과 무관)이라 공개해도 된다.
     조건 설명은 r["condition_summary"](engine.daily._build_buy_row가 자금 계획
@@ -220,8 +226,9 @@ def build_public_briefing_text(summary: dict, cfg: dict) -> str:
     """summary + cfg -> 단체방(투자클럽)에 보낼 공개용 본문.
 
     "📈 시장 온도"·"🎯 오늘의 추천" 두 묶음만 담는다. 오늘의 추천은 오늘 발생한
-    모든 매수 신호(1차 정찰·2차 확인·3차 확정·재진입)를 점수순으로 보여준다 —
-    종목·진입가·손절가·조건뿐이고 수량·투입금액·최대손실은 넣지 않는다.
+    신규 진입(b1, A1 정찰) 신호만 점수순으로 보여준다 — 2차·3차·재진입은 보유가
+    드러나므로 뺀다(모듈 위 주석 참고). 종목·진입가·손절가·조건뿐이고 수량·
+    투입금액·최대손실은 넣지 않는다.
     """
     as_of = summary.get("as_of")
     if as_of is not None:
@@ -239,18 +246,16 @@ def build_public_briefing_text(summary: dict, cfg: dict) -> str:
         lines.extend(f"- {_macro_item_text(r)}" for r in macro_rows)
 
     buy_groups = summary.get("buy_groups", {})
-    all_rows = sorted(
-        (r for key in _STAGE_ORDER for r in buy_groups.get(key, [])),
-        key=lambda r: r.get("score", 0),
-        reverse=True,
+    new_entry_rows = sorted(
+        buy_groups.get(_PUBLIC_RECOMMEND_BUCKET, []), key=lambda r: r.get("score", 0), reverse=True
     )
 
     lines.append("")
     lines.append("🎯 오늘의 추천")
-    if not all_rows:
+    if not new_entry_rows:
         lines.append("- 오늘 추천 종목 없음")
     else:
-        lines.extend(f"- {_public_recommend_line(r)}" for r in all_rows)
+        lines.extend(f"- {_public_recommend_line(r)}" for r in new_entry_rows)
 
     lines.append("")
     lines.append(PUBLIC_DISCLAIMER)

@@ -150,14 +150,56 @@ def test_public_briefing_recommend_line_has_entry_stop_condition():
 def test_public_briefing_sorts_by_score_descending():
     summary = _sensitive_summary(
         buy_groups={
-            "b1": [_buy_row("LOW", score=5)],
-            "b2": [_buy_row("HIGH", stage_label="2차 확인", score=90)],
+            "b1": [_buy_row("LOW", score=5), _buy_row("HIGH", score=90)],
+            "b2": [],
             "b3": [],
             "b9": [],
         }
     )
     text = briefing.build_public_briefing_text(summary, {})
     assert text.index("HIGH") < text.index("LOW")
+
+
+def test_public_briefing_excludes_b2_b3_b9_signals_that_reveal_holdings():
+    """b2(2차 확인)·b3(3차 확정)·b9(재진입)는 라이브에서 실제 보유했거나 보유
+    중인 종목에만 나오는 신호라 종목명만으로도 보유가 드러난다 — 공개용에는
+    신규 진입(b1)만 나와야 한다."""
+    summary = _sensitive_summary(
+        buy_groups={
+            "b1": [_buy_row("AAPL", stage_label="1차 정찰")],
+            "b2": [_buy_row("NVDA", stage_label="2차 확인", condition_summary="MACD 골든크로스")],
+            "b3": [_buy_row("MSFT", stage_label="3차 확정", condition_summary="구름 돌파")],
+            "b9": [_buy_row("TSLA", stage_label="재진입", condition_summary="추세 복귀")],
+        }
+    )
+    text = briefing.build_public_briefing_text(summary, {})
+    assert "AAPL" in text
+    for held_ticker in ("NVDA", "MSFT", "TSLA"):
+        assert held_ticker not in text, f"보유를 드러내는 {held_ticker}(b2/b3/b9)가 공개용 텍스트에 나옴"
+    for stage_word in ("2차 확인", "3차 확정", "재진입"):
+        assert stage_word not in text
+
+    context = report_html.build_public_context(summary, {})
+    html_tickers = {row["ticker"] for row in context["buy_rows"]}
+    assert html_tickers == {"AAPL"}
+
+
+def test_public_report_html_excludes_b2_b3_b9_signals_that_reveal_holdings(tmp_path):
+    summary = _sensitive_summary(
+        buy_groups={
+            "b1": [_buy_row("AAPL", stage_label="1차 정찰")],
+            "b2": [_buy_row("NVDA", stage_label="2차 확인", condition_summary="MACD 골든크로스")],
+            "b3": [_buy_row("MSFT", stage_label="3차 확정", condition_summary="구름 돌파")],
+            "b9": [_buy_row("TSLA", stage_label="재진입", condition_summary="추세 복귀")],
+        }
+    )
+    path = report_html.render_public_report(summary, {}, tmp_path)
+    html = path.read_text(encoding="utf-8")
+    assert "AAPL" in html
+    for held_ticker in ("NVDA", "MSFT", "TSLA"):
+        assert held_ticker not in html, f"보유를 드러내는 {held_ticker}(b2/b3/b9)가 공개용 HTML에 나옴"
+    for stage_word in ("2차 확인", "3차 확정", "재진입"):
+        assert stage_word not in html
 
 
 def test_public_briefing_has_market_temp_and_disclaimer():
