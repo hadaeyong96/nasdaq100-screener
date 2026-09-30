@@ -214,8 +214,8 @@ def test_build_briefing_text_buy_only_shows_ticker_and_stage():
         buy_count=2,
     )
     text = briefing.build_briefing_text(summary, {})
-    assert "🟢 매수 2 · CMCSA(1차) PLTR(재진입)" in text
-    assert "🔴 매도 0" in text
+    assert "매수 2 : CMCSA(1차), PLTR(재진입)" in text
+    assert "매도 0" in text
     assert "컴캐스트" not in text  # 종목은 티커만
 
 
@@ -225,8 +225,8 @@ def test_build_briefing_text_sell_only_shows_stop_label():
         sell_rows=[{"티커": "ROP", "kind": "STOP", "신호": "손절", "매도범위": "전량"}],
     )
     text = briefing.build_briefing_text(summary, {})
-    assert "🟢 매수 0" in text
-    assert "🔴 매도 1 · ROP(손절·예약 체결 확인)" in text
+    assert "매수 0" in text
+    assert "매도 1 : ROP(손절·예약 체결 확인)" in text
 
 
 def test_build_briefing_text_sell_labels_use_kind_e_numbers():
@@ -255,16 +255,16 @@ def test_build_briefing_text_stop_alerts_line_only_when_present():
         ]
     )
     text = briefing.build_briefing_text(summary, {})
-    assert "🛡️ 손절 예약 · AMZN(근접) TSLA(변경) CMCSA(신규)" in text
+    assert "손절 예약 3 : AMZN(근접), TSLA(변경), CMCSA(신규)" in text
 
     text_none = briefing.build_briefing_text(_base_summary(), {})
-    assert "🛡️" not in text_none
+    assert "손절 예약" not in text_none
 
 
 def test_build_briefing_text_unfilled_line_only_when_present():
     summary = _base_summary(unfilled_rows=[{"티커": "CMCSA", "종목명": "컴캐스트"}])
     text = briefing.build_briefing_text(summary, {})
-    assert "- 미체결 1 · CMCSA" in text  # 경고 이모지는 뺀다(사용자 확정), 내용은 유지
+    assert "- 미체결 1 : CMCSA" in text  # 경고 이모지는 뺀다(사용자 확정), 내용은 유지
 
     text_none = briefing.build_briefing_text(_base_summary(), {})
     assert "⚠️" not in text_none
@@ -281,11 +281,11 @@ def test_build_briefing_text_changed_judgment_line_only_when_present():
         ]
     )
     text = briefing.build_briefing_text(summary, {})
-    assert "🔄 판정 변경 1 · NVDA(매도)" in text
-    assert "AVGO" not in text.split("🔄")[1].split("\n")[0]  # 안 바뀐 종목은 이 줄에 없음
+    assert "판정 변경 1 : NVDA(매도)" in text
+    assert "AVGO" not in text.split("판정 변경")[1].split("\n")[0]  # 안 바뀐 종목은 이 줄에 없음
 
     text_none = briefing.build_briefing_text(_base_summary(), {})
-    assert "🔄" not in text_none
+    assert "판정 변경" not in text_none
 
 
 def test_build_briefing_text_one_share_warning_line_only_when_present():
@@ -295,7 +295,7 @@ def test_build_briefing_text_one_share_warning_line_only_when_present():
         ]
     )
     text = briefing.build_briefing_text(summary, {})
-    assert "- 계획금액으로 1차 매수 0주 · NVDA" in text  # 경고 이모지는 뺀다(사용자 확정), 내용은 유지
+    assert "- 계획금액으로 1차 매수 0주 : NVDA" in text  # 경고 이모지는 뺀다(사용자 확정), 내용은 유지
 
     text_none = briefing.build_briefing_text(_base_summary(), {})
     assert "1차 매수 0주" not in text_none

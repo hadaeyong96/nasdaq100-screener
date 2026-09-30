@@ -105,6 +105,9 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
 
     "📈 시장 온도"·"🎯 오늘의 신호" 두 묶음으로 나누고, 각 항목을 "- "로 시작하는
     한 줄씩 쓴다. 경고 이모지(⚠️)는 빼되 내용은 그대로 남긴다(사용자 확정).
+    "🎯 오늘의 신호" 아래 각 줄(매수·매도·미체결·판정 변경·손절 예약)은 장식용
+    이모지 없이 "제목 N : 항목1, 항목2" 형식으로 통일한다(사용자 확정) — 묶음
+    제목(🎯 등)과 시장 온도 줄의 판정 이모지(🟢🟡🔴)는 그대로 둔다.
     HTML 보고서 첨부는 이 함수와 무관하게 notify.telegram.send_briefing이 그대로 한다.
     """
     as_of = summary.get("as_of")
@@ -142,37 +145,37 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     if buy_count == 0 and sell_count == 0:
         signal_lines.append("오늘 매매 신호 없음")
     else:
-        buy_line = f"🟢 매수 {buy_count}"
+        buy_line = f"매수 {buy_count}"
         if buy_items:
-            buy_line += " · " + " ".join(buy_items)
+            buy_line += " : " + ", ".join(buy_items)
         signal_lines.append(buy_line)
 
-        sell_line = f"🔴 매도 {sell_count}"
+        sell_line = f"매도 {sell_count}"
         if sell_items:
-            sell_line += " · " + " ".join(sell_items)
+            sell_line += " : " + ", ".join(sell_items)
         signal_lines.append(sell_line)
 
     unfilled_rows = summary.get("unfilled_rows", [])
     if unfilled_rows:
-        names = " ".join(r["티커"] for r in unfilled_rows)
-        signal_lines.append(f"미체결 {len(unfilled_rows)} · {names}")
+        names = ", ".join(r["티커"] for r in unfilled_rows)
+        signal_lines.append(f"미체결 {len(unfilled_rows)} : {names}")
 
     # 라이브 어드바이저 1단계 (docs/design/live_advisor.md 3·7번): 판정이 바뀐 종목을
     # 맨 위 근처에 강조하고, 계획금액으로 1주도 못 사는 종목은 항상 경고한다.
     live_judgment_rows = summary.get("live_judgment_rows", [])
     changed_rows = [r for r in live_judgment_rows if r.get("changed")]
     if changed_rows:
-        items = " ".join(f"{r['ticker']}({r['judgment']})" for r in changed_rows)
-        signal_lines.append(f"🔄 판정 변경 {len(changed_rows)} · {items}")
+        items = ", ".join(f"{r['ticker']}({r['judgment']})" for r in changed_rows)
+        signal_lines.append(f"판정 변경 {len(changed_rows)} : {items}")
     warning_rows = [r for r in live_judgment_rows if r.get("one_share_warning")]
     if warning_rows:
-        items = " ".join(r["ticker"] for r in warning_rows)
-        signal_lines.append(f"계획금액으로 1차 매수 0주 · {items}")
+        items = ", ".join(r["ticker"] for r in warning_rows)
+        signal_lines.append(f"계획금액으로 1차 매수 0주 : {items}")
 
     stop_alerts = summary.get("stop_alerts", [])
     if stop_alerts:
-        items = " ".join(f"{a['티커']}({a['type']})" for a in stop_alerts)
-        signal_lines.append(f"🛡️ 손절 예약 · {items}")
+        items = ", ".join(f"{a['티커']}({a['type']})" for a in stop_alerts)
+        signal_lines.append(f"손절 예약 {len(stop_alerts)} : {items}")
 
     lines.append("")
     lines.append("🎯 오늘의 신호")
