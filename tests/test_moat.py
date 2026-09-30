@@ -21,10 +21,11 @@ def _cfg():
             "min_annual_years_required": 5,
             "roic_tax_rate_pct": 21,
             "revenue_tag_mismatch_tolerance_pct": 5,
+            "revenue_tag_mismatch_review_threshold_pct": 50,
             "m1_roic": {"good_threshold_pct": 15, "good_min_years": 4, "caution_max_good_years": 1, "min_invested_capital_ratio_of_revenue": 0.02},
             "m2_gross_margin": {"std_good_max_pp": 3, "std_caution_min_pp": 6},
             "m3_recession_resilience": {"drop_good_max_pp": 5, "drop_caution_min_pp": 10},
-            "m4_cash_conversion": {"good_min_ratio": 0.8, "caution_max_ratio": 0.5, "reference_good_min_ratio": 0.9},
+            "m4_cash_conversion": {"good_min_ratio": 0.9, "caution_max_ratio": 0.5, "reference_good_min_ratio": 0.8},
             "m5_dilution": {"good_max_pct": 3, "caution_min_pct": 10},
         }
     }
@@ -207,6 +208,68 @@ def test_revenue_series_no_flag_when_difference_within_tolerance():
     series, notes = moat.revenue_series(facts, _cfg(), date(2099, 12, 31))
     assert notes == []
     assert series[0]["val"] == 980  # 우선순위 태그 값 그대로(병합 규칙), 불일치 아니므로 안 바꿈
+
+
+def test_revenue_series_large_mismatch_uses_neighbor_fit_and_marks_review():
+    """차이가 review_threshold_pct(50%) 넘으면 "큰 값 사용" 대신 앞뒤 연도와 가장 가까운
+    값을 쓰고 "검토 필요"로 표시한다(사용자 지시 2026-10-01). 앞뒤 연도는 100·102 —
+    기대값(평균) 101에 더 가까운 건 90(작은 값)이지 900(큰 값)이 아니다."""
+    facts = _facts(**{
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax": [
+            _entry("2019-12-31", 100, "2099-01-01", 2019),
+            _entry("2020-12-31", 90, "2099-01-01", 2020),  # 우선순위 태그(병합 기준값) — 이웃과 잘 이어짐
+            _entry("2021-12-31", 102, "2099-01-01", 2021),
+        ],
+        "us-gaap:Revenues": [_entry("2020-12-31", 900, "2099-01-01", 2020)],  # 다른 태그값 — 이웃과 안 이어짐
+    })
+    series, notes = moat.revenue_series(facts, _cfg(), date(2099, 12, 31))
+    by_end = {r["end"]: r for r in series}
+    assert by_end["2020-12-31"]["val"] == 90  # 900이 아니라 이웃(100,102)에 가까운 90을 씀
+    assert by_end["2020-12-31"].get("tag_mismatch_review") is True
+    assert len(notes) == 1
+    assert "검토 필요" in notes[0] and "2020-12-31" in notes[0]
+
+
+def test_revenue_series_large_mismatch_falls_back_to_larger_value_when_no_neighbors():
+    """앞뒤 연도가 아예 없으면(연도가 하나뿐) 이웃 비교를 못 하니 그냥 큰 값을 쓴다."""
+    facts = _facts(**{
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax": [_entry("2020-12-31", 90, "2099-01-01", 2020)],
+        "us-gaap:Revenues": [_entry("2020-12-31", 900, "2099-01-01", 2020)],
+    })
+    series, notes = moat.revenue_series(facts, _cfg(), date(2099, 12, 31))
+    assert series[0]["val"] == 900
+    assert series[0].get("tag_mismatch_review") is True
+    assert len(notes) == 1
+
+
+# ── 기준 잠금(compute_config_hash·check_lock) ───────────────────────────────
+
+
+def test_compute_config_hash_same_content_same_hash_regardless_of_key_order():
+    a = {"lookback_years": 5, "roic_tax_rate_pct": 21}
+    b = {"roic_tax_rate_pct": 21, "lookback_years": 5}
+    assert moat.compute_config_hash(a) == moat.compute_config_hash(b)
+
+
+def test_compute_config_hash_different_content_different_hash():
+    a = {"lookback_years": 5}
+    b = {"lookback_years": 6}
+    assert moat.compute_config_hash(a) != moat.compute_config_hash(b)
+
+
+def test_check_lock_returns_none_when_matching():
+    cfg = _cfg()["moat"]
+    locked_hash = moat.compute_config_hash(cfg)
+    assert moat.check_lock(cfg, locked_hash) is None
+
+
+def test_check_lock_warns_when_config_changed():
+    cfg = _cfg()["moat"]
+    locked_hash = moat.compute_config_hash(cfg)
+    changed_cfg = {**cfg, "roic_tax_rate_pct": 25}
+    warning = moat.check_lock(changed_cfg, locked_hash)
+    assert warning is not None
+    assert locked_hash in warning
 
 
 # ── operating_income_series: 영업이익 대체 계산 ─────────────────────────────
@@ -465,9 +528,9 @@ def test_compute_m4_cash_conversion_missing_capex_defaults_to_zero():
     assert result.status == "좋음"  # (90-0)/100 = 0.9
 
 
-def test_compute_m4_reference_status_differs_from_main_status_when_capex_matters():
-    """설비투자가 커서 주 지표(0.8 기준)는 "보통"이지만, 참고 비율(설비투자 안 뺌, 0.9
-    기준)로는 "좋음"이 나오는 경우 — 등급 판정엔 참고값을 안 쓴다(사용자 지시)."""
+def test_compute_m4_main_is_ocf_over_ni_reference_is_old_capex_subtracted_formula():
+    """2026-10-01 확정(잠금): 주 지표 = 영업현금흐름÷순이익(설비투자 안 뺌, 0.9 기준).
+    기존 식((영업현금흐름-설비투자)÷순이익, 0.8 기준)은 참고 열로만 남는다."""
     ends = _make_years()
     facts = _facts(**{
         "us-gaap:NetCashProvidedByUsedInOperatingActivities": [_entry(e, 95, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
@@ -475,8 +538,8 @@ def test_compute_m4_reference_status_differs_from_main_status_when_capex_matters
         "us-gaap:NetIncomeLoss": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
     })
     result = moat.compute_m4_cash_conversion(facts, _cfg(), date(2099, 12, 31))
-    assert result.status == "보통"  # (95-20)/100 = 0.75 < 0.8
-    assert result.reference_status == "좋음"  # 95/100 = 0.95 >= 0.9
+    assert result.status == "좋음"  # 주 지표: 95/100 = 0.95 >= 0.9
+    assert result.reference_status == "보통"  # 참고(기존 식): (95-20)/100 = 0.75, 0.5<0.75<0.8
     assert result.reference_yearly_values
 
 

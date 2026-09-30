@@ -23,6 +23,8 @@ MJDS)를 포함하고 _TAG_CANDIDATES마다 ifrs-full 대체 태그를 둔다. �
 
 from __future__ import annotations
 
+import hashlib
+import json
 import statistics
 from dataclasses import dataclass, field
 from datetime import date
@@ -186,19 +188,28 @@ def annual_value_series(company_facts: dict, concept: str, as_of: date) -> list[
 
 
 def revenue_series(company_facts: dict, cfg: dict, as_of: date) -> tuple[list[dict], list[str]]:
-    """매출 연간 시계열 — 같은 연도에 후보 태그가 여러 개 다 있는데 값이 서로
-    cfg["moat"]["revenue_tag_mismatch_tolerance_pct"][가정] 넘게 다르면 "태그 불일치"로
-    보고 더 큰 값을 쓴다 (순수 함수, 사용자 지시 2026-10-01).
+    """매출 연간 시계열 — 같은 연도에 후보 태그가 여러 개 다 있고 값이 서로 다르면 차이
+    크기에 따라 다르게 처리한다 (순수 함수, 사용자 지시 2026-10-01 확정·잠금).
 
     annual_value_series는 연도마다 "우선순위가 가장 높은 태그 하나"만 쓴다 — 같은 연도에
     다른 후보 태그가 훨씬 다른 값을 갖고 있어도 조용히 무시된다. 매출은 지표 5개 중
     4개(M1·M2·M3, analyze_company의 핵심 항목 검사)에 쓰여 영향이 크므로 이 검사를 추가한다.
 
-    출력: (merged_series, notes) — notes는 "YYYY-MM-DD: 태그 불일치(작은값 vs 큰값) — 큰 값 사용"
-         형식의 문자열 목록(불일치 없으면 빈 목록).
+    차이 크기별 처리(cfg["moat"]의 revenue_tag_mismatch_tolerance_pct·
+    revenue_tag_mismatch_review_threshold_pct, 둘 다 [가정]):
+    - tolerance_pct(5%) 이하: 무시(정상적인 반올림·재작성 차이로 봄)
+    - tolerance_pct 초과 ~ review_threshold_pct(50%) 이하: "태그 불일치"로 보고 더 큰 값 사용
+      (총매출과 부분 항목을 착각한 경우, 큰 쪽이 총매출에 더 가까울 때가 많다)
+    - review_threshold_pct 초과: 후보 중 앞뒤 연도(병합 전 원래 값 기준) 평균과 가장 가까운
+      값을 쓰고 "검토 필요"로 표시 — 차이가 이 정도면 "더 큰 값"이라는 단순 규칙을 못 믿는다
+      (예: 세그먼트 매출 하나를 전사 매출로 잘못 태깅한 경우, 오히려 작은 값이 맞을 수도 있음).
+
+    출력: (merged_series, notes) — notes는 "YYYY-MM-DD: 태그 불일치(...) — ..." 형식의
+         문자열 목록(불일치 없으면 빈 목록).
     """
     as_of_str = as_of.isoformat()
     tolerance_pct = cfg["moat"]["revenue_tag_mismatch_tolerance_pct"]
+    review_threshold_pct = cfg["moat"]["revenue_tag_mismatch_review_threshold_pct"]
 
     by_end_all_tags: dict[str, dict[tuple[str, str], float]] = {}
     for taxonomy, tag in _TAG_CANDIDATES["revenue"]:
@@ -209,16 +220,36 @@ def revenue_series(company_facts: dict, cfg: dict, as_of: date) -> tuple[list[di
             by_end_all_tags.setdefault(end, {})[(taxonomy, tag)] = row["val"]
 
     merged = annual_value_series(company_facts, "revenue", as_of)
+    merged_by_end = {r["end"]: r["val"] for r in merged}
+    ends = [r["end"] for r in merged]
+
     notes: list[str] = []
     out: list[dict] = []
-    for row in merged:
-        values = list(by_end_all_tags.get(row["end"], {}).values())
-        if len(set(values)) > 1:
-            max_val, min_val = max(values), min(values)
-            if max_val != 0 and abs(max_val - min_val) / abs(max_val) * 100 > tolerance_pct:
-                notes.append(f"{row['end']}: 태그 불일치({min_val:,.0f} vs {max_val:,.0f}) — 큰 값 사용")
-                row = {**row, "val": max_val, "tag_mismatch": True}
-        out.append(row)
+    for i, row in enumerate(merged):
+        end = row["end"]
+        values = list(by_end_all_tags.get(end, {}).values())
+        if len(set(values)) <= 1:
+            out.append(row)
+            continue
+        max_val, min_val = max(values), min(values)
+        if max_val == 0:
+            out.append(row)
+            continue
+        diff_pct = abs(max_val - min_val) / abs(max_val) * 100
+        if diff_pct <= tolerance_pct:
+            out.append(row)
+        elif diff_pct <= review_threshold_pct:
+            notes.append(f"{end}: 태그 불일치({min_val:,.0f} vs {max_val:,.0f}, {diff_pct:.0f}%) — 큰 값 사용")
+            out.append({**row, "val": max_val, "tag_mismatch": True})
+        else:
+            prior_val = merged_by_end.get(ends[i - 1]) if i > 0 else None
+            next_val = merged_by_end.get(ends[i + 1]) if i + 1 < len(ends) else None
+            neighbors = [v for v in (prior_val, next_val) if v is not None]
+            best = min(set(values), key=lambda v: abs(v - statistics.mean(neighbors))) if neighbors else max_val
+            notes.append(
+                f"{end}: 태그 불일치 큼({min_val:,.0f} vs {max_val:,.0f}, {diff_pct:.0f}%) — 검토 필요, 앞뒤 연도와 가장 가까운 값({best:,.0f}) 사용"
+            )
+            out.append({**row, "val": best, "tag_mismatch": True, "tag_mismatch_review": True})
     return out, notes
 
 
@@ -492,13 +523,15 @@ def compute_m3_recession_resilience(company_facts: dict, cfg: dict, as_of: date)
 
 
 def compute_m4_cash_conversion(company_facts: dict, cfg: dict, as_of: date) -> IndicatorResult:
-    """M4 현금 전환율 = (영업현금흐름 − 설비투자) ÷ 순이익, 연도별 비율의 평균 [가정: 계획서는
-    단일 공식만 주고 5년 집계 방식을 안 정해 매년 비율을 낸 뒤 평균하는 쪽을 택함].
+    """M4 현금 전환율 = 영업현금흐름 ÷ 순이익, 연도별 비율의 평균 (2026-10-01 확정·잠금).
 
-    **아직 등급 판정 방식은 안 바꿨다**(사용자 지시 2026-10-01) — 참고용으로 설비투자를
-    안 뺀 비율(영업현금흐름 ÷ 순이익)을 reference_yearly_values에 같이 낸다. 이 참고
-    비율이 m4_cash_conversion.reference_good_min_ratio(0.9, 사용자 지정) 이상인지로
-    판정했을 때 등급이 달라지는 종목은 scripts/moat_report.py가 따로 비교해 보여준다.
+    **주 지표 변경**(사용자 지시, 결과를 본 뒤 확정 — store/trials.db에 사유 기록,
+    scripts/moat_lock.py): 라운드3에서 설비투자를 뺀 기존 식과 안 뺀 참고 비율을
+    비교해 봤을 때 8개 종목의 등급이 달라졌다. 설비투자는 연도별로 들쭉날쭉해(대형
+    투자 시기 vs 아닌 시기) "이익이 진짜 현금인가"라는 M4의 원래 질문에는 영업현금
+    흐름 자체가 더 안정적인 대리 지표라고 판단해 주 지표로 승격했다. 기존 식
+    ((영업현금흐름-설비투자)÷순이익)은 reference_yearly_values·reference_status에
+    참고용으로 남긴다.
     """
     m4_cfg = cfg["moat"]["m4_cash_conversion"]
     lookback = cfg["moat"]["lookback_years"]
@@ -520,8 +553,8 @@ def compute_m4_cash_conversion(company_facts: dict, cfg: dict, as_of: date) -> I
         if end not in ni_by_end or not ni_by_end[end]:
             continue
         capex_val = capex_by_end.get(end, 0)  # 설비투자 공시가 없으면 0으로 본다(서비스업 등 소액)
-        yearly[end] = round((row["val"] - capex_val) / ni_by_end[end], 3)
-        reference_yearly[end] = round(row["val"] / ni_by_end[end], 3)  # 설비투자 안 뺀 참고값
+        yearly[end] = round(row["val"] / ni_by_end[end], 3)  # 주 지표: 설비투자 안 뺌
+        reference_yearly[end] = round((row["val"] - capex_val) / ni_by_end[end], 3)  # 참고: 기존 식(설비투자 뺌)
 
     if len(yearly) < min(3, lookback):
         return IndicatorResult(
@@ -661,3 +694,34 @@ def analyze_company(company_facts: dict, ticker: str, cfg: dict, as_of: date) ->
         outliers=outliers, insufficient_data_reason=reason,
         data_years=sorted(r["end"] for r in revenue),
     )
+
+
+def compute_config_hash(moat_cfg: dict) -> str:
+    """config.yaml의 moat: 섹션 해시를 만든다 (순수 함수, 기준 잠금 확인용, 2026-10-01).
+
+    입력: moat_cfg(cfg["moat"] 그대로)
+    출력: 16자리 16진 해시 — 키 순서와 무관하게 내용이 같으면 같은 값(store.fund.params_hash와
+         같은 방식).
+    """
+    canon = json.dumps(moat_cfg, sort_keys=True, default=str)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+
+
+def check_lock(moat_cfg: dict, locked_hash: str) -> str | None:
+    """현재 moat 설정이 잠긴 기준과 다르면 경고 문구를 돌려준다 (순수 함수, 2026-10-01).
+
+    과거 검증(H4, 아직 안 만듦)이 이 기준으로 계산했다는 걸 전제로 하므로, 설정이
+    바뀐 뒤에도 조용히 다른 결과를 내면 안 된다 — H4 스크립트는 실행 전에 이 함수로
+    확인하고 경고가 있으면 멈추거나 사용자에게 알려야 한다.
+
+    입력: moat_cfg(cfg["moat"]), locked_hash(store/trials.db에 기록된 잠금 해시)
+    출력: 다르면 경고 문자열, 같으면 None
+    """
+    current = compute_config_hash(moat_cfg)
+    if current != locked_hash:
+        return (
+            f"⚠️ moat 설정이 잠긴 기준과 다릅니다(잠긴 해시 {locked_hash}, 현재 해시 {current}). "
+            "과거 검증 결과는 이 변경 전 기준으로 낸 것일 수 있습니다 — 설정을 잠긴 값으로 되돌리거나, "
+            "바꾼 내용을 새 시도로 사전 등록하세요."
+        )
+    return None

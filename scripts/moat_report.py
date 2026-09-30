@@ -136,8 +136,9 @@ def sector_breakdown(rows: list[dict]) -> dict[str, int]:
 
 
 def m4_reference_grade(profile: "moat.MoatProfile") -> str | None:
-    """M4를 참고 비율(설비투자 안 뺀 영업현금흐름÷순이익, reference_good_min_ratio=0.9)
-    기준으로 바꿨다면 나왔을 전체 해자 등급 (순수 함수, 사용자 지시 2026-10-01 5번).
+    """M4를 참고 비율(기존 식, (영업현금흐름-설비투자)÷순이익, reference_good_min_ratio=0.8)로
+    바꿨다면 나왔을 전체 해자 등급 (순수 함수, 사용자 지시 2026-10-01 확정·잠금 — M4 주 지표를
+    영업현금흐름÷순이익(0.9)으로 바꾼 뒤, 옛 식과의 차이를 비교용으로 계속 보여준다).
 
     실제 등급 판정에는 안 쓴다 — 비교용이다. M4 참고값 자체가 없으면(데이터 부족) None.
     """
@@ -226,7 +227,7 @@ def render_html(rows: list[dict], generated_at: str) -> str:
     parts.append("</ul>")
 
     changed = [r for r in deduped if r.get("m4_grade_would_change")]
-    parts.append(f"<h2>M4를 참고 비율(0.9 기준)로 바꿨다면 등급이 달라질 종목 ({len(changed)}개, 비교용 — 실제 등급엔 안 씀)</h2><ul>")
+    parts.append(f"<h2>M4를 참고 비율(기존 식, 설비투자 뺀 비율, 0.8 기준)로 바꿨다면 등급이 달라질 종목 ({len(changed)}개, 비교용 — 실제 등급엔 안 씀)</h2><ul>")
     for r in changed:
         parts.append(f"<li>{esc(r['ticker'])}: {esc(r['grade'])} → {esc(r['m4_alternate_grade'])} (M4 {esc(r['m4_status'])}→{esc(r['m4_reference_status'])})</li>")
     parts.append("</ul>")
@@ -322,7 +323,7 @@ def main() -> None:
     log(f"넓음 종목의 업종별 개수: {sector_breakdown(wide)}")
 
     changed = [r for r in deduped if r.get("m4_grade_would_change")]
-    log(f"M4를 참고 비율(0.9 기준)로 바꿨다면 등급이 달라질 종목 {len(changed)}개: " + ", ".join(f"{r['ticker']}({r['grade']}->{r['m4_alternate_grade']})" for r in changed))
+    log(f"M4를 참고 비율(기존 식, 설비투자 뺀 비율, 0.8 기준)로 바꿨다면 등급이 달라질 종목 {len(changed)}개: " + ", ".join(f"{r['ticker']}({r['grade']}->{r['m4_alternate_grade']})" for r in changed))
 
 
 if __name__ == "__main__":
