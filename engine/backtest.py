@@ -408,7 +408,7 @@ def simulate_portfolio(
     entry_type_allowed: set | None = None, rs_filter: dict | None = None,
     a1_whipsaw_block: dict | None = None, volume_filter: dict | None = None,
     atr_trail_mult: float | None = None, partial_tp_r_mult: float | None = None,
-    blocked_new_entries: set | None = None, stop_next_day_open: bool = False,
+    blocked_new_entries: set | None = None, stop_next_day_open: bool = False, apply_slippage: bool = False,
 ) -> BacktestResult:
     """core.state.process_day를 하루씩 재생해 포트폴리오를 시뮬레이션한다.
 
@@ -417,6 +417,12 @@ def simulate_portfolio(
     설명 "체결 타이밍" 참고)에 체결시킨다. True면 손절도 나머지 매도 사유(E1·
     E2·E3·A1 만료)와 똑같이 다음 거래일 시가에 체결한다 — "체결 가정의 영향"을
     격리해서 재는 단일 변수 실험 오버라이드다(다른 P5-3 오버라이드와 같은 패턴).
+
+    apply_slippage(AI 펀드 F2, 설계 5.2, 기본 False — 기존 live/paper·다른 실험은
+    영향 없음): True면 cfg["backtest"]["costs"]["slippage_pct"]를 모든 체결가(매수·
+    매도·분할익절 전부)에 불리한 방향으로 적용한다(매수는 ×(1+p), 매도는 ×(1−p)).
+    core.execution의 체결가 결정 로직(지정가·손절가 등) 자체는 건드리지 않고,
+    그 결과 가격에 슬리피지만 얹는다.
 
     apply_costs=False/apply_tax=False는 원인 분해용(P5-1.1 4번)이다. core.sizing이
     쓰는 수량 결정은 cfg의 고정값(총자금·전략한도)과 시세만 보고 Broker의 실제
@@ -507,6 +513,8 @@ def simulate_portfolio(
             row = indicator_map[ticker].loc[ts]
             limit_price = sig.entry_limit_price(pending["price"], cfg)
             fill_price = ex.resolve_buy_fill(limit_price, row.get("open"), row.get("low"))
+            if apply_slippage and fill_price is not None:
+                fill_price = fill_price * (1 + costs["slippage_pct"] / 100)
             qty = pending.get("sized_qty", 0)
             is_new_fill = pending["kind"] in _NEW_POSITION_KINDS
             if is_new_fill and blocked_new_entries is not None and (ticker, date_.isoformat()) in blocked_new_entries:
@@ -547,6 +555,8 @@ def simulate_portfolio(
                 del partial_tp_pending[ticker]
                 continue
             fill_price = ex.exit_at_open(df.loc[ts].get("open"))
+            if apply_slippage and fill_price is not None:
+                fill_price = fill_price * (1 - costs["slippage_pct"] / 100)
             del partial_tp_pending[ticker]
             if fill_price is None:
                 continue
@@ -650,7 +660,7 @@ def simulate_portfolio(
                     position_id = open_positions.get(ticker, {}).get("id")
                     _settle_sell(
                         event, ticker, position_id, date_, ts, indicator_map[ticker], broker, cfg, fx_rate, trades,
-                        stop_next_day_open=stop_next_day_open,
+                        stop_next_day_open=stop_next_day_open, apply_slippage=apply_slippage,
                     )
                     if event["kind"] == "STOP" and ticker in atr_trail_active and trades:
                         # P5-4 0-1번: 오늘 발동한 손절이 추적 손절이 덮어쓴 값이었으면 STOP과
@@ -790,12 +800,13 @@ def _price_on_or_before(df: pd.DataFrame, ts: pd.Timestamp) -> float | None:
 
 def _settle_sell(
     event, ticker, position_id, date_, ts, df, broker: Broker, cfg, fx_rate, trades: list,
-    stop_next_day_open: bool = False,
+    stop_next_day_open: bool = False, apply_slippage: bool = False,
 ) -> None:
     """매도 이벤트의 체결가를 정해(손절=당일, 나머지=다음날 시가) 현금에 반영하고 trades에 남긴다.
 
     stop_next_day_open=True면 손절도 다음날 시가 체결로 취급한다(simulate_portfolio
-    docstring 참고, 5.8 체결 가정 영향 실험 전용).
+    docstring 참고, 5.8 체결 가정 영향 실험 전용). apply_slippage=True면 그 체결가에
+    cfg["backtest"]["costs"]["slippage_pct"]만큼 불리하게(더 낮게) 더 적용한다(같은 실험 전용).
     """
     kind = event["kind"]
     qty = event["qty"]
@@ -810,6 +821,8 @@ def _settle_sell(
         else:
             next_row = df.iloc[idx + 1]
             exit_price = ex.exit_at_open(next_row.get("open"))
+    if apply_slippage and exit_price is not None:
+        exit_price = exit_price * (1 - cfg["backtest"]["costs"]["slippage_pct"] / 100)
     if exit_price is None or entry_price is None or fx_rate is None:
         trades.append(
             {"date": date_.isoformat(), "ticker": ticker, "position_id": position_id, "side": "청산", "stage": kind, "qty": qty,

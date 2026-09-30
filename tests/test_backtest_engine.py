@@ -341,6 +341,37 @@ def test_settle_sell_stop_next_day_open_fills_next_day_at_open_instead():
     assert trades[0]["date"] == ts.date().isoformat()  # 이벤트가 기록되는 날짜 자체는 그대로(신호일) — 체결가만 바뀐다
 
 
+def test_settle_sell_apply_slippage_reduces_exit_price_by_slippage_pct():
+    """AI 펀드 F2 설계 5.2: apply_slippage=True면 매도 체결가에 slippage_pct만큼 불리하게(더 낮게) 적용한다."""
+    idx = pd.bdate_range("2020-01-02", periods=2, name="date")
+    df = pd.DataFrame(
+        {"open": [93.0, 85.0], "high": [96.0, 87.0], "low": [90.0, 83.0], "close": [94.0, 84.0], "volume": [1_000_000, 1_000_000]},
+        index=idx,
+    )
+    ts = idx[0]
+    cfg = {"backtest": {"costs": {"commission_buy_pct": 0.0, "commission_sell_pct": 0.0, "slippage_pct": 0.05}}}
+    event = {"kind": "STOP", "qty": 10, "entry_price": 100.0, "stop_price": 92.0}
+    broker = bt.Broker(cash_usd=100_000.0, apply_costs=False, apply_tax=False)
+    trades: list = []
+    bt._settle_sell(event, "AAA", 1, ts.date(), ts, df, broker, cfg, fx_rate=1300.0, trades=trades, apply_slippage=True)
+    assert trades[0]["price"] == pytest.approx(92.0 * (1 - 0.05 / 100))  # 손절가(당일 체결) × (1 - 0.05%)
+
+
+def test_settle_sell_apply_slippage_false_by_default_matches_existing_price(full_cfg):
+    """apply_slippage 기본값 False는 기존 live/paper·다른 실험(P5 시리즈)의 체결가를 그대로 유지한다."""
+    idx = pd.bdate_range("2020-01-02", periods=2, name="date")
+    df = pd.DataFrame(
+        {"open": [93.0, 85.0], "high": [96.0, 87.0], "low": [90.0, 83.0], "close": [94.0, 84.0], "volume": [1_000_000, 1_000_000]},
+        index=idx,
+    )
+    ts = idx[0]
+    event = {"kind": "STOP", "qty": 10, "entry_price": 100.0, "stop_price": 92.0}
+    broker = bt.Broker(cash_usd=100_000.0, apply_costs=False, apply_tax=False)
+    trades: list = []
+    bt._settle_sell(event, "AAA", 1, ts.date(), ts, df, broker, full_cfg, fx_rate=1300.0, trades=trades)
+    assert trades[0]["price"] == pytest.approx(92.0)
+
+
 def test_simulate_portfolio_raises_when_account_and_backtest_total_krw_differ(full_cfg):
     """KJB-1.1 가드: account.total_krw와 backtest.total_krw가 다르면 core.sizing이
     실제 백테스트 자금이 아니라 account.total_krw 기준으로 슬롯을 계산해 포지션이

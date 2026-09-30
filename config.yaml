@@ -180,6 +180,9 @@ backtest:
     commission_buy_pct: 0.07 # 매수 수수료(%)
     commission_sell_pct: 0.07 # 매도 수수료(%)
     fx_spread_pct: 0.1 # 환전 스프레드(%, 원↔달러 왕복 각 방향)
+    slippage_pct: 0.05 # [가정] 설계 5.2 — 매수는 불리하게(+), 매도는 불리하게(-) 체결가에 적용.
+    # 기존 live/paper 체결에는 안 쓴다 — engine/backtest.py simulate_portfolio의
+    # apply_slippage=True(기본 False)로만 켜진다. AI 펀드 F2 B0.5 재현 3단계 전용.
   tax:
     capital_gains_deduction_krw: 2500000 # 해외주식 양도세 연간 공제
     capital_gains_rate_pct: 22 # 공제 초과분 세율(%)
