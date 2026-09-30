@@ -233,9 +233,12 @@ moat:
   lookback_years: 5 # M1·M2·M3·M4에 쓰는 최근 회계연도 수. 이상치(자기자본 음수 등) 점검도 이 범위로 좁힌다(2026-10-01 사용자 지시)
   min_annual_years_required: 5 # 이보다 핵심 항목(매출·영업이익·자기자본) 연도 수가 적으면 전체 "판단 불가"
   roic_tax_rate_pct: 21 # [가정] M1 세후 영업이익 계산용 단일 세율(회사별 실효세율 대신)
-  # [가정] 같은 연도에 매출 태그가 2개 이상 있고 이 비율(%) 넘게 다르면 "태그 불일치"로 보고
-  # 더 큰 값을 쓴다(2026-10-01 사용자 지시 — core/moat.py의 revenue_series).
+  # [가정] 같은 연도에 매출 태그가 2개 이상 있을 때(core/moat.py의 revenue_series):
+  # 차이가 이 비율(%) 이하면 무시. tolerance_pct 초과 review_threshold_pct 이하면
+  # "태그 불일치"로 보고 더 큰 값을 씀. review_threshold_pct 초과면 앞뒤 연도와 가장
+  # 잘 이어지는 값을 쓰고 "검토 필요"로 표시(2026-10-01 사용자 지시).
   revenue_tag_mismatch_tolerance_pct: 5
+  revenue_tag_mismatch_review_threshold_pct: 50
 
   m1_roic:
     good_threshold_pct: 15 # 계획서 3장
@@ -258,12 +261,13 @@ moat:
     drop_caution_min_pp: 10 # [가정: 계획서에 없음]
 
   m4_cash_conversion:
-    good_min_ratio: 0.8 # 계획서 3장 — 등급 판정에 그대로 씀(2026-10-01: 아직 안 바꿈)
+    # 2026-10-01 사용자 지시(확정, 잠금): 3라운드 비교 결과를 본 뒤 주 지표를
+    # "영업현금흐름 ÷ 순이익"(설비투자 안 뺌)으로 바꿨다 — 사유는 store/trials.db에
+    # 기록(scripts/moat_lock.py). 기존 식((영업현금흐름-설비투자)÷순이익)은
+    # reference_yearly_values·reference_good_min_ratio로 참고 열에 남긴다.
+    good_min_ratio: 0.9 # [가정] 새 주 지표(영업현금흐름÷순이익) 기준
     caution_max_ratio: 0.5 # [가정: 계획서에 없음]
-    # 2026-10-01 사용자 지시: 설비투자를 안 뺀 참고 비율(영업현금흐름÷순이익)을 이 값(사용자
-    # 지정, [가정] 아님) 이상인지로 판정했을 때 등급이 달라지는 종목을 비교용으로만 낸다 —
-    # 실제 M4 등급 판정에는 안 쓴다.
-    reference_good_min_ratio: 0.9
+    reference_good_min_ratio: 0.8 # 계획서 3장 — 이제는 참고용(기존 식)의 기준
 
   m5_dilution:
     good_max_pct: 3 # 계획서 3장(연 3% 미만)
