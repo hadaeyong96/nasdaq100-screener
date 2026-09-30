@@ -1,4 +1,4 @@
-"""해자(경쟁 우위) 지표 계산 (해자 분석 H2, docs/design/moat_plan.md 3장).
+"""해자(경쟁 우위) 지표 계산 (해자 분석 H2, docs/design/moat_plan.md 3장, 2026-10-01 계산 방식 수정).
 
 data/edgar.py가 공급한 원본 XBRL 사실에서 M1~M5 지표와 해자 등급을 계산한다. 순수 함수
 모음이다 — 네트워크·파일·DB·현재 시각에 접근하지 않는다(core/ 원칙). 같은 company_facts·
@@ -9,13 +9,16 @@ cfg·as_of 입력이면 항상 같은 출력이다.
 SEC XBRL 사실은 누적된다) as_of 시점에 이미 제출돼 있던 것 중 가장 최근 제출본을 쓴다
 (정정·재작성 반영, 그 뒤에 나온 값은 안 씀).
 
-**XBRL 태그 대체**: 같은 재무 개념도 회사·시대마다 다른 태그를 쓴다(예: 매출은
-"Revenues" 또는 ASC606 이후 "RevenueFromContractWithCustomerExcludingAssessedTax").
-_TAG_CANDIDATES에 우선순위 목록을 두고, 실제 쓴 태그를 결과에 남긴다.
+**XBRL 태그 병합**(2026-10-01 수정): 회사가 시간이 지나며 태그를 바꾸는 경우가 실제로
+많다(AVGO는 2019년까지 "StockholdersEquity", 2023년부터
+"StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"). 후보 중 하나만
+골라 그 회사의 전체 기간에 쓰면 태그를 안 쓰는 연도가 통째로 빠진다. 그래서
+annual_value_series는 "연도마다" 우선순위대로 후보 태그를 순회해 값을 채운다 — 어떤 태그를
+썼는지 각 행의 "tag" 필드에 연도별로 남는다.
 
-**해외 기업(20-F, IFRS)**: ANNUAL_FORMS에 "20-F"를 포함하고 _TAG_CANDIDATES마다
-ifrs-full 대체 태그를 둔다. 그래도 못 찾으면 해당 지표는 "판단 불가"로 남는다 — 억지로
-값을 만들지 않는다.
+**해외 기업(20-F, 40-F, IFRS)**: ANNUAL_FORMS에 "20-F"(외국 민간 발행인)·"40-F"(캐나다
+MJDS)를 포함하고 _TAG_CANDIDATES마다 ifrs-full 대체 태그를 둔다. 그래도 못 찾으면 해당
+지표는 "판단 불가"로 남는다 — 억지로 값을 만들지 않는다.
 """
 
 from __future__ import annotations
@@ -32,10 +35,11 @@ _MIN_ANNUAL_PERIOD_DAYS = 340
 _MAX_ANNUAL_PERIOD_DAYS = 380
 
 # 재무 개념 -> (taxonomy, 태그) 우선순위 목록. us-gaap을 먼저 시도하고 ifrs-full로 대체.
+# 후보가 여러 개면 "연도마다" 우선순위가 가장 높은 것부터 값을 채운다(_merge_tag_candidates).
 _TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
     "revenue": [
         ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax"),
-        ("us-gaap", "RevenueFromContractWithCustomerIncludingAssessedTax"),  # ODFL·CRWD 등 일부는 이 변형을 쓴다(2026-10-01 확인)
+        ("us-gaap", "RevenueFromContractWithCustomerIncludingAssessedTax"),  # ODFL·CRWD 등 일부는 이 변형을 쓴다
         ("us-gaap", "Revenues"),
         ("us-gaap", "SalesRevenueNet"),
         ("ifrs-full", "Revenue"),
@@ -43,6 +47,17 @@ _TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
     "operating_income": [
         ("us-gaap", "OperatingIncomeLoss"),
         ("ifrs-full", "ProfitLossFromOperatingActivities"),
+    ],
+    "pretax_income": [
+        ("us-gaap", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"),
+        ("us-gaap", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"),
+        ("ifrs-full", "ProfitLossBeforeTax"),
+    ],
+    "interest_expense": [
+        ("us-gaap", "InterestExpense"),
+        ("us-gaap", "InterestExpenseDebt"),
+        ("us-gaap", "InterestAndDebtExpense"),  # HON은 이 태그만 최근 연도에 씀(2026-10-01 확인)
+        ("ifrs-full", "InterestExpense"),
     ],
     "gross_profit": [
         ("us-gaap", "GrossProfit"),
@@ -78,6 +93,20 @@ _TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
         ("us-gaap", "ShortTermBorrowings"),
         ("us-gaap", "DebtCurrent"),
     ],
+    "current_assets": [
+        ("us-gaap", "AssetsCurrent"),
+        ("ifrs-full", "CurrentAssets"),
+    ],
+    "current_liabilities": [
+        ("us-gaap", "LiabilitiesCurrent"),
+        ("ifrs-full", "CurrentLiabilities"),
+    ],
+    "net_ppe": [
+        ("us-gaap", "PropertyPlantAndEquipmentNet"),
+        # HON은 2023년부터 금융리스 사용권자산을 합친 이 태그로 바꿨다(2026-10-01 확인).
+        ("us-gaap", "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization"),
+        ("ifrs-full", "PropertyPlantAndEquipment"),
+    ],
     "operating_cash_flow": [
         ("us-gaap", "NetCashProvidedByUsedInOperatingActivities"),
         ("ifrs-full", "CashFlowsFromUsedInOperatingActivities"),
@@ -93,55 +122,87 @@ _TAG_CANDIDATES: dict[str, list[tuple[str, str]]] = {
 }
 
 
-def annual_value_series(company_facts: dict, concept: str, as_of: date) -> tuple[list[dict], tuple[str, str] | None]:
-    """한 재무 개념의 연간(회계연도) 시계열을 as_of 시점 기준으로 뽑는다 (순수 함수).
+def _annual_entries_by_end(raw_entries: list[dict], as_of_str: str) -> dict[str, dict]:
+    """한 태그의 원본 사실 중 "진짜 연간 값"만 골라 회계연도 종료일로 묶는다 (순수 함수).
+
+    form·fp만으로는 부족하다: 10-K 안의 보조 공시(분기별 세부 내역 등)가 같은 accession의
+    form="10-K"·fp="FY" 메타데이터를 그대로 물고 나오는 경우가 실제로 있다(KLAC 확인 —
+    회계연도가 6월 말인 회사에서 분기말 날짜들이 fp="FY"로 섞여 나옴). "start"가 있는 흐름
+    (duration) 개념은 (end-start)가 약 1년(340~380일)인 것만 인정해 이런 오염을 걸러낸다.
+    "start"가 없는 시점(instant) 개념은 이 검사를 건너뛴다. 같은 종료일이 여러 번(정정·
+    비교연도 재수록) 나오면 as_of 이전 중 가장 최근 제출본을 쓴다.
+    """
+    by_end: dict[str, dict] = {}
+    for e in raw_entries:
+        if e.get("form") not in ANNUAL_FORMS or e.get("fp") != "FY":
+            continue
+        start = e.get("start")
+        if start:
+            period_days = (date.fromisoformat(e["end"]) - date.fromisoformat(start)).days
+            if not (_MIN_ANNUAL_PERIOD_DAYS <= period_days <= _MAX_ANNUAL_PERIOD_DAYS):
+                continue
+        filed = e.get("filed")
+        if not filed or filed > as_of_str:
+            continue
+        end = e["end"]
+        existing = by_end.get(end)
+        if existing is None or filed > existing["filed"]:
+            by_end[end] = {"fy": e.get("fy"), "end": end, "val": e["val"], "filed": filed, "form": e["form"]}
+    return by_end
+
+
+def annual_value_series(company_facts: dict, concept: str, as_of: date) -> list[dict]:
+    """한 재무 개념의 연간(회계연도) 시계열을 as_of 시점 기준으로, 여러 태그를 병합해 뽑는다
+    (순수 함수).
 
     입력: company_facts(data.edgar.fetch_company_facts 결과), concept(_TAG_CANDIDATES의 키),
          as_of(이 날짜까지 제출된 값만 쓴다 — 미래 데이터 금지)
-    출력: (series, tag_used) — series는 [{"fy","end","val","filed","form"}, ...] 회계연도
-         종료일 오름차순. 못 찾으면 ([], None).
+    출력: [{"fy","end","val","filed","form","tag":(taxonomy,태그)}, ...] 회계연도 종료일
+         오름차순. 어느 태그로도 못 찾은 연도는 그냥 없다.
 
-    form·fp만으로는 부족하다: 10-K 안의 보조 공시(분기별 세부 내역 등)가 같은 accession의
-    form="10-K"·fp="FY" 메타데이터를 그대로 물고 나오는 경우가 실제로 있다(KLAC 확인,
-    2026-10-01 — 회계연도가 6월 말인 회사에서 분기말 날짜들이 fp="FY"로 섞여 나옴). "start"가
-    있는 흐름(duration) 개념은 (end-start)가 약 1년(340~380일)인 것만 연간으로 인정해
-    이런 오염을 걸러낸다. "start"가 없는 시점(instant, 재무상태표) 개념은 이 검사를 건너뛴다.
-
-    태그 후보는 "연간 필터를 통과하는 사실이 있는" 첫 번째 것을 쓴다 — 그냥 "사실이 있는"
-    첫 번째가 아니다. BKNG(Booking Holdings)에서 확인(2026-10-01): 우선순위가 더 높은
-    "RevenueFromContractWithCustomerExcludingAssessedTax" 태그는 10-Q 각주에만 쓰이고
-    10-K 연간 합계는 여전히 옛 태그 "Revenues"로 공시된다. 후보 순서대로 사실 목록만 보고
-    고르면(옛 extract_first_available 방식) 10-Q뿐인 태그에 걸려 연간 값을 영영 못 찾는다.
+    태그 병합(2026-10-01 수정): 후보를 "연도마다" 순서대로 시도한다 — 회사 전체 기간에 한
+    태그만 쓰지 않는다. 우선순위가 낮은 태그부터 채우고 높은 태그로 덮어써서, 같은 연도에
+    여러 태그가 다 있으면 우선순위가 더 높은 쪽이 이긴다. 예(2026-10-01 실측):
+    - AVGO: "StockholdersEquity"는 2019년까지, "...IncludingPortionAttributableTo
+      NoncontrollingInterest"는 2023년부터 — 병합해야 둘 다 살아남는다.
+    - XEL·EXC·PYPL: 우선순위가 높은 "RevenueFromContractWithCustomer..." 태그가 옛날
+      값이나 세그먼트 분할값만 갖고 있고, 진짜 연간 합계는 "Revenues"에 있다 — 그냥
+      "사실이 있는 첫 태그"를 쓰면(옛 방식) 이 경우를 못 잡는다.
     """
     as_of_str = as_of.isoformat()
-
-    def _annual_series_for(raw_entries: list[dict]) -> dict[str, dict]:
-        by_end: dict[str, dict] = {}
-        for e in raw_entries:
-            if e.get("form") not in ANNUAL_FORMS or e.get("fp") != "FY":
-                continue
-            start = e.get("start")
-            if start:
-                period_days = (date.fromisoformat(e["end"]) - date.fromisoformat(start)).days
-                if not (_MIN_ANNUAL_PERIOD_DAYS <= period_days <= _MAX_ANNUAL_PERIOD_DAYS):
-                    continue
-            filed = e.get("filed")
-            if not filed or filed > as_of_str:
-                continue
-            end = e["end"]
-            existing = by_end.get(end)
-            if existing is None or filed > existing["filed"]:
-                by_end[end] = {"fy": e.get("fy"), "end": end, "val": e["val"], "filed": filed, "form": e["form"]}
-        return by_end
-
-    for taxonomy, tag in _TAG_CANDIDATES[concept]:
+    by_end: dict[str, dict] = {}
+    for taxonomy, tag in reversed(_TAG_CANDIDATES[concept]):
         raw_entries = edgar.extract_fact_entries(company_facts, taxonomy, tag)
         if not raw_entries:
             continue
-        by_end = _annual_series_for(raw_entries)
-        if by_end:
-            return sorted(by_end.values(), key=lambda r: r["end"]), (taxonomy, tag)
-    return [], None
+        for end, row in _annual_entries_by_end(raw_entries, as_of_str).items():
+            by_end[end] = {**row, "tag": (taxonomy, tag)}
+    return sorted(by_end.values(), key=lambda r: r["end"])
+
+
+def operating_income_series(company_facts: dict, as_of: date) -> list[dict]:
+    """영업이익 연간 시계열. 영업이익 줄이 없는 회사는 "세전이익 + 이자비용"으로 대신 계산한다
+    (순수 함수, 사용자 지시 2026-10-01).
+
+    KLAC·PCAR·ADP에서 확인: 최근 10-K에 "영업이익"(OperatingIncomeLoss) 줄 자체가 없다
+    (대체 태그도 없음 — 손익계산서 구조상 아예 안 나눔). 세전이익(pretax_income)에 이자비용
+    (interest_expense)을 다시 더하면 "이자·세금 차감 전 이익"(대략의 영업이익)에 가까운
+    근사값을 얻는다. 실제 영업이익 공시가 있는 연도는 그 값을 그대로 쓰고, 없는 연도만
+    대체 계산을 채운다. 대체로 채운 연도는 tag=("computed", "pretax_income+interest_expense")
+    로 표시한다 — 실제 공시값과 구분해서 볼 수 있게.
+    """
+    real = {r["end"]: r for r in annual_value_series(company_facts, "operating_income", as_of)}
+    pretax = {r["end"]: r["val"] for r in annual_value_series(company_facts, "pretax_income", as_of)}
+    interest = {r["end"]: r["val"] for r in annual_value_series(company_facts, "interest_expense", as_of)}
+
+    out = dict(real)
+    for end, pretax_val in pretax.items():
+        if end in out:
+            continue
+        if end not in interest:
+            continue
+        out[end] = {"fy": None, "end": end, "val": pretax_val + interest[end], "filed": None, "form": None, "tag": ("computed", "pretax_income+interest_expense")}
+    return sorted(out.values(), key=lambda r: r["end"])
 
 
 @dataclass
@@ -150,49 +211,86 @@ class IndicatorResult:
 
     status: str  # "좋음" | "보통" | "주의" | "판단 불가"
     yearly_values: dict[str, float] = field(default_factory=dict)  # {회계연도 종료일: 값(%, 배수 등 지표별 단위)}
-    tags_used: dict[str, tuple[str, str] | None] = field(default_factory=dict)  # 개념 -> 실제 쓴 (taxonomy, 태그)
+    tags_used: dict[str, dict[str, tuple[str, str]]] = field(default_factory=dict)  # 개념 -> {연도: 실제 쓴 (taxonomy, 태그)}
     detail: str = ""
+    reference_yearly_values: dict[str, float] = field(default_factory=dict)  # M1 전용: 기존 식(자기자본+차입금-현금) 참고값
+    unmeasurable_years: list[str] = field(default_factory=list)  # M1 전용: 분모가 0 이하·매우 작아 "측정 불가"로 뺀 연도
+
+
+def _tags_by_year(series: list[dict]) -> dict[str, tuple[str, str]]:
+    return {r["end"]: r["tag"] for r in series}
 
 
 def compute_m1_roic(company_facts: dict, cfg: dict, as_of: date) -> IndicatorResult:
-    """M1 투하자본수익률(ROIC) = 세후 영업이익 ÷ (자기자본 + 차입금 − 현금).
+    """M1 투하자본수익률(ROIC) = 세후 영업이익 ÷ 영업 투하자본.
 
-    부채(장단기 차입금)가 아예 공시에 없는 회사는 0으로 본다(무차입 경영으로 흔함) —
-    "판단 불가"로 만들지 않는다. 영업이익·자기자본·현금 중 하나라도 없는 연도는 그 연도를
-    건너뛴다.
+    **2026-10-01 정의 변경**: 분모를 "순운전자본(유동자산−유동부채) + 순유형자산"으로
+    바꿨다(사용자 지시 — 영업에 실제로 묶인 자본을 보려는 것. 기존 "자기자본+차입금−현금"은
+    자본구조 선택(부채 비율)에 민감해 해자와 무관한 차이를 만든다). 기존 식 결과는
+    `reference_yearly_values`에 참고용으로 남긴다.
+
+    분모가 0 이하이거나 그해 매출의 min_invested_capital_ratio_of_revenue[가정] 미만으로
+    작으면 "측정 불가"로 그 연도를 뺀다(분모가 아주 작으면 ROIC%가 무의미하게 커짐 —
+    ADBE·SBUX 등에서 실측된 100%대·100배대 값이 이 경우다).
     """
     m1_cfg = cfg["moat"]["m1_roic"]
     tax_rate = cfg["moat"]["roic_tax_rate_pct"] / 100
     lookback = cfg["moat"]["lookback_years"]
+    min_ratio = m1_cfg["min_invested_capital_ratio_of_revenue"]
 
-    op_income, op_tag = annual_value_series(company_facts, "operating_income", as_of)
-    equity, equity_tag = annual_value_series(company_facts, "stockholders_equity", as_of)
-    cash, cash_tag = annual_value_series(company_facts, "cash", as_of)
-    lt_debt, lt_tag = annual_value_series(company_facts, "long_term_debt", as_of)
-    st_debt, st_tag = annual_value_series(company_facts, "short_term_debt", as_of)
+    op_income = operating_income_series(company_facts, as_of)
+    revenue = annual_value_series(company_facts, "revenue", as_of)
+    current_assets = annual_value_series(company_facts, "current_assets", as_of)
+    current_liabilities = annual_value_series(company_facts, "current_liabilities", as_of)
+    net_ppe = annual_value_series(company_facts, "net_ppe", as_of)
+    equity = annual_value_series(company_facts, "stockholders_equity", as_of)
+    cash = annual_value_series(company_facts, "cash", as_of)
+    lt_debt = annual_value_series(company_facts, "long_term_debt", as_of)
+    st_debt = annual_value_series(company_facts, "short_term_debt", as_of)
 
-    tags = {"operating_income": op_tag, "stockholders_equity": equity_tag, "cash": cash_tag, "long_term_debt": lt_tag, "short_term_debt": st_tag}
+    tags = {
+        "operating_income": _tags_by_year(op_income), "current_assets": _tags_by_year(current_assets),
+        "current_liabilities": _tags_by_year(current_liabilities), "net_ppe": _tags_by_year(net_ppe),
+        "stockholders_equity": _tags_by_year(equity), "cash": _tags_by_year(cash),
+    }
 
-    if not op_income or not equity or not cash:
-        return IndicatorResult(status="판단 불가", tags_used=tags, detail="영업이익·자기자본·현금 중 공시를 못 찾음")
+    if not op_income or not current_assets or not current_liabilities or not net_ppe:
+        return IndicatorResult(status="판단 불가", tags_used=tags, detail="영업이익·유동자산·유동부채·유형자산 중 공시를 못 찾음")
 
-    lt_by_end = {r["end"]: r["val"] for r in lt_debt}
-    st_by_end = {r["end"]: r["val"] for r in st_debt}
+    rev_by_end = {r["end"]: r["val"] for r in revenue}
+    ca_by_end = {r["end"]: r["val"] for r in current_assets}
+    cl_by_end = {r["end"]: r["val"] for r in current_liabilities}
+    ppe_by_end = {r["end"]: r["val"] for r in net_ppe}
     equity_by_end = {r["end"]: r["val"] for r in equity}
     cash_by_end = {r["end"]: r["val"] for r in cash}
+    lt_by_end = {r["end"]: r["val"] for r in lt_debt}
+    st_by_end = {r["end"]: r["val"] for r in st_debt}
 
     yearly: dict[str, float] = {}
+    reference_yearly: dict[str, float] = {}
+    unmeasurable: list[str] = []
     for row in op_income[-lookback:]:
         end = row["end"]
-        if end not in equity_by_end or end not in cash_by_end:
+        if end not in ca_by_end or end not in cl_by_end or end not in ppe_by_end:
             continue
-        invested_capital = equity_by_end[end] + lt_by_end.get(end, 0) + st_by_end.get(end, 0) - cash_by_end[end]
-        if invested_capital <= 0:
-            continue  # 자기자본이 음수·0 이하면 ROIC%가 의미 없다 — 이상치로 별도 처리(detect_outliers)
+        invested_capital = (ca_by_end[end] - cl_by_end[end]) + ppe_by_end[end]
+        rev = rev_by_end.get(end)
+        too_small = invested_capital <= 0 or (rev and rev > 0 and invested_capital < rev * min_ratio)
+        if too_small:
+            unmeasurable.append(end)
+            continue
         yearly[end] = round(row["val"] * (1 - tax_rate) / invested_capital * 100, 2)
 
+        if end in equity_by_end and end in cash_by_end:
+            old_capital = equity_by_end[end] + lt_by_end.get(end, 0) + st_by_end.get(end, 0) - cash_by_end[end]
+            if old_capital > 0:
+                reference_yearly[end] = round(row["val"] * (1 - tax_rate) / old_capital * 100, 2)
+
     if len(yearly) < min(3, lookback):
-        return IndicatorResult(status="판단 불가", tags_used=tags, yearly_values=yearly, detail="투하자본이 유효한 연도가 너무 적음(자기자본 음수 등)")
+        return IndicatorResult(
+            status="판단 불가", tags_used=tags, yearly_values=yearly, reference_yearly_values=reference_yearly,
+            unmeasurable_years=unmeasurable, detail="영업 투하자본이 유효한 연도가 너무 적음(측정 불가 연도 제외 후 부족)",
+        )
 
     good_years = sum(1 for v in yearly.values() if v >= m1_cfg["good_threshold_pct"])
     if good_years >= m1_cfg["good_min_years"]:
@@ -201,23 +299,33 @@ def compute_m1_roic(company_facts: dict, cfg: dict, as_of: date) -> IndicatorRes
         status = "주의"
     else:
         status = "보통"
-    return IndicatorResult(status=status, yearly_values=yearly, tags_used=tags, detail=f"최근 {len(yearly)}년 중 {good_years}년이 {m1_cfg['good_threshold_pct']}% 이상")
+    detail = f"최근 {len(yearly)}년 중 {good_years}년이 {m1_cfg['good_threshold_pct']}% 이상"
+    if unmeasurable:
+        detail += f" (측정 불가 {len(unmeasurable)}개 연도 제외: {', '.join(unmeasurable)})"
+    return IndicatorResult(
+        status=status, yearly_values=yearly, tags_used=tags, detail=detail,
+        reference_yearly_values=reference_yearly, unmeasurable_years=unmeasurable,
+    )
 
 
 def compute_m2_gross_margin(company_facts: dict, cfg: dict, as_of: date) -> IndicatorResult:
-    """M2 매출총이익률 안정성 = 최근 5년 매출총이익률의 표준편차·수준.
+    """M2 매출총이익률 안정성 = 최근 5년 매출총이익률의 표준편차만 본다.
 
-    많은 회사(소매·서비스업 등, 예: COST·SBUX·KLAC — 2026-10-01 확인, 나스닥100의 약 44%가
-    해당)는 손익계산서에 "매출총이익" 줄을 따로 안 두고 "GrossProfit" 태그를 안 쓴다.
-    그런 회사는 매출총이익 = 매출 − 매출원가(cost_of_revenue)로 직접 계산한다.
+    **2026-10-01 변경**: 수준 기준(40% 이상)을 뺐다(사용자 지시) — 도매유통(COST)처럼
+    사업 구조상 매출총이익률이 원래 낮은 업종이 "주의"로 잘못 찍히는 문제가 있었다. 안정성
+    (표준편차)만으로 판단한다. 평균 수준은 참고용으로 detail에 남긴다.
+
+    많은 회사(소매·유틸리티 등)는 손익계산서에 "매출총이익" 줄을 따로 안 두고
+    "GrossProfit" 태그를 안 쓴다(2026-10-01 확인, 나스닥100의 약 44%). 그런 회사는
+    매출총이익 = 매출 − 매출원가(cost_of_revenue)로 직접 계산한다.
     """
     m2_cfg = cfg["moat"]["m2_gross_margin"]
     lookback = cfg["moat"]["lookback_years"]
 
-    revenue, rev_tag = annual_value_series(company_facts, "revenue", as_of)
-    gross_profit, gp_tag = annual_value_series(company_facts, "gross_profit", as_of)
-    cost_of_revenue, cost_tag = annual_value_series(company_facts, "cost_of_revenue", as_of)
-    tags = {"revenue": rev_tag, "gross_profit": gp_tag, "cost_of_revenue": cost_tag}
+    revenue = annual_value_series(company_facts, "revenue", as_of)
+    gross_profit = annual_value_series(company_facts, "gross_profit", as_of)
+    cost_of_revenue = annual_value_series(company_facts, "cost_of_revenue", as_of)
+    tags = {"revenue": _tags_by_year(revenue), "gross_profit": _tags_by_year(gross_profit), "cost_of_revenue": _tags_by_year(cost_of_revenue)}
 
     if not revenue or (not gross_profit and not cost_of_revenue):
         return IndicatorResult(status="판단 불가", tags_used=tags, detail="매출·매출총이익(또는 매출원가) 공시를 못 찾음")
@@ -243,23 +351,27 @@ def compute_m2_gross_margin(company_facts: dict, cfg: dict, as_of: date) -> Indi
     values = list(yearly.values())
     level = statistics.mean(values)
     std = statistics.pstdev(values) if len(values) > 1 else 0.0
-    if std <= m2_cfg["std_good_max_pp"] and level >= m2_cfg["level_good_min_pct"]:
+    if std <= m2_cfg["std_good_max_pp"]:
         status = "좋음"
-    elif std >= m2_cfg["std_caution_min_pp"] or level <= m2_cfg["level_caution_max_pct"]:
+    elif std >= m2_cfg["std_caution_min_pp"]:
         status = "주의"
     else:
         status = "보통"
-    return IndicatorResult(status=status, yearly_values=yearly, tags_used=tags, detail=f"평균 {level:.1f}%, 표준편차 {std:.1f}%p")
+    return IndicatorResult(status=status, yearly_values=yearly, tags_used=tags, detail=f"표준편차 {std:.1f}%p (참고: 평균 수준 {level:.1f}%, 등급엔 안 씀)")
 
 
 def compute_m3_recession_resilience(company_facts: dict, cfg: dict, as_of: date) -> IndicatorResult:
-    """M3 불황 버팀력 = 5년 중 가장 나빴던 해의 영업이익률 − 5년 평균."""
+    """M3 불황 버팀력 = 5년 중 가장 나빴던 해의 영업이익률 − 5년 평균.
+
+    영업이익은 operating_income_series로 구해 "영업이익 줄이 없는 회사"(세전이익+이자비용
+    대체)도 가급적 계산한다(사용자 지시 2026-10-01).
+    """
     m3_cfg = cfg["moat"]["m3_recession_resilience"]
     lookback = cfg["moat"]["lookback_years"]
 
-    revenue, rev_tag = annual_value_series(company_facts, "revenue", as_of)
-    op_income, op_tag = annual_value_series(company_facts, "operating_income", as_of)
-    tags = {"revenue": rev_tag, "operating_income": op_tag}
+    revenue = annual_value_series(company_facts, "revenue", as_of)
+    op_income = operating_income_series(company_facts, as_of)
+    tags = {"revenue": _tags_by_year(revenue), "operating_income": _tags_by_year(op_income)}
 
     if not revenue or not op_income:
         return IndicatorResult(status="판단 불가", tags_used=tags, detail="매출·영업이익 공시를 못 찾음")
@@ -294,10 +406,10 @@ def compute_m4_cash_conversion(company_facts: dict, cfg: dict, as_of: date) -> I
     m4_cfg = cfg["moat"]["m4_cash_conversion"]
     lookback = cfg["moat"]["lookback_years"]
 
-    ocf, ocf_tag = annual_value_series(company_facts, "operating_cash_flow", as_of)
-    capex, capex_tag = annual_value_series(company_facts, "capex", as_of)
-    net_income, ni_tag = annual_value_series(company_facts, "net_income", as_of)
-    tags = {"operating_cash_flow": ocf_tag, "capex": capex_tag, "net_income": ni_tag}
+    ocf = annual_value_series(company_facts, "operating_cash_flow", as_of)
+    capex = annual_value_series(company_facts, "capex", as_of)
+    net_income = annual_value_series(company_facts, "net_income", as_of)
+    tags = {"operating_cash_flow": _tags_by_year(ocf), "capex": _tags_by_year(capex), "net_income": _tags_by_year(net_income)}
 
     if not ocf or not net_income:
         return IndicatorResult(status="판단 불가", tags_used=tags, detail="영업현금흐름·순이익 공시를 못 찾음")
@@ -329,8 +441,8 @@ def compute_m5_dilution(company_facts: dict, cfg: dict, as_of: date) -> Indicato
     """M5 희석 = 희석 주식 수의 최근 1년 변화율."""
     m5_cfg = cfg["moat"]["m5_dilution"]
 
-    shares, tag = annual_value_series(company_facts, "diluted_shares", as_of)
-    tags = {"diluted_shares": tag}
+    shares = annual_value_series(company_facts, "diluted_shares", as_of)
+    tags = {"diluted_shares": _tags_by_year(shares)}
     if len(shares) < 2:
         return IndicatorResult(status="판단 불가", tags_used=tags, detail="희석 주식 수 공시가 2년 미만")
 
@@ -376,7 +488,7 @@ def detect_outliers(m1: IndicatorResult, cfg: dict, equity_series: list[dict] | 
     extreme = cfg["moat"]["outliers"]["roic_extreme_pct"]
     for end, val in m1.yearly_values.items():
         if val > extreme:
-            out.append(f"ROIC {end} {val:.1f}% (>{extreme}%, 자기자본이 작아서 과장됐을 수 있음)")
+            out.append(f"ROIC {end} {val:.1f}% (>{extreme}%, 영업 투하자본이 작아서 과장됐을 수 있음)")
     if equity_series:
         for row in equity_series:
             if row["val"] < 0:
@@ -404,11 +516,13 @@ def analyze_company(company_facts: dict, ticker: str, cfg: dict, as_of: date) ->
     """한 회사의 M1~M5 + 해자 등급을 전부 계산한다 (순수 함수, H2·H3의 진입점).
 
     핵심 항목(매출·영업이익·자기자본)의 연간 데이터가 cfg["moat"]["min_annual_years_required"]
-    미만이면 전체를 "판단 불가"로 낸다(계획서 3장 등급 규칙).
+    미만이면 전체를 "판단 불가"로 낸다(계획서 3장 등급 규칙). 영업이익은 대체 계산
+    (operating_income_series)을 포함해서 센다 — 그래야 영업이익 줄이 없는 회사도 매출·
+    자기자본만 충분하면 판단 불가를 면할 수 있다.
     """
-    revenue, _ = annual_value_series(company_facts, "revenue", as_of)
-    op_income, _ = annual_value_series(company_facts, "operating_income", as_of)
-    equity, _ = annual_value_series(company_facts, "stockholders_equity", as_of)
+    revenue = annual_value_series(company_facts, "revenue", as_of)
+    op_income = operating_income_series(company_facts, as_of)
+    equity = annual_value_series(company_facts, "stockholders_equity", as_of)
     core_years = len({r["end"] for r in revenue} & {r["end"] for r in op_income} & {r["end"] for r in equity})
     min_required = cfg["moat"]["min_annual_years_required"]
 

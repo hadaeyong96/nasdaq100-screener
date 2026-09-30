@@ -238,12 +238,16 @@ moat:
     good_threshold_pct: 15 # 계획서 3장
     good_min_years: 4 # 최근 5년 중 이 연수 이상 기준 충족 -> "좋음"
     caution_max_good_years: 1 # 기준 충족 연수가 이하면 "주의" [가정: 계획서에 없음]
+    # 2026-10-01 사용자 지시: 분모를 "순운전자본+순유형자산"(영업 투하자본)으로 변경.
+    # 분모가 이 비율(그해 매출 대비) 미만으로 작으면 ROIC%가 무의미하게 커져(ADBE 111%,
+    # SBUX 136%, MAR 6583% 실측) "측정 불가"로 뺀다 — [가정: 계획서·사용자 지시에 구체적
+    # 숫자가 없어 이번에 새로 정함, 확인 필요].
+    min_invested_capital_ratio_of_revenue: 0.02
 
   m2_gross_margin:
+    # 2026-10-01 사용자 지시: 수준 기준(40% 이상)은 뺐다 — 안정성(표준편차)만 본다.
     std_good_max_pp: 3 # 계획서 3장(표준편차 3%p 이하)
-    level_good_min_pct: 40 # 계획서 3장(수준 40% 이상)
     std_caution_min_pp: 6 # [가정: 계획서에 없음]
-    level_caution_max_pct: 25 # [가정: 계획서에 없음]
 
   m3_recession_resilience:
     drop_good_max_pp: 5 # 계획서 3장(하락폭 5%p 이내)

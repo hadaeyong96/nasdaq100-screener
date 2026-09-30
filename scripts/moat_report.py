@@ -58,11 +58,30 @@ def resolve_cik(ticker: str, ticker_to_cik: dict[str, int]) -> int | None:
 
 
 def summarize_grades(rows: list[dict]) -> dict[str, int]:
-    """등급별 종목 수를 센다 (순수 함수)."""
+    """등급별 종목 수를 센다 (순수 함수). 집계용 — 같은 회사 중복 제거는 호출부가 먼저 한다."""
     counts = {g: 0 for g in _STATUS_ORDER}
     for row in rows:
         counts[row["grade"]] = counts.get(row["grade"], 0) + 1
     return counts
+
+
+def dedupe_rows_by_cik(rows: list[dict]) -> list[dict]:
+    """같은 회사의 복수 주식(예: GOOGL·GOOG는 둘 다 Alphabet, CIK 1652044)을 등급 집계에서
+    한 번만 세도록 중복을 없앤다 (순수 함수, 사용자 지시 2026-10-01).
+
+    CIK가 같은 행 중 먼저 나온 것만 남긴다(나스닥100 목록에 나온 순서). CIK를 못 찾은 행
+    (cik=None)은 서로 다른 회사로 보고 전부 남긴다.
+    """
+    seen_ciks: set = set()
+    out = []
+    for row in rows:
+        cik = row.get("cik")
+        if cik is not None:
+            if cik in seen_ciks:
+                continue
+            seen_ciks.add(cik)
+        out.append(row)
+    return out
 
 
 def _indicator_columns(name: str, ind: "moat.IndicatorResult") -> dict:
@@ -73,10 +92,10 @@ def _indicator_columns(name: str, ind: "moat.IndicatorResult") -> dict:
     }
 
 
-def profile_to_row(ticker: str, name: str, profile: "moat.MoatProfile") -> dict:
+def profile_to_row(ticker: str, name: str, profile: "moat.MoatProfile", cik: int | None = None) -> dict:
     """MoatProfile을 CSV/HTML 한 줄짜리 dict로 편다 (순수 함수)."""
     row = {
-        "ticker": ticker, "company_name": name, "grade": profile.grade,
+        "ticker": ticker, "company_name": name, "cik": cik, "grade": profile.grade,
         "data_years": len(profile.data_years),
         "latest_data_year": profile.data_years[-1] if profile.data_years else None,
         "insufficient_data_reason": profile.insufficient_data_reason or "",
@@ -91,10 +110,13 @@ def render_html(rows: list[dict], generated_at: str) -> str:
     """등급표 HTML을 만든다 (순수 함수 — 파일 I/O 없음).
 
     표시 내용(사용자 지시): 등급별 종목 수, 판단 불가 목록, 이상치 목록, 전체 표.
+    등급 집계(종목 수·넓음·판단불가 목록)는 같은 회사 중복(GOOGL·GOOG 등)을 제거한
+    종목 기준으로 낸다 — "전체 표"는 티커 단위로 전부 보여준다(사용자 지시 2026-10-01).
     """
-    counts = summarize_grades(rows)
-    wide = [r for r in rows if r["grade"] == "넓음"]
-    inconclusive = [r for r in rows if r["grade"] == "판단 불가"]
+    deduped = dedupe_rows_by_cik(rows)
+    counts = summarize_grades(deduped)
+    wide = [r for r in deduped if r["grade"] == "넓음"]
+    inconclusive = [r for r in deduped if r["grade"] == "판단 불가"]
     with_outliers = [r for r in rows if r["outliers"]]
 
     def esc(s) -> str:
@@ -109,8 +131,9 @@ def render_html(rows: list[dict], generated_at: str) -> str:
         "th{background:#f0f0f0}"
         ".wide{background:#e6f4ea}.none{background:#fbe9e7}.unknown{background:#f5f5f5}.narrow{background:#fff8e1}"
         "</style></head><body>",
-        f"<h1>나스닥100 해자 등급표</h1><p>생성: {esc(generated_at)} · 총 {len(rows)}개 종목</p>",
-        "<h2>등급별 종목 수</h2><ul>",
+        f"<h1>나스닥100 해자 등급표</h1><p>생성: {esc(generated_at)} · 티커 {len(rows)}개"
+        f" · 등급 집계는 같은 회사 중복 제거 후 {len(deduped)}개 기준(사용자 지시 2026-10-01)</p>",
+        "<h2>등급별 종목 수 (회사 기준, 중복 제거)</h2><ul>",
     ]
     for g in _STATUS_ORDER:
         parts.append(f"<li>{esc(g)}: {counts.get(g, 0)}개</li>")
@@ -181,12 +204,12 @@ def main() -> None:
                 m5=moat.IndicatorResult(status="판단 불가"),
                 insufficient_data_reason=f"companyfacts 요청 실패: {exc}",
             )
-            rows.append(profile_to_row(ticker, name, profile))
+            rows.append(profile_to_row(ticker, name, profile, cik=cik))
             continue
 
         profile = moat.analyze_company(facts, ticker, cfg, as_of)
         log(f"  {ticker}: {profile.grade} (M1={profile.m1.status} M2={profile.m2.status} M3={profile.m3.status} M4={profile.m4.status} M5={profile.m5.status})")
-        rows.append(profile_to_row(ticker, name, profile))
+        rows.append(profile_to_row(ticker, name, profile, cik=cik))
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(CSV_PATH, "w", newline="", encoding="utf-8-sig") as f:
@@ -200,8 +223,8 @@ def main() -> None:
     HTML_PATH.write_text(render_html(rows, generated_at), encoding="utf-8")
     log(f"HTML 저장: {HTML_PATH}")
 
-    counts = summarize_grades(rows)
-    log(f"완료 — 등급별 종목 수: {counts}")
+    counts = summarize_grades(dedupe_rows_by_cik(rows))  # 같은 회사 중복(GOOGL·GOOG 등) 제거 후 집계
+    log(f"완료 — 티커 {len(rows)}개, 회사 기준(중복 제거) 등급별 종목 수: {counts}")
 
 
 if __name__ == "__main__":

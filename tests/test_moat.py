@@ -1,7 +1,8 @@
 """core/moat.py 테스트 — 네트워크 없이, 합성 XBRL 데이터로 돈다.
 
-미래 데이터 방지(annual_value_series의 filed<=as_of 필터), 등급 판정, 태그 대체,
-누락 처리를 확인한다.
+미래 데이터 방지(annual_value_series의 filed<=as_of 필터), 여러 태그 병합, 영업이익 대체
+계산, 새 M1 정의(순운전자본+순유형자산), M2 수준 기준 제거, 등급 판정, 누락 처리를
+확인한다.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ def _cfg():
             "lookback_years": 5,
             "min_annual_years_required": 5,
             "roic_tax_rate_pct": 21,
-            "m1_roic": {"good_threshold_pct": 15, "good_min_years": 4, "caution_max_good_years": 1},
-            "m2_gross_margin": {"std_good_max_pp": 3, "level_good_min_pct": 40, "std_caution_min_pp": 6, "level_caution_max_pct": 25},
+            "m1_roic": {"good_threshold_pct": 15, "good_min_years": 4, "caution_max_good_years": 1, "min_invested_capital_ratio_of_revenue": 0.02},
+            "m2_gross_margin": {"std_good_max_pp": 3, "std_caution_min_pp": 6},
             "m3_recession_resilience": {"drop_good_max_pp": 5, "drop_caution_min_pp": 10},
             "m4_cash_conversion": {"good_min_ratio": 0.8, "caution_max_ratio": 0.5},
             "m5_dilution": {"good_max_pct": 3, "caution_min_pct": 10},
@@ -45,6 +46,10 @@ def _facts(**tags_by_concept_tag):
     return facts
 
 
+def _make_years(base_end_year=2017, n=5):
+    return [f"{base_end_year + i}-12-31" for i in range(n)]
+
+
 # ── annual_value_series: 미래 데이터 방지 ───────────────────────────────────
 
 
@@ -55,9 +60,9 @@ def test_annual_value_series_excludes_entries_filed_after_as_of():
             _entry("2020-12-31", 200, "2021-02-01", 2020),
         ]
     })
-    series, tag = moat.annual_value_series(facts, "operating_income", date(2020, 6, 1))
+    series = moat.annual_value_series(facts, "operating_income", date(2020, 6, 1))
     assert [r["end"] for r in series] == ["2019-12-31"]  # 2020년 값은 2021-02-01에 제출돼 미래
-    assert tag == ("us-gaap", "OperatingIncomeLoss")
+    assert series[0]["tag"] == ("us-gaap", "OperatingIncomeLoss")
 
 
 def test_annual_value_series_picks_latest_filed_before_as_of_for_restated_period():
@@ -69,7 +74,7 @@ def test_annual_value_series_picks_latest_filed_before_as_of_for_restated_period
             _entry("2019-12-31", 110, "2025-02-01", 2024),  # 훨씬 나중 — as_of보다 미래
         ]
     })
-    series, _ = moat.annual_value_series(facts, "operating_income", date(2022, 1, 1))
+    series = moat.annual_value_series(facts, "operating_income", date(2022, 1, 1))
     assert len(series) == 1
     assert series[0]["val"] == 105  # 2021-02-01 값(2022-01-01 이전, 가장 최근 제출)
 
@@ -82,14 +87,14 @@ def test_annual_value_series_ignores_non_annual_and_wrong_form():
             _entry("2019-12-31", 999, "2020-02-01", 2019, form="8-K", fp="FY"),  # 연간이지만 10-K 아님
         ]
     })
-    series, _ = moat.annual_value_series(facts, "operating_income", date(2021, 1, 1))
-    assert series == [{"fy": 2019, "end": "2019-12-31", "val": 100, "filed": "2020-02-01", "form": "10-K"}]
+    series = moat.annual_value_series(facts, "operating_income", date(2021, 1, 1))
+    assert len(series) == 1
+    assert series[0]["val"] == 100
+    assert series[0]["end"] == "2019-12-31"
 
 
 def test_annual_value_series_missing_concept_returns_empty():
-    series, tag = moat.annual_value_series(_facts(), "operating_income", date(2021, 1, 1))
-    assert series == []
-    assert tag is None
+    assert moat.annual_value_series(_facts(), "operating_income", date(2021, 1, 1)) == []
 
 
 def test_annual_value_series_accepts_40f_canadian_annual_form():
@@ -99,8 +104,10 @@ def test_annual_value_series_accepts_40f_canadian_annual_form():
             _entry("2023-12-31", 7000, "2024-02-13", 2023, form="40-F", fp="FY", start="2023-01-01"),
         ]
     })
-    series, _ = moat.annual_value_series(facts, "revenue", date(2025, 1, 1))
-    assert series == [{"fy": 2023, "end": "2023-12-31", "val": 7000, "filed": "2024-02-13", "form": "40-F"}]
+    series = moat.annual_value_series(facts, "revenue", date(2025, 1, 1))
+    assert len(series) == 1
+    assert series[0]["val"] == 7000
+    assert series[0]["tag"] == ("us-gaap", "RevenueFromContractWithCustomerExcludingAssessedTax")
 
 
 def test_annual_value_series_filters_out_quarter_length_entries_mistagged_as_fy():
@@ -112,21 +119,43 @@ def test_annual_value_series_filters_out_quarter_length_entries_mistagged_as_fy(
             _entry("2020-09-30", 300, "2020-08-01", 2020, form="10-K", fp="FY", start="2020-07-01"),  # 분기(92일)인데 FY로 잘못 태깅
         ]
     })
-    series, _ = moat.annual_value_series(facts, "operating_income", date(2021, 1, 1))
+    series = moat.annual_value_series(facts, "operating_income", date(2021, 1, 1))
     assert [r["end"] for r in series] == ["2020-06-30"]
 
 
 def test_annual_value_series_instant_concept_without_start_is_unaffected_by_period_check():
     """자기자본·현금 같은 시점(instant) 개념은 "start"가 없어 기간 검사를 안 받는다."""
     facts = _facts(**{"us-gaap:StockholdersEquity": [_entry("2020-06-30", 5000, "2020-08-01", 2020, form="10-K", fp="FY")]})
-    series, _ = moat.annual_value_series(facts, "stockholders_equity", date(2021, 1, 1))
+    series = moat.annual_value_series(facts, "stockholders_equity", date(2021, 1, 1))
     assert len(series) == 1
+
+
+def test_annual_value_series_merges_tags_across_years():
+    """AVGO 실측(2026-10-01): "StockholdersEquity"는 2019년까지, 2023년부터는
+    "...IncludingPortionAttributableToNoncontrollingInterest" — 두 태그를 병합해야
+    전체 기간이 나온다. 같은 연도에 둘 다 있으면 우선순위가 높은 쪽이 이긴다."""
+    facts = _facts(**{
+        "us-gaap:StockholdersEquity": [
+            _entry("2019-12-31", 100, "2020-02-01", 2019),
+            _entry("2020-12-31", 999, "2021-02-01", 2020),  # 우선순위 높은 태그 값 — 이게 이겨야 함
+        ],
+        "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest": [
+            _entry("2020-12-31", 111, "2021-02-01", 2020),  # 같은 연도, 우선순위 낮은 태그
+            _entry("2023-12-31", 300, "2024-02-01", 2023),  # 2023년은 이 태그로만 있음
+        ],
+    })
+    series = moat.annual_value_series(facts, "stockholders_equity", date(2025, 1, 1))
+    by_end = {r["end"]: r for r in series}
+    assert by_end["2019-12-31"]["val"] == 100
+    assert by_end["2020-12-31"]["val"] == 999  # 우선순위 높은 태그가 이김
+    assert by_end["2020-12-31"]["tag"] == ("us-gaap", "StockholdersEquity")
+    assert by_end["2023-12-31"]["val"] == 300  # 우선순위 높은 태그엔 없어서 대체 태그로 채워짐
+    assert by_end["2023-12-31"]["tag"] == ("us-gaap", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
 
 
 def test_annual_value_series_skips_tag_with_only_quarterly_entries_for_next_candidate():
     """BKNG(Booking Holdings)는 우선순위가 높은 태그를 10-Q 각주에만 쓰고, 연간 합계는
-    다음 후보 태그("Revenues")로 공시한다(2026-10-01 실측) — 사실이 있다는 것만으로
-    태그를 확정하면(옛 extract_first_available 방식) 이 연간 값을 영영 못 찾는다."""
+    다음 후보 태그("Revenues")로 공시한다(2026-10-01 실측)."""
     facts = _facts(**{
         "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax": [
             _entry("2023-03-31", 100, "2023-05-01", 2023, form="10-Q", fp="Q1", start="2023-01-01"),
@@ -135,48 +164,121 @@ def test_annual_value_series_skips_tag_with_only_quarterly_entries_for_next_cand
             _entry("2023-12-31", 900, "2024-02-01", 2023, form="10-K", fp="FY", start="2023-01-01"),
         ],
     })
-    series, tag = moat.annual_value_series(facts, "revenue", date(2025, 1, 1))
-    assert tag == ("us-gaap", "Revenues")
+    series = moat.annual_value_series(facts, "revenue", date(2025, 1, 1))
+    assert len(series) == 1
+    assert series[0]["tag"] == ("us-gaap", "Revenues")
     assert series[0]["val"] == 900
 
 
 def test_annual_value_series_falls_back_to_ifrs_tag():
     facts = _facts(**{"ifrs-full:Revenue": [_entry("2020-12-31", 500, "2021-03-01", 2020, form="20-F")]})
-    series, tag = moat.annual_value_series(facts, "revenue", date(2021, 6, 1))
-    assert tag == ("ifrs-full", "Revenue")
+    series = moat.annual_value_series(facts, "revenue", date(2021, 6, 1))
+    assert series[0]["tag"] == ("ifrs-full", "Revenue")
     assert series[0]["val"] == 500
 
 
-# ── 지표 계산 (5년치 합성 데이터) ────────────────────────────────────────────
+# ── operating_income_series: 영업이익 대체 계산 ─────────────────────────────
 
 
-def _make_years(base_end_year=2017, n=5):
-    return [f"{base_end_year + i}-12-31" for i in range(n)]
+def test_operating_income_series_uses_real_tag_when_present():
+    facts = _facts(**{"us-gaap:OperatingIncomeLoss": [_entry("2020-12-31", 500, "2099-01-01", 2020)]})
+    series = moat.operating_income_series(facts, date(2099, 12, 31))
+    assert series[0]["val"] == 500
+    assert series[0]["tag"] == ("us-gaap", "OperatingIncomeLoss")
 
 
-def test_compute_m1_roic_good_when_most_years_above_threshold():
-    ends = _make_years()
+def test_operating_income_series_falls_back_to_pretax_plus_interest_when_missing():
+    """KLAC·PCAR·ADP류(영업이익 줄 자체가 없음, 2026-10-01 확인) — 세전이익+이자비용으로 대체."""
     facts = _facts(**{
-        "us-gaap:OperatingIncomeLoss": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
-        "us-gaap:StockholdersEquity": [_entry(e, 400, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
-        "us-gaap:CashAndCashEquivalentsAtCarryingValue": [_entry(e, 50, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": [
+            _entry("2020-12-31", 400, "2099-01-01", 2020)
+        ],
+        "us-gaap:InterestExpense": [_entry("2020-12-31", 50, "2099-01-01", 2020)],
     })
-    # ROIC = 100*(1-0.21)/(400-50) = 79/350 = 22.57% >= 15%, 5/5년
+    series = moat.operating_income_series(facts, date(2099, 12, 31))
+    assert series[0]["val"] == 450
+    assert series[0]["tag"] == ("computed", "pretax_income+interest_expense")
+
+
+def test_operating_income_series_prefers_real_tag_per_year_over_computed():
+    facts = _facts(**{
+        "us-gaap:OperatingIncomeLoss": [_entry("2020-12-31", 500, "2099-01-01", 2020)],
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": [
+            _entry("2020-12-31", 400, "2099-01-01", 2020),
+            _entry("2021-12-31", 600, "2099-01-01", 2021),
+        ],
+        "us-gaap:InterestExpense": [
+            _entry("2020-12-31", 50, "2099-01-01", 2020),
+            _entry("2021-12-31", 70, "2099-01-01", 2021),
+        ],
+    })
+    series = moat.operating_income_series(facts, date(2099, 12, 31))
+    by_end = {r["end"]: r for r in series}
+    assert by_end["2020-12-31"]["val"] == 500  # 실제 영업이익 태그가 있으면 그걸 씀(대체 계산 무시)
+    assert by_end["2020-12-31"]["tag"] == ("us-gaap", "OperatingIncomeLoss")
+    assert by_end["2021-12-31"]["val"] == 670  # 실제 영업이익이 없는 연도만 대체 계산
+
+
+def test_operating_income_series_no_fallback_possible_stays_empty_for_that_year():
+    facts = _facts(**{
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": [
+            _entry("2020-12-31", 400, "2099-01-01", 2020)
+        ]
+        # 이자비용 공시가 없음 -> 대체 계산 불가
+    })
+    series = moat.operating_income_series(facts, date(2099, 12, 31))
+    assert series == []
+
+
+# ── M1 ROIC (새 정의: 순운전자본 + 순유형자산) ────────────────────────────────
+
+
+def _m1_facts(op_income_by_year, current_assets, current_liabilities, net_ppe, revenue=None, equity=None, cash=None, years=None):
+    years = years or _make_years()
+    d = {
+        "us-gaap:OperatingIncomeLoss": [_entry(e, op_income_by_year, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
+        "us-gaap:AssetsCurrent": [_entry(e, current_assets, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
+        "us-gaap:LiabilitiesCurrent": [_entry(e, current_liabilities, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
+        "us-gaap:PropertyPlantAndEquipmentNet": [_entry(e, net_ppe, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
+    }
+    if revenue is not None:
+        d["us-gaap:Revenues"] = [_entry(e, revenue, "2099-01-01", 2000 + i) for i, e in enumerate(years)]
+    if equity is not None:
+        d["us-gaap:StockholdersEquity"] = [_entry(e, equity, "2099-01-01", 2000 + i) for i, e in enumerate(years)]
+    if cash is not None:
+        d["us-gaap:CashAndCashEquivalentsAtCarryingValue"] = [_entry(e, cash, "2099-01-01", 2000 + i) for i, e in enumerate(years)]
+    return _facts(**d)
+
+
+def test_compute_m1_roic_good_using_working_capital_plus_ppe():
+    # invested_capital = (300-100) + 200 = 400; op_income*0.79/400 = 100*0.79/400 = 19.75% >= 15%
+    facts = _m1_facts(op_income_by_year=100, current_assets=300, current_liabilities=100, net_ppe=200, revenue=1000)
     result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
     assert result.status == "좋음"
     assert len(result.yearly_values) == 5
 
 
-def test_compute_m1_roic_caution_when_almost_no_good_years():
-    ends = _make_years()
-    facts = _facts(**{
-        "us-gaap:OperatingIncomeLoss": [_entry(e, 10, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
-        "us-gaap:StockholdersEquity": [_entry(e, 1000, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
-        "us-gaap:CashAndCashEquivalentsAtCarryingValue": [_entry(e, 0, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
-    })
-    # ROIC = 10*0.79/1000 = 0.79% — 0/5년 15% 이상
+def test_compute_m1_roic_reference_values_use_old_formula():
+    facts = _m1_facts(op_income_by_year=100, current_assets=300, current_liabilities=100, net_ppe=200, revenue=1000, equity=400, cash=50)
     result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
-    assert result.status == "주의"
+    # 참고값(기존 식) = 100*0.79/(400-50) = 22.57%, 새 값과 달라야 함
+    assert result.reference_yearly_values
+    assert list(result.reference_yearly_values.values())[0] != list(result.yearly_values.values())[0]
+
+
+def test_compute_m1_roic_marks_tiny_denominator_as_unmeasurable():
+    # invested_capital = (101-100)+0 = 1, revenue=1000 -> ratio 0.001 < 0.02 min -> 측정 불가
+    facts = _m1_facts(op_income_by_year=100, current_assets=101, current_liabilities=100, net_ppe=0, revenue=1000)
+    result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
+    assert result.status == "판단 불가"
+    assert len(result.unmeasurable_years) == 5
+
+
+def test_compute_m1_roic_negative_denominator_is_unmeasurable():
+    facts = _m1_facts(op_income_by_year=100, current_assets=50, current_liabilities=200, net_ppe=0, revenue=1000)
+    result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
+    assert result.status == "판단 불가"
+    assert len(result.unmeasurable_years) == 5
 
 
 def test_compute_m1_roic_insufficient_data_when_core_items_missing():
@@ -184,24 +286,32 @@ def test_compute_m1_roic_insufficient_data_when_core_items_missing():
     assert result.status == "판단 불가"
 
 
-def test_compute_m1_roic_skips_negative_invested_capital_years():
-    ends = _make_years()
+def test_compute_m1_roic_uses_operating_income_fallback_when_no_direct_tag():
+    """KLAC류: 영업이익 태그가 없어도 세전이익+이자비용으로 계산한다."""
+    years = _make_years()
     facts = _facts(**{
-        "us-gaap:OperatingIncomeLoss": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
-        "us-gaap:StockholdersEquity": [_entry(e, -500, "2099-01-01", 2000 + i) for i, e in enumerate(ends[:3])]
-        + [_entry(e, 400, "2099-01-01", 2000 + i) for i, e in enumerate(ends[3:], start=3)],
-        "us-gaap:CashAndCashEquivalentsAtCarryingValue": [_entry(e, 50, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": [
+            _entry(e, 130, "2099-01-01", 2000 + i) for i, e in enumerate(years)
+        ],
+        "us-gaap:InterestExpense": [_entry(e, 20, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
+        "us-gaap:AssetsCurrent": [_entry(e, 300, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
+        "us-gaap:LiabilitiesCurrent": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
+        "us-gaap:PropertyPlantAndEquipmentNet": [_entry(e, 200, "2099-01-01", 2000 + i) for i, e in enumerate(years)],
     })
     result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
-    # 앞 3년은 자기자본이 음수라 invested_capital<=0 -> 건너뜀, 뒤 2년만 남음(< 3 최소치) -> 판단 불가
-    assert result.status == "판단 불가"
+    assert result.status != "판단 불가"
+    assert len(result.yearly_values) == 5
 
 
-def test_compute_m2_gross_margin_good_when_stable_and_high():
+# ── M2 매출총이익률: 수준 기준 없음, 표준편차만 ──────────────────────────────
+
+
+def test_compute_m2_gross_margin_good_when_stable_regardless_of_level():
+    """COST류(수준이 낮아도 안정적이면 "좋음") — 2026-10-01 사용자 지시로 수준 기준 제거."""
     ends = _make_years()
     facts = _facts(**{
-        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax": [_entry(e, 1000, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
-        "us-gaap:GrossProfit": [_entry(e, 450, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:Revenues": [_entry(e, 1000, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:GrossProfit": [_entry(e, 125, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],  # 12.5% 수준, 표준편차 0
     })
     result = moat.compute_m2_gross_margin(facts, _cfg(), date(2099, 12, 31))
     assert result.status == "좋음"
@@ -226,9 +336,11 @@ def test_compute_m2_gross_margin_falls_back_to_revenue_minus_cost_of_revenue():
         "us-gaap:CostOfGoodsAndServicesSold": [_entry(e, 600, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
     })
     result = moat.compute_m2_gross_margin(facts, _cfg(), date(2099, 12, 31))
-    # (1000-600)/1000 = 40% 수준, std=0 -> 좋음
     assert result.status == "좋음"
-    assert result.tags_used["cost_of_revenue"] == ("us-gaap", "CostOfGoodsAndServicesSold")
+    assert result.tags_used["cost_of_revenue"][ends[0]] == ("us-gaap", "CostOfGoodsAndServicesSold")
+
+
+# ── M3 (영업이익 대체 계산 사용) ───────────────────────────────────────────
 
 
 def test_compute_m3_recession_resilience_good_when_stable():
@@ -252,6 +364,22 @@ def test_compute_m3_recession_resilience_caution_when_one_bad_year():
     assert result.status == "주의"
 
 
+def test_compute_m3_uses_operating_income_fallback():
+    ends = _make_years()
+    facts = _facts(**{
+        "us-gaap:Revenues": [_entry(e, 1000, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": [
+            _entry(e, 280, "2099-01-01", 2000 + i) for i, e in enumerate(ends)
+        ],
+        "us-gaap:InterestExpense": [_entry(e, 20, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+    })
+    result = moat.compute_m3_recession_resilience(facts, _cfg(), date(2099, 12, 31))
+    assert result.status != "판단 불가"
+
+
+# ── M4·M5 (변경 없음, 회귀 확인만) ───────────────────────────────────────────
+
+
 def test_compute_m4_cash_conversion_good():
     ends = _make_years()
     facts = _facts(**{
@@ -259,7 +387,6 @@ def test_compute_m4_cash_conversion_good():
         "us-gaap:PaymentsToAcquirePropertyPlantAndEquipment": [_entry(e, 10, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
         "us-gaap:NetIncomeLoss": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
     })
-    # (100-10)/100 = 0.9 >= 0.8
     result = moat.compute_m4_cash_conversion(facts, _cfg(), date(2099, 12, 31))
     assert result.status == "좋음"
 
@@ -316,7 +443,7 @@ def test_compute_moat_grade_wide_when_core_three_good_and_no_caution():
 
 def test_compute_moat_grade_not_wide_if_m3_caution_even_with_core_good():
     grade = moat.compute_moat_grade(_ind("좋음"), _ind("좋음"), _ind("주의"), _ind("좋음"), _ind("보통"))
-    assert grade == "좁음"  # M1,M2,M4 다 좋음(3개) -> 좁음 조건도 만족하지만 넓음 조건(M3 주의)엔 못 미침
+    assert grade == "좁음"
 
 
 def test_compute_moat_grade_narrow_when_two_of_three_good():
@@ -368,6 +495,9 @@ def test_analyze_company_full_five_years_produces_real_grade():
         "us-gaap:GrossProfit": [_entry(e, 450, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
         "us-gaap:StockholdersEquity": [_entry(e, 400, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
         "us-gaap:CashAndCashEquivalentsAtCarryingValue": [_entry(e, 50, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:AssetsCurrent": [_entry(e, 300, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:LiabilitiesCurrent": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:PropertyPlantAndEquipmentNet": [_entry(e, 200, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
         "us-gaap:NetCashProvidedByUsedInOperatingActivities": [_entry(e, 300, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
         "us-gaap:NetIncomeLoss": [_entry(e, 250, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
         "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding": [_entry(e, 1000 + i, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
@@ -376,3 +506,22 @@ def test_analyze_company_full_five_years_produces_real_grade():
     assert profile.grade != "판단 불가"
     assert profile.insufficient_data_reason is None
     assert len(profile.data_years) == 5
+
+
+def test_analyze_company_operating_income_fallback_avoids_inconclusive():
+    """KLAC류: 영업이익 태그가 없어도 대체 계산으로 판단 불가를 면할 수 있다."""
+    ends = _make_years()
+    facts = _facts(**{
+        "us-gaap:Revenues": [_entry(e, 1000, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": [
+            _entry(e, 280, "2099-01-01", 2000 + i) for i, e in enumerate(ends)
+        ],
+        "us-gaap:InterestExpense": [_entry(e, 20, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:StockholdersEquity": [_entry(e, 400, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:CashAndCashEquivalentsAtCarryingValue": [_entry(e, 50, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:AssetsCurrent": [_entry(e, 300, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:LiabilitiesCurrent": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:PropertyPlantAndEquipmentNet": [_entry(e, 200, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+    })
+    profile = moat.analyze_company(facts, "KLAC_LIKE", _cfg(), date(2099, 12, 31))
+    assert profile.grade != "판단 불가"

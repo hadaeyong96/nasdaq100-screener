@@ -58,6 +58,27 @@ def test_profile_to_row_empty_data_years_gives_none_latest_year():
     assert row["data_years"] == 0
 
 
+def test_profile_to_row_stores_cik():
+    row = rpt.profile_to_row("GOOGL", "Alphabet Inc.", _blank_profile(), cik=1652044)
+    assert row["cik"] == 1652044
+
+
+def test_dedupe_rows_by_cik_keeps_first_occurrence_per_company():
+    """GOOGL·GOOG는 둘 다 Alphabet(같은 CIK) — 등급 집계는 한 번만 센다."""
+    rows = [
+        {"ticker": "GOOGL", "cik": 1652044, "grade": "넓음"},
+        {"ticker": "GOOG", "cik": 1652044, "grade": "넓음"},
+        {"ticker": "AAPL", "cik": 320193, "grade": "넓음"},
+    ]
+    out = rpt.dedupe_rows_by_cik(rows)
+    assert [r["ticker"] for r in out] == ["GOOGL", "AAPL"]
+
+
+def test_dedupe_rows_by_cik_keeps_all_rows_with_unresolved_cik():
+    rows = [{"ticker": "AAA", "cik": None, "grade": "넓음"}, {"ticker": "BBB", "cik": None, "grade": "없음"}]
+    assert len(rpt.dedupe_rows_by_cik(rows)) == 2
+
+
 def test_render_html_includes_summary_counts_and_wide_list():
     rows = [rpt.profile_to_row("AAA", "AAA Inc", _blank_profile("넓음"))]
     rows.append(rpt.profile_to_row("BBB", "BBB Inc", _blank_profile("판단 불가", reason="데이터 부족")))
@@ -73,6 +94,18 @@ def test_render_html_escapes_html_special_characters():
     html = rpt.render_html([row], "now")
     assert "<Co>" not in html
     assert "&lt;Co&gt;" in html
+
+
+def test_render_html_dedupes_same_company_multiple_share_classes_in_summary_counts():
+    """GOOGL·GOOG(Alphabet, 같은 CIK)는 등급 집계에서 한 번만 세지만, 전체 표 티커 수엔 둘 다 남는다."""
+    rows = [
+        rpt.profile_to_row("GOOGL", "Alphabet Inc.", _blank_profile("넓음"), cik=1652044),
+        rpt.profile_to_row("GOOG", "Alphabet Inc.", _blank_profile("넓음"), cik=1652044),
+        rpt.profile_to_row("AAPL", "Apple Inc.", _blank_profile("넓음"), cik=320193),
+    ]
+    html = rpt.render_html(rows, "now")
+    assert "넓음: 2" in html  # Alphabet 1 + Apple 1, GOOG 중복 제외
+    assert "티커 3개" in html
 
 
 def test_render_html_lists_outliers():
