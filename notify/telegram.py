@@ -160,7 +160,7 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
 
     conn = db.connect(db.db_path_for_mode(mode))
     try:
-        if db.has_notified(conn, as_of_str):
+        if db.has_notified(conn, as_of_str) and not summary.get("rebuilt_from"):
             print(f"[telegram] {as_of_str} 기준 이미 발송한 기록이 있어 다시 보내지 않습니다.")
             return out_path
 

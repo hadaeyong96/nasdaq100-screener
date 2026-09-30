@@ -64,7 +64,7 @@ from core.indicators import compute_indicators  # noqa: E402
 from data import fx  # noqa: E402
 from data import macro as macrodata  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
-from data.fills import fills_for, load_fills, load_plan, summarize_cash_rows  # noqa: E402
+from data.fills import fills_between, load_fills, load_plan, summarize_cash_rows  # noqa: E402
 from data.market_calendar import latest_closed_trading_day, trading_days_between  # noqa: E402
 from data.prices import US_EASTERN, fetch_universe_prices  # noqa: E402
 from data import sheets  # noqa: E402
@@ -346,6 +346,18 @@ def _label_filter_reason(reason: str) -> str:
     return reason
 
 
+def _fills_fingerprint(fills_df: pd.DataFrame) -> str:
+    """체결 기록 내용의 지문(sha1). 신호·상태에 영향을 주는 열(날짜·종목·차수·매수매도·
+    체결가·수량)만 쓴다 — 환율·수수료만 바뀐 것은 재계산 대상이 아니다. 비었으면 ""."""
+    import hashlib
+
+    if fills_df is None or fills_df.empty:
+        return ""
+    cols = ["date", "ticker", "unit", "side", "price", "qty"]
+    text = fills_df[cols].astype(str).sort_values(cols).to_csv(index=False)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
 def _dates_since_start(df: pd.DataFrame, start_date) -> list:
     """이 종목에 대해 start_date(포함, last_processed_date 다음 거래일)부터 오늘까지
     처리할 날짜 목록을 정한다 (P3.2 3번 — 건너뛴 거래일이 있으면 모두 포함된다).
@@ -540,7 +552,12 @@ def simulate_since(
                 continue
             events = events_by_ticker[ticker]
             if not virtual_fill:
-                for fill in fills_for(fills_df, ticker, date):
+                idx = indicator_map[ticker].index
+                loc = idx.get_loc(date)
+                prev_date = idx[loc - 1] if loc > 0 else None
+                # (직전 거래일, 오늘] 구간의 체결 — 주말·휴장일(한국 날짜 등)로 적은 체결도
+                # 다음 거래일에 반영된다.
+                for fill in fills_between(fills_df, ticker, prev_date, date):
                     states[ticker] = st.apply_fill(states[ticker], fill, cfg)
                     events.append({"date": date, "ticker": ticker, "kind": "FILL", **fill})
 
@@ -1502,7 +1519,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
     # 지금처럼 fills.xlsx만 쓴다(계획 개념 자체가 paper에는 없다).
     if mode == "live":
         try:
-            sheets_result = sheets.read_sheets(client=sheets_client)
+            sheets_result = sheets.read_sheets(client=sheets_client, cfg=cfg)
             fills_result = sheets_result.fills
             plan_df, plan_errors = sheets_result.plan_df, sheets_result.plan_errors
         except sheets.SheetsConfigError:
@@ -1535,6 +1552,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
 
     gap_dates_by_ticker = {t: {pd.Timestamp(d) for d in price_result.data_gap.get(t, [])} for t in indicator_map}
 
+    rebuild_start = None
     if do_replay:
         # ── 레거시 경로(P2): state.db가 비어 있을 때만 가상 체결로 되돌려 본다 ──
         positions = db.load_all_positions(conn)
@@ -1555,7 +1573,25 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         # 거래일을 순서대로 다시 계산한다(P3.2 3번, "처리 날짜 누락 방지"). 이번
         # 기준일이 last_processed_date 이하이면(같은 날 재실행 등) 아무것도 하지 않는다.
         last_processed_str = db.get_meta(conn, "last_processed_date")
-        if last_processed_str is not None and actual_date <= pd.Timestamp(last_processed_str).date():
+        # 라이브: 체결 기록(시트)이 지난 실행 이후 바뀌었으면(늦게 적은 체결·수정·삭제) 가장
+        # 이른 체결일부터 상태를 처음부터 다시 계산한다 — 이미 처리한 날짜의 체결도 반영되게.
+        # 같은 기준일 재실행이어도 이 경우에는 건너뛰지 않는다.
+        fills_fp = _fills_fingerprint(fills_df) if mode == "live" else ""
+        rebuild_start = None
+        if mode == "live" and (last_processed_str is not None or fills_fp) and (db.get_meta(conn, "fills_fingerprint") or "") != fills_fp:
+            candidates = [
+                pd.Timestamp(last_processed_str) + pd.Timedelta(days=1)
+                if last_processed_str is not None
+                else pd.Timestamp(actual_date)
+            ]
+            if not fills_df.empty:
+                candidates.append(pd.Timestamp(fills_df["date"].min()))
+            prev_earliest = db.get_meta(conn, "fills_earliest_date")
+            if prev_earliest:
+                candidates.append(pd.Timestamp(prev_earliest))
+            rebuild_start = min(candidates)
+            print(f"[daily] 체결 기록이 바뀌어 {rebuild_start.date()}부터 상태를 다시 계산합니다.")
+        if rebuild_start is None and last_processed_str is not None and actual_date <= pd.Timestamp(last_processed_str).date():
             conn.close()
             reason = (
                 f"기준일 {actual_date.isoformat()}은 이미 처리됨"
@@ -1574,7 +1610,16 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         # 증분 구간에서 새 이벤트가 없는 종목은 매번 대기로 되돌아가 버려서, 이미
         # 보유 중인 포지션(단계·수량·손절가)이 저장할 때마다 지워진다(발견된 버그).
         positions = db.load_all_positions(conn)
-        states = {t: positions.get(t) or st.init_state(t, name_map.get(t, "")) for t in indicator_map}
+        if rebuild_start is not None:
+            next_start = rebuild_start
+            states = {t: st.init_state(t, name_map.get(t, "")) for t in indicator_map}
+            for t, saved in positions.items():  # 판정 변경 감지용 직전 판정만 이어받는다
+                if t in states and saved.get("last_judgment"):
+                    states[t]["last_judgment"] = saved["last_judgment"]
+            if not dry_run:
+                db.delete_events_since(conn, str(rebuild_start.date()))
+        else:
+            states = {t: positions.get(t) or st.init_state(t, name_map.get(t, "")) for t in indicator_map}
         per_ticker_dates = {t: _dates_since_start(df, next_start) for t, df in indicator_map.items()}
         fx_rate_by_date = fx.get_usd_krw_rate_map(sorted({d for dates in per_ticker_dates.values() for d in dates}))
         sim = simulate_since(
@@ -1585,6 +1630,10 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         events_to_persist = sim["all_events"]  # 건너뛴 거래일이 있어도 모두 기록한다 (누락 방지, P3.2 3번)
         if not dry_run:
             db.set_meta(conn, "last_processed_date", str(actual_date))
+            if mode == "live":
+                db.set_meta(conn, "fills_fingerprint", fills_fp)
+                if not fills_df.empty:
+                    db.set_meta(conn, "fills_earliest_date", str(pd.Timestamp(fills_df["date"].min()).date()))
 
     states = sim["states"]
     today_events = sim["today_events"]
@@ -1639,6 +1688,10 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         plan_by_ticker=plan_by_ticker, live_judgment_rows=live_judgment_rows,
     )
     summary["macro_rows"] = macro_rows
+    # 계획·체결 입력 오류(헤더 불일치, 잘못된 줄 등) — 텔레그램 요약에 한 줄 경고로 띄운다.
+    summary["input_errors"] = list(fills_errors) + list(plan_errors)
+    # 체결 기록 변경으로 재계산한 실행은 같은 기준일에 이미 보냈어도 다시 보낸다(정정본).
+    summary["rebuilt_from"] = str(rebuild_start.date()) if not do_replay and rebuild_start is not None else None
     as_of = summary["as_of"]
     funnel = summary["funnel"]
 

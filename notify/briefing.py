@@ -68,6 +68,19 @@ def _sell_short_label(row: dict) -> str:
     return "전량"
 
 
+def build_input_error_line(errors: list[str], max_len: int = 80) -> str | None:
+    """계획·체결 시트 읽기 오류 목록 -> 텔레그램 한 줄 경고 (없으면 None).
+
+    출력 예: "⚠️ 시트 입력 오류 2건 · 계획 기록 오류: 1번째 줄 - ... (보고서 경고 확인)"
+    """
+    if not errors:
+        return None
+    first = errors[0]
+    if len(first) > max_len:
+        first = first[: max_len - 1] + "…"
+    return f"⚠️ 시트 입력 오류 {len(errors)}건 · {first} (보고서 경고 확인)"
+
+
 def build_briefing_text(summary: dict, cfg: dict) -> str:
     """summary + cfg -> 텔레그램에 보낼 본문 문자열 (최소 형식, P3.4 2번).
 
@@ -84,6 +97,8 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
         date_str = "알수없음"
 
     lines = [f"📊 나스닥100 · {date_str} 마감 · {mode_label}"]
+    if summary.get("rebuilt_from"):
+        lines.append(f"🔁 체결 기록 변경 반영 정정본 ({summary['rebuilt_from']}부터 재계산)")
 
     macro_rows = summary.get("macro_rows", [])
     if macro_rows:
@@ -143,5 +158,10 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     lines.append("")
     lines.append("🎯 오늘의 신호")
     lines.extend(f"- {s}" for s in signal_lines)
+
+    input_line = build_input_error_line(summary.get("input_errors", []))
+    if input_line:
+        lines.append("")
+        lines.append(input_line)
 
     return "\n".join(lines) + "\n"

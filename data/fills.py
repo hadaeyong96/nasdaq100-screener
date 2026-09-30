@@ -10,6 +10,10 @@ data/fills.csv (폴백, P3): 한글 형식(날짜, 종목, 차수, 매수매도,
 2026-09-23 / 2026/9/23 / 2026.9.23 형식을 모두 받는다. 인코딩은 엑셀이 저장하는
 UTF-8(BOM 포함)과 CP949를 모두 시도해서 읽는다.
 
+구글 시트 "체결" 탭(라이브, data/sheets.py): 날짜, 티커, 구분(매수/매도), 수량,
+체결가($), 환율(원/$), 수수료($), 메모. 헤더의 괄호 설명·공백은 무시하고 비교한다.
+차수 열이 없으면 종목별 매수 순서로 1차→2차→3차를 자동 배정한다(_assign_units).
+
 두 형식 모두 공통:
   - 차수: 1차, 2차, 3차, 재진입 (내부 코드 1/2/6/9) 또는 대기자금(QQQM 쉬는 돈 —
     FillsResult.cash_rows로 따로 담고, 신호 판정에는 쓰지 않는다. QQQM 운용
@@ -25,6 +29,7 @@ UTF-8(BOM 포함)과 CP949를 모두 시도해서 읽는다.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,21 +43,38 @@ XLSX_SHEET_FILLS = "체결기록"
 XLSX_SHEET_PLAN = "계획"  # 라이브 어드바이저 1단계(docs/design/live_advisor.md 1번) — 선택 사항, 없어도 오류 아님
 _LOCKED_WARNING = "체결 기록 오류: 체결 기록 파일이 열려 있음, 저장 후 닫아 주세요"
 
-_COLUMNS = ["date", "ticker", "unit", "side", "price", "qty"]
+# unit = 차수(묶음) 내부 코드: 1차="1", 2차="2", 3차="6"(1:2:6의 6), 재진입="9",
+# 대기자금(QQQM)="cash". core/state.py가 묶음별 수량·진입가를 이 키로 관리한다.
+# fx_rate(원/$)·fee_usd($)·amount_usd($, 이 줄의 실제 체결금액)는 신호 판정에는 안 쓰고
+# 기록용이다. 구글 시트는 비어 있으면 data/sheets.py가 채운다(환율=체결일 종가, 수수료=config).
+_COLUMNS = ["date", "ticker", "unit", "side", "price", "qty", "fx_rate", "fee_usd", "amount_usd"]
 
 _PLAN_COLUMNS = ["ticker", "budget_krw", "memo"]
-_PLAN_KR_COLUMN_MAP = {"티커": "ticker", "계획금액": "budget_krw", "메모": "memo"}
+# 계획 탭 헤더(괄호 설명·공백 제거 후) -> 내부 열 이름. "등록일" 등 나머지 열은 무시한다.
+_PLAN_KR_COLUMN_MAP = {"티커": "ticker", "종목": "ticker", "계획금액": "budget_krw", "메모": "memo"}
 
-# 한글 열 이름 -> 영어 내부 열 이름
+# 체결 헤더(괄호 설명·공백 제거 후) -> 영어 내부 열 이름. 구글 시트 "체결" 탭
+# (날짜, 티커, 구분(매수/매도), 수량, 체결가($), 환율(원/$), 수수료($), 메모)과
+# 기존 fills.xlsx/csv(날짜, 종목, 차수, 매수매도, 체결가, 수량)를 모두 받는다.
 _KR_COLUMN_MAP = {
     "날짜": "date",
+    "체결일": "date",
     "종목": "ticker",
+    "티커": "ticker",
     "차수": "unit",
     "매수매도": "side",
+    "구분": "side",
     "체결가": "price",
     "수량": "qty",
+    "환율": "fx_rate",
+    "수수료": "fee_usd",
+    "메모": "memo",
 }
-_EN_COLUMNS = {"date", "ticker", "unit", "side", "price", "qty"}
+_REQUIRED_COLUMNS = {"date", "ticker", "side", "price", "qty"}
+# 없어도 되는 열: 차수가 없으면 종목별 매수 순서로 1차→2차→3차를 자동 배정한다
+# (_assign_units). 환율·수수료가 없거나 비면 NaN으로 두고 호출부가 채운다.
+_OPTIONAL_COLUMNS = ("unit", "fx_rate", "fee_usd")
+_AUTO_UNIT_ORDER = ("1", "2", "6")
 
 _UNIT_KR_TO_CODE = {"1차": "1", "2차": "2", "3차": "6", "재진입": "9"}
 _UNIT_CODE_SET = {"1", "2", "6", "9"}
@@ -85,18 +107,36 @@ def _read_csv_any_encoding(path: Path) -> pd.DataFrame:
     raise ValueError(f"{path}를 지원하는 인코딩(UTF-8, CP949)으로 읽지 못했습니다: {last_exc}")
 
 
+def _normalize_header(name) -> str:
+    """헤더 셀을 비교용 키로 만든다: 괄호 설명("(원)", "($)", "(매수/매도)")과 공백을 지운다.
+    예: "계획금액(원)" -> "계획금액", "구분(매수/매도)" -> "구분", " price " -> "price"."""
+    text = re.sub(r"[\(（].*?[\)）]", "", str(name))
+    return re.sub(r"\s+", "", text)
+
+
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """한글 열 이름을 영어 내부 열 이름으로 바꾼다. 이미 영어 형식이면 그대로 둔다."""
-    columns = {c.strip() for c in df.columns}
-    if columns & set(_KR_COLUMN_MAP):
-        rename = {c: _KR_COLUMN_MAP.get(c.strip(), c.strip()) for c in df.columns}
-        df = df.rename(columns=rename)
-    else:
-        df = df.rename(columns={c: c.strip() for c in df.columns})
-    missing = _EN_COLUMNS - set(df.columns)
+    """한글·영어 열 이름을 영어 내부 열 이름으로 바꾼다.
+
+    입력: 원본 DataFrame (헤더는 한글 또는 영어, 괄호 설명 포함 가능)
+    출력: DataFrame(date, ticker, unit, side, price, qty, fx_rate, fee_usd).
+         없는 선택 열(차수·환율·수수료)은 빈 문자열로 채운다.
+    예외: 필수 열(날짜·티커·구분·체결가·수량)이 없으면 ValueError(한글 열 이름 안내).
+    """
+    rename = {}
+    for c in df.columns:
+        key = _normalize_header(c)
+        rename[c] = _KR_COLUMN_MAP.get(key, key.lower())
+    df = df.rename(columns=rename)
+    df = df.loc[:, ~df.columns.duplicated()]
+    missing = _REQUIRED_COLUMNS - set(df.columns)
     if missing:
-        raise ValueError(f"필요한 열이 없습니다: {sorted(missing)}")
-    return df[list(_EN_COLUMNS)]
+        kr = {"date": "날짜", "ticker": "티커", "side": "구분(매수/매도)", "price": "체결가($)", "qty": "수량"}
+        names = [f"{kr[m]}({m})" for m in sorted(missing)]
+        raise ValueError(f"필요한 열이 없습니다: {names} — 지금 헤더: {list(rename)}")
+    for col in _OPTIONAL_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    return df[["date", "ticker", "unit", "side", "price", "qty", "fx_rate", "fee_usd"]]
 
 
 def _parse_date_cell(raw: str) -> pd.Timestamp | None:
@@ -132,17 +172,33 @@ def _parse_side_cell(raw) -> str | None:
 
 def _parse_qty_cell(raw) -> int | None:
     try:
-        qty = int(float(_cell_to_str(raw)))
+        qty = int(float(_cell_to_str(raw).replace(",", "")))
     except (ValueError, TypeError):
         return None
     return qty if qty >= 0 else None
 
 
-def _parse_price_cell(raw) -> float | None:
+def _parse_number_cell(raw) -> float | None:
+    """숫자 셀. 쉼표·통화 기호($, ₩, 원)를 지우고 float로. 실패하면 None."""
+    text = _cell_to_str(raw).replace(",", "").replace("$", "").replace("₩", "").replace("원", "").strip()
     try:
-        return float(_cell_to_str(raw))
+        return float(text)
     except (ValueError, TypeError):
         return None
+
+
+def _parse_price_cell(raw) -> float | None:
+    return _parse_number_cell(raw)
+
+
+def _parse_optional_number(raw) -> tuple[bool, float | None]:
+    """선택 숫자 칸(환율·수수료). 출력: (올바름 여부, 값). 빈 칸은 (True, None)."""
+    if _cell_to_str(raw) == "":
+        return True, None
+    value = _parse_number_cell(raw)
+    if value is None or value < 0:
+        return False, None
+    return True, value
 
 
 def _is_na(raw) -> bool:
@@ -175,8 +231,9 @@ def _parse_date_value(raw) -> pd.Timestamp | None:
 
 
 def _is_blank_record(record: dict) -> bool:
-    """날짜·종목·차수·매수매도·체결가·수량이 모두 빈 줄인지 (건너뛸 빈 줄)."""
-    return all(_cell_to_str(record.get(col)) == "" for col in _COLUMNS)
+    """날짜·종목·매수매도·체결가·수량이 모두 빈 줄인지 (건너뛸 빈 줄). 차수·환율·
+    수수료·메모만 적힌 줄(시트에 미리 채워 둔 서식 등)도 빈 줄로 본다."""
+    return all(_cell_to_str(record.get(col)) == "" for col in _REQUIRED_COLUMNS)
 
 
 def _rows_from_records(records: list[dict]) -> tuple[list[dict], list[dict], list[str]]:
@@ -199,8 +256,9 @@ def _rows_from_records(records: list[dict]) -> tuple[list[dict], list[dict], lis
         if not ticker:
             problems.append("종목이 비어 있음")
 
-        unit = _parse_unit_cell(record["unit"])
-        if unit is None:
+        unit_text = _cell_to_str(record.get("unit"))
+        unit = _parse_unit_cell(unit_text) if unit_text else None  # 비면 매수 순서로 자동 배정
+        if unit_text and unit is None:
             problems.append(f"차수 값을 알 수 없음({record['unit']!r})")
 
         side = _parse_side_cell(record["side"])
@@ -215,14 +273,99 @@ def _rows_from_records(records: list[dict]) -> tuple[list[dict], list[dict], lis
         if qty is None:
             problems.append(f"수량이 올바르지 않음(음수 또는 숫자 아님: {record['qty']!r})")
 
+        fx_ok, fx_rate = _parse_optional_number(record.get("fx_rate"))
+        if not fx_ok:
+            problems.append(f"환율이 올바르지 않음({record.get('fx_rate')!r})")
+
+        fee_ok, fee_usd = _parse_optional_number(record.get("fee_usd"))
+        if not fee_ok:
+            problems.append(f"수수료가 올바르지 않음({record.get('fee_usd')!r})")
+
         if problems:
             errors.append(f"체결 기록 오류: {i}번째 줄 - {', '.join(problems)}")
             continue
 
-        row = {"date": date, "ticker": ticker, "unit": unit, "side": side, "price": price, "qty": qty}
+        row = {
+            "date": date, "ticker": ticker, "unit": unit, "side": side, "price": price, "qty": qty,
+            "fx_rate": fx_rate, "fee_usd": fee_usd, "amount_usd": price * qty, "line": i,
+        }
         (cash_rows if unit == "cash" else rows).append(row)
 
     return rows, cash_rows, errors
+
+
+def _assign_units(rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """차수가 빈 체결 줄에 차수(unit)를 매수 순서로 배정한다 (순수 함수).
+
+    규칙(구글 시트 "체결" 탭에는 차수 열이 없다):
+      - 종목별로 날짜 순(같은 날은 시트 줄 순서) 처리. 보유 0주에서 시작하는 매수가
+        1차("1"), 그다음 매수가 2차("2"), 그다음이 3차("6").
+      - 3차까지 다 쓴 뒤의 추가 매수는 3차 묶음에 합친다(수량 합산·가중평균 단가) —
+        core.state.apply_fill은 같은 묶음 매수를 덮어쓰므로 누적값으로 적는다.
+      - 차수 없는 매도는 나중 차수부터(3차→2차→1차, 재진입 포함) 줄인다. 한 줄이 여러
+        묶음에 걸치면 묶음별 줄로 나눈다. 보유보다 많이 팔면 경고.
+      - 전량 매도로 0주가 되면 다음 매수는 다시 1차부터.
+      - 차수가 적힌 줄은 그대로 두고 보유 추적에만 반영한다.
+    입력: _rows_from_records의 신호용 행 목록(unit이 None이면 자동 배정 대상)
+    출력: (차수가 채워진 행 목록, 경고 메시지 목록)
+    """
+    out: list[dict] = []
+    warnings: list[str] = []
+    held: dict[str, dict[str, list[float]]] = {}  # ticker -> unit -> [qty, avg_price]
+    used: dict[str, set[str]] = {}
+    ordered = sorted(rows, key=lambda r: (r["ticker"], r["date"], r["line"]))
+    for row in ordered:
+        t = row["ticker"]
+        pos = held.setdefault(t, {})
+        used_t = used.setdefault(t, set())
+        if sum(q for q, _ in pos.values()) <= 0:
+            pos.clear()
+            used_t.clear()
+
+        if row["unit"] is not None:  # 사용자가 차수를 적었다 — apply_fill과 같은 의미로 추적만
+            u = row["unit"]
+            if row["side"] == "buy":
+                pos[u] = [row["qty"], row["price"]]
+                used_t.add(u)
+            else:
+                pos.setdefault(u, [0, row["price"]])
+                pos[u][0] = max(pos[u][0] - row["qty"], 0)
+            out.append(row)
+            continue
+
+        if row["side"] == "buy":
+            free = [u for u in _AUTO_UNIT_ORDER if u not in used_t]
+            u = free[0] if free else _AUTO_UNIT_ORDER[-1]
+            prev_qty, prev_price = pos.get(u, [0, 0.0]) if not free else (0, 0.0)
+            total_qty = prev_qty + row["qty"]
+            avg = (prev_qty * prev_price + row["qty"] * row["price"]) / total_qty if total_qty > 0 else row["price"]
+            pos[u] = [total_qty, avg]
+            used_t.add(u)
+            out.append({**row, "unit": u, "qty": total_qty, "price": avg})
+            continue
+
+        remaining = row["qty"]
+        split: list[dict] = []
+        for u in sorted(pos, key=lambda k: {"9": 3, "6": 2, "2": 1, "1": 0}.get(k, -1), reverse=True):
+            if remaining <= 0:
+                break
+            take = min(pos[u][0], remaining)
+            if take <= 0:
+                continue
+            pos[u][0] -= take
+            remaining -= take
+            split.append({**row, "unit": u, "qty": take})
+        if remaining > 0:
+            warnings.append(
+                f"체결 기록 경고: {row['line']}번째 줄 - {t} 매도 수량이 보유보다 {remaining}주 많음 (보유분만 반영)"
+            )
+        for part in split:  # 체결금액·수수료는 나눈 수량 비율대로
+            ratio = part["qty"] / row["qty"] if row["qty"] else 0
+            part["amount_usd"] = row["amount_usd"] * ratio
+            if row["fee_usd"] is not None:
+                part["fee_usd"] = row["fee_usd"] * ratio
+        out.extend(split)
+    return out, warnings
 
 
 def _to_frame(rows: list[dict]) -> pd.DataFrame:
@@ -230,6 +373,7 @@ def _to_frame(rows: list[dict]) -> pd.DataFrame:
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
         df["unit"] = df["unit"].astype(str)
+        df = df.sort_values("date", kind="stable").reset_index(drop=True)
     return df
 
 
@@ -252,19 +396,48 @@ def parse_fill_records(records: list[dict]) -> FillsResult:
         return FillsResult(df=pd.DataFrame(columns=_COLUMNS), errors=[f"체결 기록 오류: 헤더 오류 - {exc}"])
 
     rows, cash_rows, errors = _rows_from_records(raw.to_dict(orient="records"))
-    return FillsResult(df=_to_frame(rows), errors=errors, cash_rows=_to_frame(cash_rows))
+    rows, unit_warnings = _assign_units(rows)
+    return FillsResult(df=_to_frame(rows), errors=errors + unit_warnings, cash_rows=_to_frame(cash_rows))
+
+
+def fill_missing_costs(
+    df: pd.DataFrame, fx_by_date: dict[str, float], commission_buy_pct: float, commission_sell_pct: float
+) -> tuple[pd.DataFrame, list[str]]:
+    """빈 환율·수수료 칸을 채운다 (순수 함수).
+
+    입력: df(FillsResult.df 형태), fx_by_date({"YYYY-MM-DD": 원/달러 종가} — 체결일 이하
+         가장 최근 값을 쓴다), commission_buy_pct·commission_sell_pct(수수료율 %)
+    출력: (채운 새 DataFrame, 경고 목록 — 환율을 못 구한 줄)
+    - 환율: 체결일 원/달러 종가(그날 값이 없으면 직전 거래일 값).
+    - 수수료: 체결금액(amount_usd) × 수수료율 / 100.
+    """
+    if df.empty:
+        return df, []
+    from data.fx import pick_rate_for_date
+
+    out = df.copy()
+    warnings: list[str] = []
+    for idx, r in out.iterrows():
+        if _is_na(r["fx_rate"]):
+            picked = pick_rate_for_date(fx_by_date, pd.Timestamp(r["date"]).date().isoformat())
+            if picked is None:
+                warnings.append(f"체결 기록 경고: {r['ticker']} {pd.Timestamp(r['date']).date()} 환율을 구하지 못함 (빈 칸 유지)")
+            else:
+                out.at[idx, "fx_rate"] = picked[0]
+        if _is_na(r["fee_usd"]):
+            pct = commission_buy_pct if r["side"] == "buy" else commission_sell_pct
+            out.at[idx, "fee_usd"] = round(float(r["amount_usd"]) * pct / 100, 4)
+    return out, warnings
 
 
 def _parse_budget_cell(raw) -> float | None:
-    try:
-        value = float(_cell_to_str(raw).replace(",", ""))
-    except (ValueError, TypeError):
-        return None
-    return value if value >= 0 else None
+    value = _parse_number_cell(raw)
+    return value if value is not None and value >= 0 else None
 
 
-def _is_blank_plan_record(record: dict) -> bool:
-    return all(_cell_to_str(v) == "" for v in record.values())
+def _is_blank_plan_record(normalized: dict) -> bool:
+    """티커·계획금액이 모두 빈 줄(등록일·메모만 있는 줄 포함)은 건너뛸 빈 줄로 본다."""
+    return _cell_to_str(normalized.get("ticker")) == "" and _cell_to_str(normalized.get("budget_krw")) == ""
 
 
 def parse_plan_records(records: list[dict]) -> tuple[pd.DataFrame, list[str]]:
@@ -282,9 +455,12 @@ def parse_plan_records(records: list[dict]) -> tuple[pd.DataFrame, list[str]]:
     rows: list[dict] = []
     errors: list[str] = []
     for i, record in enumerate(records, start=1):
-        if _is_blank_plan_record(record):
+        normalized = {}
+        for k, v in record.items():
+            key = _normalize_header(k)
+            normalized.setdefault(_PLAN_KR_COLUMN_MAP.get(key, key.lower()), v)
+        if _is_blank_plan_record(normalized):
             continue
-        normalized = {_PLAN_KR_COLUMN_MAP.get(str(k).strip(), str(k).strip()): v for k, v in record.items()}
 
         problems: list[str] = []
 
@@ -434,3 +610,15 @@ def fills_for(df: pd.DataFrame, ticker: str, date) -> list[dict]:
         return []
     match = df[(df["ticker"] == ticker) & (df["date"] == pd.Timestamp(date))]
     return match.to_dict(orient="records")
+
+
+def fills_between(df: pd.DataFrame, ticker: str, after, upto) -> list[dict]:
+    """특정 종목의 (after, upto] 구간 체결 기록을 날짜 순 행 dict 목록으로 반환한다.
+    after가 None이면 upto 이하 전부. 주말·휴장일 날짜로 적힌 체결을 다음 거래일에
+    반영하려고 쓴다 (engine.daily.simulate_since)."""
+    if df.empty:
+        return []
+    mask = (df["ticker"] == ticker) & (df["date"] <= pd.Timestamp(upto))
+    if after is not None:
+        mask &= df["date"] > pd.Timestamp(after)
+    return df[mask].sort_values("date", kind="stable").to_dict(orient="records")
