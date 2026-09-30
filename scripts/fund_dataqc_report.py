@@ -202,6 +202,29 @@ def build_missing_ticker_rows(
     return rows
 
 
+ALT_SOURCE_DIR = ROOT / "data" / "cache" / "alt_prices" / "tiingo"
+
+
+def load_alt_source_indicator_map(alt_dir: Path = ALT_SOURCE_DIR) -> dict[str, "pd.DataFrame"]:
+    """scripts/fund_fetch_missing_prices.py가 저장한 대체 출처(Tiingo) 가격을 읽어
+    dataqc가 바로 쓸 수 있는 {ticker: DataFrame(close 열 포함)} 형태로 돌려준다.
+
+    입력: alt_dir(비어 있거나 없으면 빈 dict — 대체 출처를 안 받았어도 이 스크립트가
+         그대로 동작해야 한다)
+    출력: {ticker: DataFrame(날짜 인덱스, "close" 열 — split-only 조정됨)}
+    """
+    import pandas as pd
+
+    if not alt_dir.exists():
+        return {}
+    out: dict[str, pd.DataFrame] = {}
+    for csv_path in sorted(alt_dir.glob("*.csv")):
+        df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
+        if "close" in df.columns and not df.empty:
+            out[csv_path.stem] = df
+    return out
+
+
 def main() -> None:
     cfg = bt.load_config()
     bt_cfg = cfg["backtest"]
@@ -216,6 +239,17 @@ def main() -> None:
     data = bt.prepare_data(cfg, warmup_start, train_end)  # force_universe_mode=None(기본, POINT_IN_TIME), unseal 안 씀
     log(f"prepare_data 완료: universe_mode={data.universe_mode} · 종목 {len(data.indicator_map)}개(실패 {len(data.failed_tickers)}) · {time.time()-t0:.0f}초")
 
+    # 대체 출처(Tiingo, scripts/fund_fetch_missing_prices.py) 병합 — 있으면 반영, 없으면
+    # 이전과 완전히 같게 동작한다(2026-10-01 사용자 지시 4번).
+    alt_prices = load_alt_source_indicator_map()
+    indicator_map = dict(data.indicator_map)
+    added_from_alt = [t for t in alt_prices if t not in indicator_map]
+    indicator_map.update(alt_prices)
+    if alt_prices:
+        log(f"대체 출처(Tiingo) 병합: {len(added_from_alt)}개 종목 추가({sorted(added_from_alt)}) — data/cache/alt_prices/tiingo/")
+    else:
+        log("대체 출처 없음 — yfinance 결과만 사용(이전과 동일)")
+
     # ── 연도별 확보율·판정 ──────────────────────────────────────────────────
     years = list(range(train_start.year, train_end.year + 1))
     year_reports = {}
@@ -223,7 +257,7 @@ def main() -> None:
         y_start = max(date(y, 1, 1), train_start)
         y_end = min(date(y, 12, 31), train_end)
         y_days = [d.date() for d in trading_days_between(y_start, y_end)]
-        report = dqc.build_report(data.checkpoints, y_days, data.indicator_map, cfg)
+        report = dqc.build_report(data.checkpoints, y_days, indicator_map, cfg)
         judgement = "PASS" if not report.inconclusive else "INCONCLUSIVE"
         year_reports[y] = {
             "coverage_pct": report.coverage_pct,
@@ -235,7 +269,7 @@ def main() -> None:
         log(f"{y}: 확보율 {report.coverage_pct}% ({report.ticker_days_priced}/{report.ticker_days_expected}) -> {judgement}")
 
     all_days = [d.date() for d in trading_days_between(train_start, train_end)]
-    overall_report = dqc.build_report(data.checkpoints, all_days, data.indicator_map, cfg)
+    overall_report = dqc.build_report(data.checkpoints, all_days, indicator_map, cfg)
     overall_judgement = "PASS" if not overall_report.inconclusive else "INCONCLUSIVE"
     log(f"전체({train_start}~{train_end}): 확보율 {overall_report.coverage_pct}% -> {overall_judgement}")
     log(f"구성종목 수 범위 이상 체크포인트: {len(overall_report.constituent_count_issues)}건")
@@ -250,7 +284,10 @@ def main() -> None:
     missing_rows = build_missing_ticker_rows(
         data.failed_tickers, full_checkpoints, wikitext_changes, warmup_start, train_end
     )
-    log(f"빠진 종목 {len(missing_rows)}개 — outputs/backtest/fund_dataqc/missing_tickers.csv에 저장")
+    for row in missing_rows:
+        row["recovered_via_alt_source"] = row["ticker"] in alt_prices
+    recovered_count = sum(1 for r in missing_rows if r["recovered_via_alt_source"])
+    log(f"빠진 종목 {len(missing_rows)}개(yfinance 기준) — 그중 대체 출처로 복구됨: {recovered_count}개 — outputs/backtest/fund_dataqc/missing_tickers.csv에 저장")
 
     missing_by_year: dict[int, int] = {y: 0 for y in years}
     for row in missing_rows:
@@ -290,12 +327,16 @@ def main() -> None:
         "missing_ticker_count_out_of_scope": len(out_of_scope_tickers),
         "out_of_scope_tickers": out_of_scope_tickers,
         "missing_ticker_count_by_year": missing_by_year,
-        "note": "98% 기준(dataqc.min_coverage_pct)은 설계 문서 그대로 유지 — 이 보고서는 그 기준을 실제 데이터에 적용한 결과일 뿐이다. 결과: 데이터 품질 미달 -> INCONCLUSIVE(참고용).",
+        "recovered_via_alt_source_count": recovered_count,
+        "recovered_via_alt_source_tickers": sorted(t for t in alt_prices if t in {r["ticker"] for r in missing_rows}),
+        "note": "98% 기준(dataqc.min_coverage_pct)은 설계 문서 그대로 유지 — 이 보고서는 그 기준을 실제 데이터에 적용한 결과일 뿐이다.",
     }
     REPORT_JSON_PATH.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     with open(MISSING_CSV_PATH, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=["ticker", "company_name", "membership_periods", "removal_reason", "needed_price_range", "fetch_error"])
+        writer = csv.DictWriter(
+            f, fieldnames=["ticker", "company_name", "membership_periods", "removal_reason", "needed_price_range", "fetch_error", "recovered_via_alt_source"]
+        )
         writer.writeheader()
         writer.writerows(missing_rows)
 
@@ -320,19 +361,28 @@ def main() -> None:
         f"- 구성종목 수 범위(config.yaml dataqc.expected_constituent_count) 이상 체크포인트: {len(overall_report.constituent_count_issues)}건",
         f"- 하루 등락률 ±{cfg['dataqc']['extreme_daily_move_pct']}% 이상(이상치·분할 누락 의심): {len(overall_report.extreme_move_issues)}건",
         "",
-        "## 빠진 종목",
+        "## 빠진 종목 (yfinance 기준)",
         "",
-        f"- 시세를 못 받은 종목 총 {len(missing_rows)}개",
-        f"  - 연구 구간(2014~2021)과 겹쳐 **실제로 필요한 종목: {len(in_scope_rows)}개** (유료 데이터 문의 대상)",
+        f"- yfinance로 시세를 못 받은 종목 총 {len(missing_rows)}개",
+        f"  - 연구 구간(2014~2021)과 겹쳐 **실제로 필요한 종목: {len(in_scope_rows)}개**",
         f"  - 연구 구간과 안 겹치는 종목(2022년 이후 나스닥100 신규 편입, 이번 F2 학습 구간에는 불필요): {len(out_of_scope_tickers)}개 — " + ", ".join(out_of_scope_tickers),
         f"- 연도별 필요 구간 겹침(실제로 필요한 {len(in_scope_rows)}개 기준): " + ", ".join(f"{y} {n}개" for y, n in missing_by_year.items()),
-        f"- 전체 목록(50개 다 포함): `{MISSING_CSV_PATH.relative_to(ROOT)}` (티커·회사명·소속기간·편출사유·필요 가격기간 — 유료 데이터 업체 문의용. `needed_price_range`가 \"겹치는 구간 없음\"인 행은 문의 대상에서 빼도 됨)",
+        f"- **대체 출처(Tiingo)로 복구됨: {recovered_count}개**(scripts/fund_fetch_missing_prices.py, 위 연도별 확보율에 이미 반영됨) — {', '.join(sorted(t for t in alt_prices if t in {r['ticker'] for r in missing_rows})) or '없음'}",
+        f"- 전체 목록: `{MISSING_CSV_PATH.relative_to(ROOT)}` (티커·회사명·소속기간·편출사유·필요 가격기간·대체출처 복구 여부)",
         "",
         "## 결론",
         "",
-        "**데이터 품질 미달 → INCONCLUSIVE(참고용).** 98% 기준을 만족한 해가 학습 구간(2015~2021)에 하나도 없다"
-        if overall_report.inconclusive else "확보율 기준을 만족했다.",
     ]
+    passing_years = [y for y in years if year_reports[y]["judgement"] == "PASS"]
+    if not overall_report.inconclusive:
+        md_lines.append("확보율 기준을 만족했다.")
+    elif passing_years:
+        md_lines.append(
+            f"**전체 구간은 데이터 품질 미달 → INCONCLUSIVE(참고용).** 다만 연도별로는 {', '.join(str(y) for y in passing_years)}년이 "
+            f"98% 기준을 PASS했다 — 나머지 해({', '.join(str(y) for y in years if y not in passing_years)})가 기준 미달이라 전체 평균은 INCONCLUSIVE."
+        )
+    else:
+        md_lines.append("**데이터 품질 미달 → INCONCLUSIVE(참고용).** 98% 기준을 만족한 해가 학습 구간에 하나도 없다.")
     REPORT_MD_PATH.write_text("\n".join(md_lines), encoding="utf-8")
     log(f"=== 완료: {REPORT_MD_PATH}, {REPORT_JSON_PATH}, {MISSING_CSV_PATH} ===")
 

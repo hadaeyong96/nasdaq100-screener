@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
+
 from scripts import fund_dataqc_report as rpt
 
 
@@ -125,3 +127,24 @@ def test_build_missing_ticker_rows_marks_out_of_study_range_tickers():
         study_end=date(2021, 12, 31),
     )
     assert rows[0]["needed_price_range"] == "겹치는 구간 없음(연구 구간 밖)"
+
+
+def test_load_alt_source_indicator_map_returns_empty_when_dir_missing(tmp_path):
+    assert rpt.load_alt_source_indicator_map(tmp_path / "does_not_exist") == {}
+
+
+def test_load_alt_source_indicator_map_reads_csvs_keyed_by_filename(tmp_path):
+    alt_dir = tmp_path / "alt"
+    alt_dir.mkdir()
+    df = pd.DataFrame({"close": [10.0, 11.0]}, index=pd.to_datetime(["2020-01-02", "2020-01-03"]))
+    df.to_csv(alt_dir / "YHOO.csv")
+    out = rpt.load_alt_source_indicator_map(alt_dir)
+    assert list(out.keys()) == ["YHOO"]
+    assert out["YHOO"].loc["2020-01-02", "close"] == 10.0
+
+
+def test_load_alt_source_indicator_map_skips_csv_without_close_column(tmp_path):
+    alt_dir = tmp_path / "alt"
+    alt_dir.mkdir()
+    pd.DataFrame({"open": [1.0]}, index=pd.to_datetime(["2020-01-02"])).to_csv(alt_dir / "BAD.csv")
+    assert rpt.load_alt_source_indicator_map(alt_dir) == {}
