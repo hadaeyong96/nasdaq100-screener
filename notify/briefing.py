@@ -68,6 +68,30 @@ def _sell_short_label(row: dict) -> str:
     return "전량"
 
 
+def build_input_error_line(errors: list[str], max_len: int = 80) -> str | None:
+    """계획·체결 시트 읽기 오류 목록 -> 텔레그램 한 줄 경고 (없으면 None).
+
+    출력 예: "⚠️ 시트 오류: 계획 기록 오류: 1번째 줄 - ... 외 1건"
+    """
+    if not errors:
+        return None
+    first = errors[0]
+    if len(first) > max_len:
+        first = first[: max_len - 1] + "…"
+    more = f" 외 {len(errors) - 1}건" if len(errors) > 1 else ""
+    return f"⚠️ 시트 오류: {first}{more}"
+
+
+def build_fred_missing_line(missing_codes: list[str]) -> str | None:
+    """FRED 지표가 하나라도 빠졌으면 텔레그램 한 줄 경고 (없으면 None).
+
+    출력 예: "⚠️ FRED 지표 수집 실패: DGS10, T10Y2Y"
+    """
+    if not missing_codes:
+        return None
+    return f"⚠️ FRED 지표 수집 실패: {', '.join(missing_codes)}"
+
+
 def build_briefing_text(summary: dict, cfg: dict) -> str:
     """summary + cfg -> 텔레그램에 보낼 본문 문자열 (최소 형식, P3.4 2번).
 
@@ -84,6 +108,8 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
         date_str = "알수없음"
 
     lines = [f"📊 나스닥100 · {date_str} 마감 · {mode_label}"]
+    if summary.get("rebuilt_from"):
+        lines.append(f"🔁 체결 기록 변경 반영 정정본 ({summary['rebuilt_from']}부터 재계산)")
 
     macro_rows = summary.get("macro_rows", [])
     if macro_rows:
@@ -143,5 +169,17 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     lines.append("")
     lines.append("🎯 오늘의 신호")
     lines.extend(f"- {s}" for s in signal_lines)
+
+    alert_lines = [
+        line
+        for line in (
+            build_input_error_line(summary.get("input_errors", [])),
+            build_fred_missing_line(summary.get("fred_missing", [])),
+        )
+        if line
+    ]
+    if alert_lines:
+        lines.append("")
+        lines.extend(alert_lines)
 
     return "\n".join(lines) + "\n"

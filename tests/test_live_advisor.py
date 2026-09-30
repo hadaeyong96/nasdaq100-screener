@@ -451,3 +451,65 @@ def test_run_paper_never_touches_sheets_even_when_credentials_configured(monkeyp
     summary = engine_daily.run(cfg, "paper", do_replay=False, dry_run=True)
 
     assert summary["plan_by_ticker"] == {}
+
+
+def _real_header_sheet_client(fills_records):
+    """실제 구글 시트 헤더(계획금액(원)·구분(매수/매도) 등)를 돌려주는 가짜 클라이언트."""
+
+    class _FakeWorksheet:
+        def __init__(self, records):
+            self._records = records
+
+        def get_all_records(self):
+            return self._records
+
+    class _FakeSpreadsheet:
+        def worksheet(self, name):
+            if name == "계획":
+                return _FakeWorksheet(
+                    [
+                        {"티커": "TEST", "계획금액(원)": "3,000,000", "등록일": "2026-09-20", "메모": ""},
+                        {"티커": "", "계획금액(원)": "", "등록일": "", "메모": ""},
+                    ]
+                )
+            return _FakeWorksheet(fills_records)
+
+    class _FakeClient:
+        def open_by_key(self, sheet_id):
+            return _FakeSpreadsheet()
+
+    return _FakeClient()
+
+
+def test_run_live_rebuilds_when_late_fill_added_on_already_processed_day(monkeypatch, tmp_path, cfg):
+    """2026-09-30 Actions 사고 재현: 아침 실행이 체결 0건으로 기준일을 처리해 버린 뒤,
+    시트 헤더를 고쳐 같은 기준일에 다시 돌리면 — 이미 처리된 날이라도 체결 기록이
+    바뀌었으므로 가장 이른 체결일부터 다시 계산해 보유가 보고서에 나와야 한다.
+    체결일이 일요일(한국 날짜)이어도 다음 거래일에 반영돼야 한다."""
+    from data import fx as fx_module
+    from data import sheets as sheets_module
+
+    engine_daily = _patch_run_io(monkeypatch, tmp_path)
+    monkeypatch.setenv("GOOGLE_SHEETS_ID", "sheet-123")
+    monkeypatch.setattr(fx_module, "_load_cache", lambda: {})
+    monkeypatch.setattr(sheets_module, "_default_fx_provider", lambda start, end: {"2026-09-18": 1390.0})
+
+    first = engine_daily.run(cfg, "live", do_replay=False, dry_run=False, sheets_client=_real_header_sheet_client([]))
+    assert first["input_errors"] == []
+    assert not any(r["티커"] == "TEST" for r in first["hold_rows"])
+
+    fills = [
+        {"날짜": "2026-09-20", "티커": "TEST", "구분(매수/매도)": "매수", "수량": "3", "체결가($)": "100",
+         "환율(원/$)": "", "수수료($)": "", "메모": ""},
+        {"날짜": "", "티커": "", "구분(매수/매도)": "", "수량": "", "체결가($)": "", "환율(원/$)": "", "수수료($)": "", "메모": ""},
+    ]
+    second = engine_daily.run(cfg, "live", do_replay=False, dry_run=False, sheets_client=_real_header_sheet_client(fills))
+
+    assert not second.get("skipped")
+    assert second["input_errors"] == []
+    assert second["rebuilt_from"] == "2026-09-20"
+    held = [r for r in second["hold_rows"] if r["티커"] == "TEST"]
+    assert held, "늦게 적은 체결이 보유 현황에 나와야 한다"
+
+    third = engine_daily.run(cfg, "live", do_replay=False, dry_run=False, sheets_client=_real_header_sheet_client(fills))
+    assert third.get("skipped")  # 체결 기록이 그대로면 같은 기준일 재실행은 예전처럼 건너뛴다

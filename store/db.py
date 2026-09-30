@@ -288,6 +288,13 @@ def record_events(conn: sqlite3.Connection, events: list[dict]) -> None:
     conn.commit()
 
 
+def delete_events_since(conn: sqlite3.Connection, date_str: str) -> None:
+    """date_str(YYYY-MM-DD) 이후 날짜의 이벤트를 지운다 — 체결 기록이 바뀌어 그 날짜부터
+    상태를 다시 계산할 때 같은 이벤트가 두 번 쌓이지 않게 (engine.daily 라이브 재계산)."""
+    conn.execute("DELETE FROM events WHERE substr(date, 1, 10) >= ?", (date_str,))
+    conn.commit()
+
+
 def record_price_snapshots(conn: sqlite3.Connection, run_at: str, rows: list[dict]) -> None:
     """실행마다 종목별 (close, close_source, meta_time)을 남긴다 (재현성 확인용, P2.1 보완 3번).
 
@@ -329,6 +336,13 @@ def record_fill_ledger(conn: sqlite3.Connection, rows: list[dict]) -> None:
             "VALUES (:date, :mode, :ticker, :side, :qty, :price_usd, :fx_rate, :amount_krw, :qqqm_close)",
             row,
         )
+    conn.commit()
+
+
+def delete_fill_ledger(conn: sqlite3.Connection, mode: str) -> None:
+    """그 모드의 fill_ledger를 모두 지운다 — 체결 기록 소급 반영으로 상태를 다시 계산할 때
+    반영 목록을 새로 쓰기 위해 (engine.daily)."""
+    conn.execute("DELETE FROM fill_ledger WHERE mode = ?", (mode,))
     conn.commit()
 
 
