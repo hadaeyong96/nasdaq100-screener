@@ -220,10 +220,26 @@ def _live_target_tickers(plan_by_ticker: dict[str, float], fills_df: pd.DataFram
 
 
 def _plan_budget_map(plan_df: pd.DataFrame) -> dict[str, float]:
-    """계획 DataFrame(ticker, budget_krw, memo)을 {ticker: budget_krw}로 바꾼다."""
+    """계획 DataFrame(ticker, budget_krw, ref_price, memo)을 {ticker: budget_krw}로 바꾼다."""
     if plan_df is None or plan_df.empty:
         return {}
     return dict(zip(plan_df["ticker"], plan_df["budget_krw"]))
+
+
+def _plan_ref_price_map(plan_df: pd.DataFrame) -> dict[str, float]:
+    """계획 DataFrame의 "기준가($)" 열 -> {ticker: ref_price} (기준가를 적은 종목만).
+
+    기준가가 있으면 core.sizing.plan_tranche_qty가 그날그날 바뀌는 지정가 대신
+    이 고정값으로 총 주수를 정한다 — 시트의 1차~남은(주) 수식과 같은 결과를
+    내기 위해서다(구글 시트 계획 탭 개편, 2026-09-30).
+    """
+    if plan_df is None or plan_df.empty or "ref_price" not in plan_df.columns:
+        return {}
+    return {
+        ticker: price
+        for ticker, price in zip(plan_df["ticker"], plan_df["ref_price"])
+        if price is not None and not pd.isna(price)
+    }
 
 
 def _reference_entry_price(
@@ -257,6 +273,7 @@ def compute_live_judgments(
     fills_df: pd.DataFrame,
     fx_rate: float | None,
     cfg: dict,
+    plan_ref_price_by_ticker: dict[str, float] | None = None,
 ) -> list[dict]:
     """라이브 전용: 계획∪체결 종목마다 오늘 판정을 정하고 states[ticker]["last_judgment"]를
     그 자리에서 갱신한다 (docs/design/live_advisor.md 3·7번). 호출부(run())가 이 함수를
@@ -268,11 +285,16 @@ def compute_live_judgments(
 
     입력: states(오늘 시뮬레이션 반영 후 상태), today_events, indicator_map, as_of_by_ticker,
          name_map, plan_by_ticker({ticker: 계획금액(원)}), fills_df(계획∪체결 종목 판단용),
-         fx_rate(원/달러, 없으면 수량·경고 계산 생략), cfg
+         fx_rate(원/달러, 없으면 수량·경고 계산 생략), cfg, plan_ref_price_by_ticker
+         ({ticker: 계획 시트 "기준가($)"} — 있으면 core.sizing.plan_tranche_qty가 기준가
+         기반 고정 총 주수 방식을 쓴다. 없는 종목은 지금처럼 오늘 지정가 기준)
     출력: [{"ticker","name_kr","judgment","reason","changed","stop_price","has_plan",
-          "plan_budget_krw","qty","tranche_krw","tranche_usd","one_share_warning"}, ...]
-          티커 오름차순. one_share_warning은 {"min_budget_krw","ref_price"} 또는 None.
+          "plan_budget_krw","qty","tranche_krw","tranche_usd","one_share_warning",
+          "plan_limit_exceeded"}, ...] 티커 오름차순.
+          one_share_warning은 {"min_budget_krw","ref_price"} 또는 None.
+          plan_limit_exceeded: 기준가 기반 계획에서 이미 보유 수량이 총 주수 이상이면 True.
     """
+    plan_ref_price_by_ticker = plan_ref_price_by_ticker or {}
     target_tickers = _live_target_tickers(plan_by_ticker, fills_df)
     events_by_ticker: dict[str, list[dict]] = {}
     for e in today_events:
@@ -294,9 +316,16 @@ def compute_live_judgments(
         has_plan = ticker in plan_by_ticker
         budget = plan_by_ticker.get(ticker)
         qty = tranche_krw = tranche_usd = None
+        plan_limit_exceeded = False
         if judgment == _JUDGMENT_ADD and has_plan and fx_rate:
-            sized = sizing.plan_tranche_qty(budget, event["kind"], sig.entry_limit_price(event["price"], cfg), fx_rate)
-            qty, tranche_krw, tranche_usd = sized["qty"], sized["tranche_krw"], sized["tranche_usd"]
+            sized = sizing.plan_tranche_qty(
+                budget, event["kind"], sig.entry_limit_price(event["price"], cfg), fx_rate,
+                ref_price=plan_ref_price_by_ticker.get(ticker),
+            )
+            held_qty = sum(q for q in state_["units"].values() if q > 0)
+            clamped = sizing.clamp_plan_qty_to_remaining(sized["qty"], sized.get("total_shares"), held_qty)
+            qty, tranche_krw, tranche_usd = clamped["qty"], sized["tranche_krw"], sized["tranche_usd"]
+            plan_limit_exceeded = clamped["over_limit"]
 
         one_share_warning = None
         if has_plan and fx_rate:
@@ -320,6 +349,7 @@ def compute_live_judgments(
                 "tranche_krw": tranche_krw,
                 "tranche_usd": tranche_usd,
                 "one_share_warning": one_share_warning,
+                "plan_limit_exceeded": plan_limit_exceeded,
             }
         )
     return rows
@@ -1069,6 +1099,7 @@ def build_report_summary(
     replay_needed: bool = False,
     plan_by_ticker: dict[str, float] | None = None,
     live_judgment_rows: list[dict] | None = None,
+    plan_ref_price_by_ticker: dict[str, float] | None = None,
 ) -> dict:
     """오늘 이벤트·현재 상태·시세로 보고서·텔레그램용 summary dict를 만든다 (DB에 쓰지 않는다).
 
@@ -1085,7 +1116,9 @@ def build_report_summary(
          결과), run_warnings, max_concurrent, fx_result(data.fx.get_usd_krw_rate
          결과 — 오늘 자금 계획·원화 표기에 쓴다), replay_needed, plan_by_ticker
          (live 전용 — {ticker: 계획금액(원)}, docs/design/live_advisor.md 2번),
-         live_judgment_rows(live 전용 — compute_live_judgments 결과)
+         live_judgment_rows(live 전용 — compute_live_judgments 결과),
+         plan_ref_price_by_ticker(live 전용 — {ticker: 계획 시트 "기준가($)"}, 있으면
+         core.sizing.plan_tranche_qty가 기준가 기반 고정 총 주수 방식을 쓴다)
 
     mode == "live"이면 계좌 총액 기반 자금 계획(core.sizing.size_buy_signals)을 전혀
     쓰지 않고 종목별 계획금액만으로 수량을 정한다(docs/design/live_advisor.md 0번) —
@@ -1118,14 +1151,22 @@ def build_report_summary(
         # 독립적으로 차수·수량을 정한다. 계획 없는 종목은 1차 진입가·손절가·조건은
         # 그대로 보이고(위에서 이미 buy_groups에 다 들어감) 금액만 비운다.
         plan_by_ticker = plan_by_ticker or {}
+        plan_ref_price_by_ticker = plan_ref_price_by_ticker or {}
         for r in all_buy_rows:
             has_plan = r["ticker"] in plan_by_ticker
             r["has_plan"] = has_plan
             if has_plan and r["stop"] is not None and fx_rate:
-                sized_row = sizing.plan_tranche_qty(plan_by_ticker[r["ticker"]], r["stage"], r["limit"], fx_rate)
-                r["qty"] = sized_row["qty"]
-                r["amount_krw"] = round(sized_row["tranche_krw"]) if sized_row["qty"] else 0
-                if sized_row["qty"] == 0:
+                sized_row = sizing.plan_tranche_qty(
+                    plan_by_ticker[r["ticker"]], r["stage"], r["limit"], fx_rate,
+                    ref_price=plan_ref_price_by_ticker.get(r["ticker"]),
+                )
+                held_qty = sum(q for q in positions.get(r["ticker"], {}).get("units", {}).values() if q > 0)
+                clamped = sizing.clamp_plan_qty_to_remaining(sized_row["qty"], sized_row.get("total_shares"), held_qty)
+                r["qty"] = clamped["qty"]
+                r["amount_krw"] = round(sized_row["tranche_krw"]) if clamped["qty"] else 0
+                if clamped["over_limit"]:
+                    r["note"] = " · ".join(p for p in (r["note"], "계획 한도 초과") if p)
+                elif sized_row["qty"] == 0:
                     r["note"] = " · ".join(p for p in (r["note"], "계획금액으로 1주 미만") if p)
             else:
                 r["qty"] = 0
@@ -1596,12 +1637,13 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
             plan_df, plan_errors = load_plan()
     else:
         fills_result = load_fills()
-        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "memo"]), []
+        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "ref_price", "memo"]), []
     fills_df = fills_result.df
     fills_errors = fills_result.errors
     for line in fills_errors:
         print(f"  {line}")
     plan_by_ticker = _plan_budget_map(plan_df)
+    plan_ref_price_by_ticker = _plan_ref_price_map(plan_df)
     for line in plan_errors:
         print(f"  {line}")
 
@@ -1737,6 +1779,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         live_judgment_rows = compute_live_judgments(
             states, today_events, indicator_map, as_of_by_ticker, name_map,
             plan_by_ticker, fills_df, fx_result.rate if fx_result else None, cfg,
+            plan_ref_price_by_ticker=plan_ref_price_by_ticker,
         )
 
     for ticker, state_ in states.items():
@@ -1776,6 +1819,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         as_of_by_ticker, data_gap_tickers, fills_result, run_warnings, max_concurrent,
         fx_result, replay_needed=replay_needed,
         plan_by_ticker=plan_by_ticker, live_judgment_rows=live_judgment_rows,
+        plan_ref_price_by_ticker=plan_ref_price_by_ticker,
     )
     summary["macro_rows"] = macro_rows
     # 계획·체결 입력 오류(헤더 불일치, 잘못된 줄 등) — 텔레그램 요약에 한 줄 경고로 띄운다.

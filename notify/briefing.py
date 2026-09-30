@@ -171,6 +171,12 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     if warning_rows:
         items = ", ".join(r["ticker"] for r in warning_rows)
         signal_lines.append(f"계획금액으로 1차 매수 0주 : {items}")
+    # 기준가 기반 계획(구글 시트 계획 탭 개편, 2026-09-30): 보유 수량이 이미 계획
+    # 총 주수 이상이면 추가 매수 추천이 0으로 잘리고 여기 경고로 뜬다.
+    limit_exceeded_rows = [r for r in live_judgment_rows if r.get("plan_limit_exceeded")]
+    if limit_exceeded_rows:
+        items = ", ".join(r["ticker"] for r in limit_exceeded_rows)
+        signal_lines.append(f"계획 한도 초과 : {items}")
 
     stop_alerts = summary.get("stop_alerts", [])
     if stop_alerts:

@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 from core import state as st
-from data.fills import fills_for, load_fills, load_plan, summarize_cash_rows
+from data.fills import fills_for, load_fills, load_plan, parse_plan_records, summarize_cash_rows
 
 
 def test_load_fills_empty_file_returns_empty_frame(tmp_path):
@@ -360,6 +360,69 @@ def test_load_plan_defaults_to_project_fills_xlsx_path(monkeypatch, tmp_path):
     plan_df, errors = load_plan()
     assert errors == []
     assert list(plan_df["ticker"]) == ["NVDA"]
+
+
+# ── 계획 탭 개편(2026-09-30): 주식 수 기준 새 머리글 ─────────────────────────
+# 티커, 계획금액, 등록일, 기준가($), 환율, 1차(주), 2차(주), 3차(주), 합계(주),
+# 보유(주), 남은(주), 메모 — 환율·1차(주)~남은(주)는 시트 수식이라 읽지 않는다
+# (core.sizing.plan_tranche_qty가 budget_krw·ref_price·그날 환율로 직접 다시
+# 계산한다). parse_plan_records는 data/sheets.py(구글 시트)와 load_plan(xlsx)
+# 양쪽이 공유하므로, 여기서는 파일 없이 레코드 dict로 직접 테스트한다.
+
+
+def _new_header_plan_record(**overrides) -> dict:
+    record = {
+        "티커": "ODFL",
+        "계획금액": "3,000,000",
+        "등록일": "2026-09-01",
+        "기준가($)": "178.41",
+        "환율": "1,362",  # 시트 수식 결과 — 읽지 않아야 한다
+        "1차(주)": "1",  # 시트 수식 결과 — 읽지 않아야 한다(코드가 직접 다시 계산)
+        "2차(주)": "3",
+        "3차(주)": "8",
+        "합계(주)": "12",
+        "보유(주)": "4",
+        "남은(주)": "8",
+        "메모": "",
+    }
+    record.update(overrides)
+    return record
+
+
+def test_parse_plan_records_reads_new_share_based_headers():
+    plan_df, errors = parse_plan_records([_new_header_plan_record()])
+    assert errors == []
+    assert len(plan_df) == 1
+    row = plan_df.iloc[0]
+    assert row["ticker"] == "ODFL"
+    assert row["budget_krw"] == 3_000_000.0
+    assert row["ref_price"] == 178.41
+    assert row["memo"] == ""
+
+
+def test_parse_plan_records_ignores_formula_columns_not_just_ref_price():
+    """등록일·환율·1차(주)~남은(주)는 시트 수식이라, 값이 계산과 안 맞아도(고의로
+    틀리게 넣어도) 파싱 결과(ref_price)에 영향을 주면 안 된다."""
+    record = _new_header_plan_record(**{"환율": "9999", "1차(주)": "999", "합계(주)": "999"})
+    plan_df, errors = parse_plan_records([record])
+    assert errors == []
+    assert plan_df.iloc[0]["ref_price"] == 178.41  # 시트의 "1차(주)" 등과 무관
+
+
+def test_parse_plan_records_ref_price_blank_means_use_old_method():
+    """기준가($)가 비어 있으면(선택 열) None — core.sizing.plan_tranche_qty가
+    지금 방식(그날 지정가 기준)으로 폴백한다."""
+    record = _new_header_plan_record(**{"기준가($)": ""})
+    plan_df, errors = parse_plan_records([record])
+    assert errors == []
+    assert pd.isna(plan_df.iloc[0]["ref_price"]) or plan_df.iloc[0]["ref_price"] is None
+
+
+def test_parse_plan_records_invalid_ref_price_is_reported():
+    record = _new_header_plan_record(**{"기준가($)": "많이"})
+    plan_df, errors = parse_plan_records([record])
+    assert plan_df.empty
+    assert "기준가가 올바르지 않음" in errors[0]
 
 
 def test_load_fills_falls_back_to_csv_when_no_xlsx(tmp_path, monkeypatch):

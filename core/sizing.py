@@ -280,21 +280,76 @@ def plan_tranche_krw(budget_krw: float, stage: str) -> float:
     return budget_krw * STAGE_SLOT_FRACTION[stage]
 
 
-def plan_tranche_qty(budget_krw: float, stage: str, entry_price: float | None, fx_rate: float | None) -> dict:
-    """계획금액 기준 차수별 추천 수량. 위험 상한 없이
-    수량 = 내림(차수별 목표 금액 ÷ 환율 ÷ 지정가) 만 쓴다.
+def _plan_stage_qty_from_total(total_shares: int, stage: str) -> int:
+    """기준가 기반 계획 총 주수를 1:2:6 비중으로 나눈다 (구글 시트 계획 탭 개편,
+    2026-09-30 — 시트의 1차~남은(주) 수식과 같은 결과를 낸다).
 
-    입력: budget_krw(계획 시트의 계획금액, 원), stage(A1|A2|A3|B), entry_price(지정가,
-         달러 — 없거나 0 이하면 qty=0), fx_rate(원/달러 환율 — 없거나 0 이하면 qty=0)
+    1차 = MAX(1, ROUND(총 주수/9)), 2차 = ROUND(총 주수×2/9), 3차 = 총 주수 − 1차 − 2차
+    (나머지로 계산해 반올림 오차를 흡수, 셋을 더하면 항상 총 주수). 재진입(B)은
+    한 번에 총 주수 전체(재진입 비중 1.0과 같다).
+    """
+    a1 = max(1, round(total_shares / 9))
+    if stage == "A1":
+        return a1
+    a2 = round(total_shares * 2 / 9)
+    if stage == "A2":
+        return a2
+    if stage == "A3":
+        return total_shares - a1 - a2
+    return total_shares  # B(재진입)
+
+
+def plan_tranche_qty(
+    budget_krw: float,
+    stage: str,
+    entry_price: float | None,
+    fx_rate: float | None,
+    ref_price: float | None = None,
+) -> dict:
+    """계획금액 기준 차수별 추천 수량.
+
+    ref_price(계획 시트 "기준가($)")가 있으면 고정 총 주수 = INT(계획금액 ÷ (기준가 ×
+    환율))를 _plan_stage_qty_from_total로 1:2:6 비중 나눈 값을 쓴다(구글 시트 수식과
+    맞추기 위한 방식, 2026-09-30). 없으면 기존 방식 그대로 위험 상한 없이
+    수량 = 내림(차수별 목표 금액 ÷ 환율 ÷ 오늘 지정가)를 쓴다.
+
+    입력: budget_krw(계획 시트의 계획금액, 원), stage(A1|A2|A3|B), entry_price(오늘
+         지정가, 달러 — ref_price 없을 때만 쓴다), fx_rate(원/달러 환율 — 없거나
+         0 이하면 qty=0), ref_price(계획 시트 기준가, 달러 — 없으면 기존 방식)
     출력: {"tranche_krw"(차수별 목표 금액, 원), "tranche_usd"(달러, 계산 불가면 None),
-          "qty"(정수 주식 수)}
+          "qty"(정수 주식 수), "total_shares"(기준가 방식일 때 계획 총 주수, 아니면 None)}
     """
     tranche_krw = plan_tranche_krw(budget_krw, stage)
-    if not fx_rate or fx_rate <= 0 or entry_price is None or pd.isna(entry_price) or entry_price <= 0:
-        return {"tranche_krw": tranche_krw, "tranche_usd": None, "qty": 0}
+    if not fx_rate or fx_rate <= 0:
+        return {"tranche_krw": tranche_krw, "tranche_usd": None, "qty": 0, "total_shares": None}
     tranche_usd = tranche_krw / fx_rate
+
+    if ref_price is not None and not pd.isna(ref_price) and ref_price > 0:
+        total_shares = int(budget_krw / (ref_price * fx_rate))
+        qty = max(_plan_stage_qty_from_total(total_shares, stage), 0)
+        return {"tranche_krw": tranche_krw, "tranche_usd": tranche_usd, "qty": qty, "total_shares": total_shares}
+
+    if entry_price is None or pd.isna(entry_price) or entry_price <= 0:
+        return {"tranche_krw": tranche_krw, "tranche_usd": tranche_usd, "qty": 0, "total_shares": None}
     qty = max(int(math.floor(tranche_usd / entry_price)), 0)
-    return {"tranche_krw": tranche_krw, "tranche_usd": tranche_usd, "qty": qty}
+    return {"tranche_krw": tranche_krw, "tranche_usd": tranche_usd, "qty": qty, "total_shares": None}
+
+
+def clamp_plan_qty_to_remaining(qty: int, total_shares: int | None, held_qty: int) -> dict:
+    """기준가 기반 계획(total_shares가 있을 때만)에서, 추천 수량이 남은 주수
+    (총 주수 − 현재 보유 수량)를 넘지 않게 자른다. 기준가가 없으면(total_shares가
+    None — 지금 방식) 그대로 둔다.
+
+    입력: qty(plan_tranche_qty가 낸 원래 추천 수량), total_shares(plan_tranche_qty
+         결과의 "total_shares"), held_qty(이 종목의 현재 보유 수량 합)
+    출력: {"qty"(잘린 수량), "over_limit"(이미 한도를 넘었으면 True — 남은 주수 <= 0)}
+    """
+    if total_shares is None:
+        return {"qty": qty, "over_limit": False}
+    remaining = total_shares - held_qty
+    if remaining <= 0:
+        return {"qty": 0, "over_limit": True}
+    return {"qty": min(qty, remaining), "over_limit": False}
 
 
 def min_budget_for_one_share_krw(entry_price: float, fx_rate: float, stage: str = "A1") -> float:

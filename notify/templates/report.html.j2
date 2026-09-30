@@ -356,6 +356,11 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <div class="items">{% for r in one_share_warning_rows %}<span>⚠️ {{ r.one_share_warning_str }}</span>{% endfor %}</div>
 </div>
 {% endif %}
+{% if is_live and plan_limit_exceeded_rows %}
+<div class="plan" style="border-color:var(--sell)">
+  <div class="items"><span>⚠️ 계획 한도 초과: <b>{% for r in plan_limit_exceeded_rows %}{{ r.ticker }}{% if not loop.last %} · {% endif %}{% endfor %}</b> (보유 수량이 계획 총 주수 이상 — 추가 매수 추천 0주)</span></div>
+</div>
+{% endif %}
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="buy" aria-selected="true">신규 매수<span class="n">{{ buy_count }}</span></button>

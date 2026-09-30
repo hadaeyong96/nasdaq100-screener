@@ -292,6 +292,9 @@ def build_context(summary: dict, cfg: dict) -> dict:
     live_judgment_rows = [_live_judgment_row_ctx(r) for r in summary.get("live_judgment_rows", [])]
     changed_judgment_rows = [r for r in live_judgment_rows if r.get("changed")]
     one_share_warning_rows = [r for r in live_judgment_rows if r.get("one_share_warning")]
+    # 기준가 기반 계획(구글 시트 계획 탭 개편, 2026-09-30): 이미 보유 수량이 계획
+    # 총 주수 이상이면 추가 매수 추천이 0으로 잘리고 여기 경고로 뜬다.
+    plan_limit_exceeded_rows = [r for r in live_judgment_rows if r.get("plan_limit_exceeded")]
 
     # fx_rate는 funding_plan과 별개로 summary 최상위에 항상 있다(engine/daily.py) —
     # live는 funding이 없어도(계좌 총액 기반 자금 계획을 안 쓴다) 오늘 환율은 보여줘야 한다.
@@ -320,6 +323,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "live_judgment_rows": live_judgment_rows,
         "changed_judgment_rows": changed_judgment_rows,
         "one_share_warning_rows": one_share_warning_rows,
+        "plan_limit_exceeded_rows": plan_limit_exceeded_rows,
         "cfg_js": cfg_js,
         "buy_count": buy_count,
         "sell_count": len(sell_rows),

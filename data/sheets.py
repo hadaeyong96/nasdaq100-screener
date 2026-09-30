@@ -1,9 +1,13 @@
 """구글 스프레드시트 입력 (계획·체결) — 라이브 어드바이저 1단계
 (docs/design/live_advisor.md 1번).
 
-data/fills.xlsx를 대체한다. 서비스 계정으로 두 탭을 읽는다 (2026-09-30 확정 시트 헤더):
-  - "계획": 티커, 계획금액, 등록일, 1차금액, 2차금액, 3차금액, 합계, 메모
-    (계획금액은 원화, "3,000,000"처럼 쉼표 가능. 1~3차금액·합계는 시트 수식이라 읽지 않음)
+data/fills.xlsx를 대체한다. 서비스 계정으로 두 탭을 읽는다 (2026-09-30 주식 수
+기준으로 개편한 시트 헤더):
+  - "계획": 티커, 계획금액, 등록일, 기준가($), 환율, 1차(주), 2차(주), 3차(주),
+    합계(주), 보유(주), 남은(주), 메모 (계획금액은 원화, "3,000,000"처럼 쉼표
+    가능. 기준가는 선택 — 있으면 core.sizing.plan_tranche_qty가 그 값과 그날
+    환율로 고정 총 주수를 계산해 시트의 1차~남은(주) 수식과 같은 결과를 낸다.
+    환율·1차(주)~남은(주)는 시트 수식이라 읽지 않는다)
   - "체결": 날짜, 종목, 매수매도, 수량, 체결가, 차수, 메모
 수식 때문에 1000행까지 생기는 빈 줄은 건너뛴다. 헤더의 괄호 설명("계획금액(원)" 등)은
 무시하고 비교하며, 차수가 비면 data/fills.py가 매수 순서로 배정한다. 환율·수수료 열이
@@ -43,7 +47,7 @@ _SCOPES = [
 SHEET_PLAN = "계획"
 SHEET_FILLS = "체결"
 
-_PLAN_COLUMNS = ["ticker", "budget_krw", "memo"]
+_PLAN_COLUMNS = ["ticker", "budget_krw", "ref_price", "memo"]
 
 
 class SheetsConfigError(RuntimeError):
@@ -54,7 +58,7 @@ class SheetsConfigError(RuntimeError):
 class SheetsResult:
     """read_sheets()의 결과.
 
-    plan_df: DataFrame(ticker, budget_krw, memo) — 계획 탭의 유효한 행만.
+    plan_df: DataFrame(ticker, budget_krw, ref_price, memo) — 계획 탭의 유효한 행만.
     plan_errors: 계획 탭의 건너뛴 줄 사유 ("계획 기록 오류: N번째 줄 - ...").
     fills: 체결 탭을 data.fills.parse_fill_records로 파싱한 FillsResult.
     read_at_kst: 두 탭을 읽은 시각(KST, tz-aware Timestamp).

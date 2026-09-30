@@ -274,3 +274,73 @@ def test_min_budget_for_one_share_krw_matches_plan_tranche_qty_boundary():
     just_short = sizing.plan_tranche_qty(math.floor(min_budget) - 1, "A1", entry_price, fx_rate)
     assert just_enough["qty"] >= 1
     assert just_short["qty"] == 0
+
+
+# ── 기준가($) 기반 계획 사이징 (구글 시트 계획 탭 개편, 2026-09-30) ────────────
+# 총 주수 = INT(계획금액 ÷ (기준가 × 환율)), 1차 = MAX(1, ROUND(총/9)),
+# 2차 = ROUND(총×2/9), 3차 = 총 − 1차 − 2차, 재진입 = 총 전체 (사용자 확정).
+
+
+def test_plan_tranche_qty_ref_price_mode_matches_odfl_example():
+    """예시(사용자 확정): ODFL 계획 300만원, 기준가 $178.41, 환율 1,360원
+    -> 총 12주, 1차 1주·2차 3주·3차 8주(합이 총 주수와 같다)."""
+    common = dict(budget_krw=3_000_000, entry_price=999.0, fx_rate=1360.0, ref_price=178.41)
+    a1 = sizing.plan_tranche_qty(stage="A1", **common)
+    a2 = sizing.plan_tranche_qty(stage="A2", **common)
+    a3 = sizing.plan_tranche_qty(stage="A3", **common)
+    b = sizing.plan_tranche_qty(stage="B", **common)
+
+    assert a1["total_shares"] == 12
+    assert a1["qty"] == 1
+    assert a2["qty"] == 3
+    assert a3["qty"] == 8
+    assert a1["qty"] + a2["qty"] + a3["qty"] == 12
+    assert b["qty"] == 12  # 재진입은 한 번에 전량
+
+
+def test_plan_tranche_qty_ref_price_ignores_todays_entry_price():
+    """기준가가 있으면 총 주수 계산에 오늘 지정가(entry_price)를 쓰지 않는다."""
+    out_cheap = sizing.plan_tranche_qty(3_000_000, "A1", entry_price=1.0, fx_rate=1360.0, ref_price=178.41)
+    out_expensive = sizing.plan_tranche_qty(3_000_000, "A1", entry_price=9999.0, fx_rate=1360.0, ref_price=178.41)
+    assert out_cheap["qty"] == out_expensive["qty"] == 1
+
+
+def test_plan_tranche_qty_a1_always_at_least_one_share_even_if_total_is_small():
+    out = sizing.plan_tranche_qty(100_000, "A1", entry_price=None, fx_rate=1360.0, ref_price=178.41)
+    assert out["total_shares"] == 0  # 100,000 / (178.41*1360) < 1 -> INT는 0
+    assert out["qty"] == 1  # MAX(1, ROUND(0/9))
+
+
+def test_plan_tranche_qty_no_ref_price_falls_back_to_todays_price_method():
+    """기준가가 없으면(선택 열) 지금 방식(그날 지정가 기준) 그대로다."""
+    with_ref_none = sizing.plan_tranche_qty(9_000_000, "A1", entry_price=180.25, fx_rate=1350.0, ref_price=None)
+    without_ref_arg = sizing.plan_tranche_qty(9_000_000, "A1", entry_price=180.25, fx_rate=1350.0)
+    assert with_ref_none == without_ref_arg
+    assert with_ref_none["total_shares"] is None
+
+
+# ── 남은 주수(계획 한도) 제한 ────────────────────────────────────────────
+
+
+def test_clamp_plan_qty_to_remaining_no_ref_price_leaves_qty_unchanged():
+    """기준가 없는 종목(total_shares=None)은 지금처럼 자르지 않는다."""
+    out = sizing.clamp_plan_qty_to_remaining(qty=4, total_shares=None, held_qty=100)
+    assert out == {"qty": 4, "over_limit": False}
+
+
+def test_clamp_plan_qty_to_remaining_within_remaining_is_unchanged():
+    # 총 12주, 보유 4주 -> 남은 8주. 요청 8주는 남은 주수와 정확히 같다.
+    out = sizing.clamp_plan_qty_to_remaining(qty=8, total_shares=12, held_qty=4)
+    assert out == {"qty": 8, "over_limit": False}
+
+
+def test_clamp_plan_qty_to_remaining_caps_when_request_exceeds_remaining():
+    out = sizing.clamp_plan_qty_to_remaining(qty=8, total_shares=12, held_qty=10)  # 남은 2주뿐
+    assert out == {"qty": 2, "over_limit": False}
+
+
+def test_clamp_plan_qty_to_remaining_over_limit_when_already_at_or_past_total():
+    out_exact = sizing.clamp_plan_qty_to_remaining(qty=1, total_shares=12, held_qty=12)
+    out_over = sizing.clamp_plan_qty_to_remaining(qty=1, total_shares=12, held_qty=15)
+    assert out_exact == {"qty": 0, "over_limit": True}
+    assert out_over == {"qty": 0, "over_limit": True}

@@ -385,21 +385,32 @@ def test_briefing_input_error_line():
     assert "\n" not in line
 
 
-# ---------- 2026-09-30 확정 시트 형식 (계획 8열, 체결 7열, 수식 때문에 1000행까지 빈 줄) ----------
+# ---------- 2026-09-30 확정 시트 형식 (계획 12열 — 주식 수 기준 개편, 체결 7열,
+# 수식 때문에 1000행까지 빈 줄) ----------
 
 
-def _plan(ticker, budget, reg="", memo=""):
-    return {"티커": ticker, "계획금액": budget, "등록일": reg, "1차금액": "", "2차금액": "", "3차금액": "",
-            "합계": "", "메모": memo}
+def _plan(ticker, budget, reg="", ref_price="", memo=""):
+    return {
+        "티커": ticker, "계획금액": budget, "등록일": reg, "기준가($)": ref_price, "환율": "",
+        "1차(주)": "", "2차(주)": "", "3차(주)": "", "합계(주)": "", "보유(주)": "", "남은(주)": "",
+        "메모": memo,
+    }
 
 
 def test_plan_tab_final_format_with_formula_blank_rows():
-    formula_blank = {"티커": "", "계획금액": "", "등록일": "", "1차금액": 0, "2차금액": 0, "3차금액": 0, "합계": 0, "메모": ""}
-    records = [_plan("ODFL", "3,000,000", "2026-09-28", "운송"), _plan("NVDA", 5000000)] + [formula_blank] * 998
+    formula_blank = {
+        "티커": "", "계획금액": "", "등록일": "", "기준가($)": "", "환율": 0, "1차(주)": 0, "2차(주)": 0,
+        "3차(주)": 0, "합계(주)": 0, "보유(주)": 0, "남은(주)": 0, "메모": "",
+    }
+    records = [
+        _plan("ODFL", "3,000,000", "2026-09-28", "178.41", "운송"), _plan("NVDA", 5000000),
+    ] + [formula_blank] * 998
     df, errors = sheets.parse_plan_records(records)
     assert errors == []
     assert list(df["ticker"]) == ["ODFL", "NVDA"]
     assert list(df["budget_krw"]) == [3_000_000.0, 5_000_000.0]
+    assert df.iloc[0]["ref_price"] == 178.41
+    assert pd.isna(df.iloc[1]["ref_price"]) or df.iloc[1]["ref_price"] is None
 
 
 def test_fills_tab_final_format_with_unit_column_and_blank_rows():

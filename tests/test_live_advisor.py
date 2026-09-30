@@ -341,6 +341,105 @@ def test_build_report_summary_default_plan_by_ticker_and_judgment_rows_are_empty
     assert summary["live_judgment_rows"] == []
 
 
+# ── 계획 탭 개편(2026-09-30): 기준가 기반 사이징 + 남은 주수(계획 한도) 제한 ───
+
+
+def _buy_summary_with_ref_price(budget, ref_price, held_qty=0, fx_rate=1350.0):
+    indicator_map = {"NVDA": _df(180.0)}
+    today_events = [{"date": _DATE, "ticker": "NVDA", "kind": "A1", "unit": "1", "price": 180.0, "score": 20}]
+    # held_qty>0은 실제로는 A1이 아니라 A2/A3에서나 나오는 조합이지만, 여기서는
+    # positions["units"] 합만으로 정해지는 "남은 주수" 계산만 순수하게 검증한다.
+    units = {"1": held_qty} if held_qty else {}
+    positions = {"NVDA": {**st.init_state("NVDA", "엔비디아"), "stop": 170.0, "units": units}}
+    as_of_by_ticker = {"NVDA": _DATE}
+    fx_result = FxRateResult(rate=fx_rate, rate_date=_DATE.date().isoformat(), is_fallback=False, warning=None)
+    return build_report_summary(
+        "live", _FULL_CFG, indicator_map, {"NVDA": "엔비디아"}, {"NVDA": None}, positions, today_events,
+        as_of_by_ticker, [], FillsResult(), [], 8, fx_result,
+        plan_by_ticker={"NVDA": budget}, plan_ref_price_by_ticker={"NVDA": ref_price},
+    )
+
+
+def test_build_report_summary_live_ref_price_uses_fixed_total_shares():
+    # 총 주수 = int(9,000,000 / (180.0 * 1350.0)) = int(37.03..) = 37 -> 1차 = MAX(1, ROUND(37/9)) = 4
+    summary = _buy_summary_with_ref_price(budget=9_000_000, ref_price=180.0)
+    row = summary["buy_groups"]["b1"][0]
+    assert row["qty"] == 4
+
+
+def test_build_report_summary_live_ref_price_caps_qty_to_remaining_shares():
+    # 총 37주, 보유 36주 -> 남은 1주뿐. 1차 계산값(4)보다 작게 잘려야 한다.
+    summary = _buy_summary_with_ref_price(budget=9_000_000, ref_price=180.0, held_qty=36)
+    row = summary["buy_groups"]["b1"][0]
+    assert row["qty"] == 1
+    assert "계획 한도 초과" not in row["note"]
+
+
+def test_build_report_summary_live_ref_price_shows_over_limit_note_when_already_at_total():
+    summary = _buy_summary_with_ref_price(budget=9_000_000, ref_price=180.0, held_qty=37)
+    row = summary["buy_groups"]["b1"][0]
+    assert row["qty"] == 0
+    assert "계획 한도 초과" in row["note"]
+
+
+def test_build_report_summary_without_ref_price_is_unaffected_by_held_qty():
+    """기준가가 없는 종목(기존 방식)은 보유 수량과 무관하게 지금처럼 계산된다 —
+    남은 주수 개념 자체가 없다."""
+    indicator_map = {"NVDA": _df(180.0)}
+    today_events = [{"date": _DATE, "ticker": "NVDA", "kind": "A1", "unit": "1", "price": 180.0, "score": 20}]
+    positions = {"NVDA": {**st.init_state("NVDA", "엔비디아"), "stop": 170.0, "units": {"1": 999}}}
+    as_of_by_ticker = {"NVDA": _DATE}
+    fx_result = FxRateResult(rate=1350.0, rate_date=_DATE.date().isoformat(), is_fallback=False, warning=None)
+    summary = build_report_summary(
+        "live", _FULL_CFG, indicator_map, {"NVDA": "엔비디아"}, {"NVDA": None}, positions, today_events,
+        as_of_by_ticker, [], FillsResult(), [], 8, fx_result, plan_by_ticker={"NVDA": 9_000_000.0},
+    )
+    row = summary["buy_groups"]["b1"][0]
+    assert row["qty"] == 4  # test_build_report_summary_live_with_plan_computes_amount와 같은 값
+    assert "계획 한도 초과" not in row["note"]
+
+
+# ── compute_live_judgments도 같은 기준가 방식·한도 제한을 쓴다 ───────────────
+
+
+def _add_judgment_row(ref_price, held_qty, budget=9_000_000.0, fx_rate=1350.0):
+    state_ = {**st.init_state("NVDA", "엔비디아"), "stop": 170.0, "units": {"1": held_qty} if held_qty else {}}
+    states = {"NVDA": state_}
+    today_events = [{"date": _DATE, "ticker": "NVDA", "kind": "A2", "unit": "2", "price": 180.0, "score": 20}]
+    indicator_map = {"NVDA": _df(180.0)}
+    as_of_by_ticker = {"NVDA": _DATE}
+    rows = compute_live_judgments(
+        states, today_events, indicator_map, as_of_by_ticker, {"NVDA": "엔비디아"},
+        {"NVDA": budget}, pd.DataFrame(columns=["ticker"]), fx_rate, _CFG,
+        plan_ref_price_by_ticker={"NVDA": ref_price},
+    )
+    return rows[0]
+
+
+def test_compute_live_judgments_ref_price_caps_qty_and_flags_over_limit():
+    # 총 주수 = int(9,000,000/(180*1350)) = 37. held=37 -> 이미 한도 도달.
+    row = _add_judgment_row(ref_price=180.0, held_qty=37)
+    assert row["qty"] == 0
+    assert row["plan_limit_exceeded"] is True
+
+
+def test_compute_live_judgments_ref_price_not_over_limit_when_remaining_shares_left():
+    row = _add_judgment_row(ref_price=180.0, held_qty=4)  # 남은 33주 > 2차 추천량
+    assert row["plan_limit_exceeded"] is False
+    assert row["qty"] > 0
+
+
+def test_compute_live_judgments_plan_limit_exceeded_defaults_false_without_ref_price():
+    state_ = {**st.init_state("NVDA", "엔비디아"), "stop": 170.0}
+    states = {"NVDA": state_}
+    today_events = [{"date": _DATE, "ticker": "NVDA", "kind": "A1", "unit": "1", "price": 180.0, "score": 20}]
+    rows = compute_live_judgments(
+        states, today_events, {"NVDA": _df(180.0)}, {"NVDA": _DATE}, {"NVDA": "엔비디아"},
+        {"NVDA": 9_000_000.0}, pd.DataFrame(columns=["ticker"]), 1350.0, _CFG,
+    )
+    assert rows[0]["plan_limit_exceeded"] is False
+
+
 # ── run(): 구글 시트 우선, 인증 정보 없으면 fills.xlsx로 폴백 (1g) ─────────────
 
 

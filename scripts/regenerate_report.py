@@ -42,7 +42,7 @@ from data.fills import load_fills, load_plan  # noqa: E402
 from data.prices import fetch_universe_prices  # noqa: E402
 from data.universe import get_universe  # noqa: E402
 from engine.daily import OUTPUT_DIR, build_report_summary, load_config, resolve_mode  # noqa: E402
-from engine.daily import _plan_budget_map, _write_outputs, compute_live_judgments  # noqa: E402
+from engine.daily import _plan_budget_map, _plan_ref_price_map, _write_outputs, compute_live_judgments  # noqa: E402
 from notify import briefing, report_html, telegram  # noqa: E402
 from store import db  # noqa: E402
 
@@ -85,8 +85,9 @@ def regenerate(cfg: dict, mode: str, date_str: str | None = None) -> dict:
     if mode == "live":
         plan_df, plan_errors = load_plan()
     else:
-        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "memo"]), []
+        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "ref_price", "memo"]), []
     plan_by_ticker = _plan_budget_map(plan_df)
+    plan_ref_price_by_ticker = _plan_ref_price_map(plan_df)
 
     target_ts = pd.Timestamp(target_date)
     as_of_by_ticker = {t: target_ts for t, df in indicator_map.items() if target_ts in df.index}
@@ -111,12 +112,14 @@ def regenerate(cfg: dict, mode: str, date_str: str | None = None) -> dict:
         live_judgment_rows = compute_live_judgments(
             positions, today_events, indicator_map, as_of_by_ticker, name_map,
             plan_by_ticker, fills_result.df, fx_result.rate if fx_result else None, cfg,
+            plan_ref_price_by_ticker=plan_ref_price_by_ticker,
         )
 
     summary = build_report_summary(
         mode, cfg, indicator_map, name_map, earnings_map, positions, today_events,
         as_of_by_ticker, data_gap_tickers, fills_result, run_warnings, max_concurrent,
         fx_result, plan_by_ticker=plan_by_ticker, live_judgment_rows=live_judgment_rows,
+        plan_ref_price_by_ticker=plan_ref_price_by_ticker,
     )
 
     _write_outputs(summary)

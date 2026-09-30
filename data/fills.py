@@ -49,9 +49,14 @@ _LOCKED_WARNING = "체결 기록 오류: 체결 기록 파일이 열려 있음, 
 # 기록용이다. 구글 시트는 비어 있으면 data/sheets.py가 채운다(환율=체결일 종가, 수수료=config).
 _COLUMNS = ["date", "ticker", "unit", "side", "price", "qty", "fx_rate", "fee_usd", "amount_usd"]
 
-_PLAN_COLUMNS = ["ticker", "budget_krw", "memo"]
-# 계획 탭 헤더(괄호 설명·공백 제거 후) -> 내부 열 이름. "등록일" 등 나머지 열은 무시한다.
-_PLAN_KR_COLUMN_MAP = {"티커": "ticker", "종목": "ticker", "계획금액": "budget_krw", "메모": "memo"}
+_PLAN_COLUMNS = ["ticker", "budget_krw", "ref_price", "memo"]
+# 계획 탭 헤더(괄호 설명·공백 제거 후) -> 내부 열 이름. "등록일"과 시트 수식 열
+# (환율, 1차(주)~남은(주))은 무시한다 — core.sizing.plan_tranche_qty가 budget_krw·
+# ref_price와 그날 환율로 직접 다시 계산해서(구글 시트 계획 탭 개편, 2026-09-30),
+# 시트가 계산한 값을 그대로 읽지 않고 매매 신호일 기준으로 맞춘다.
+_PLAN_KR_COLUMN_MAP = {
+    "티커": "ticker", "종목": "ticker", "계획금액": "budget_krw", "기준가": "ref_price", "메모": "memo",
+}
 
 # 체결 헤더(괄호 설명·공백 제거 후) -> 영어 내부 열 이름. 구글 시트 "체결" 탭
 # (날짜, 티커, 구분(매수/매도), 수량, 체결가($), 환율(원/$), 수수료($), 메모)과
@@ -442,15 +447,22 @@ def _is_blank_plan_record(normalized: dict) -> bool:
 
 def parse_plan_records(records: list[dict]) -> tuple[pd.DataFrame, list[str]]:
     """계획 탭/시트의 행 dict 목록을 파싱한다 (라이브 어드바이저 1단계,
-    docs/design/live_advisor.md 1번, 2번). 열 이름은 한글(티커/계획금액/메모)
-    또는 이미 영어(ticker/budget_krw/memo)면 그대로 받는다. 빈 줄은 조용히
-    건너뛴다. 잘못된 줄(티커 없음, 계획금액이 숫자가 아니거나 음수)은
-    반환 DataFrame에서 빠지고 errors에 "N번째 줄 ..."로 남는다.
+    docs/design/live_advisor.md 1번, 2번). 열 이름은 한글(티커/계획금액/기준가/메모)
+    또는 이미 영어(ticker/budget_krw/ref_price/memo)면 그대로 받는다. 빈 줄은 조용히
+    건너뛴다. 잘못된 줄(티커 없음, 계획금액이 숫자가 아니거나 음수, 기준가가 숫자가
+    아님)은 반환 DataFrame에서 빠지고 errors에 "N번째 줄 ..."로 남는다.
+
+    구글 시트 계획 탭 개편(2026-09-30)으로 머리글이 "티커, 계획금액, 등록일,
+    기준가($), 환율, 1차(주), 2차(주), 3차(주), 합계(주), 보유(주), 남은(주), 메모"로
+    바뀌었다 — 등록일과 환율·1차(주)~남은(주)(시트 수식)은 여기서 읽지 않는다.
+    기준가가 있으면 core.sizing.plan_tranche_qty가 고정 총 주수 방식으로 수량을
+    계산해 시트와 같은 결과를 낸다. 기준가가 비어 있으면(선택 열) None — 기존
+    방식(오늘 지정가 기준)을 그대로 쓴다.
 
     data/sheets.py(구글 시트 "계획" 탭)와 이 파일의 load_plan()(fills.xlsx의
     "계획" 시트) 둘 다 이 함수 하나를 재사용한다 — 새 파서를 만들지 않는다.
 
-    출력: (DataFrame(ticker, budget_krw, memo), 오류 메시지 목록).
+    출력: (DataFrame(ticker, budget_krw, ref_price, memo), 오류 메시지 목록).
     """
     rows: list[dict] = []
     errors: list[str] = []
@@ -473,13 +485,18 @@ def parse_plan_records(records: list[dict]) -> tuple[pd.DataFrame, list[str]]:
         if budget is None:
             problems.append(f"계획금액이 올바르지 않음({budget_raw!r})")
 
+        ref_price_raw = normalized.get("ref_price", "")
+        ref_price_ok, ref_price = _parse_optional_number(ref_price_raw)
+        if not ref_price_ok:
+            problems.append(f"기준가가 올바르지 않음({ref_price_raw!r})")
+
         memo = _cell_to_str(normalized.get("memo"))
 
         if problems:
             errors.append(f"계획 기록 오류: {i}번째 줄 - {', '.join(problems)}")
             continue
 
-        rows.append({"ticker": ticker, "budget_krw": budget, "memo": memo})
+        rows.append({"ticker": ticker, "budget_krw": budget, "ref_price": ref_price, "memo": memo})
 
     df = pd.DataFrame(rows, columns=_PLAN_COLUMNS) if rows else pd.DataFrame(columns=_PLAN_COLUMNS)
     return df, errors
@@ -494,7 +511,7 @@ def load_plan(path: Path | None = None) -> tuple[pd.DataFrame, list[str]]:
     path를 주면 그 파일만 읽는다(테스트용). path가 없으면 data/fills.xlsx를
     쓰고, 그 파일 자체가 없으면 빈 결과.
 
-    출력: (DataFrame(ticker, budget_krw, memo), 오류 메시지 목록)
+    출력: (DataFrame(ticker, budget_krw, ref_price, memo), 오류 메시지 목록)
     """
     target = path if path is not None else FILLS_XLSX
     if not target.exists():
