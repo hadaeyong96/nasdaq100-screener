@@ -20,12 +20,12 @@ def _cfg():
             "lookback_years": 5,
             "min_annual_years_required": 5,
             "roic_tax_rate_pct": 21,
+            "revenue_tag_mismatch_tolerance_pct": 5,
             "m1_roic": {"good_threshold_pct": 15, "good_min_years": 4, "caution_max_good_years": 1, "min_invested_capital_ratio_of_revenue": 0.02},
             "m2_gross_margin": {"std_good_max_pp": 3, "std_caution_min_pp": 6},
             "m3_recession_resilience": {"drop_good_max_pp": 5, "drop_caution_min_pp": 10},
-            "m4_cash_conversion": {"good_min_ratio": 0.8, "caution_max_ratio": 0.5},
+            "m4_cash_conversion": {"good_min_ratio": 0.8, "caution_max_ratio": 0.5, "reference_good_min_ratio": 0.9},
             "m5_dilution": {"good_max_pct": 3, "caution_min_pct": 10},
-            "outliers": {"roic_extreme_pct": 100},
         }
     }
 
@@ -177,6 +177,38 @@ def test_annual_value_series_falls_back_to_ifrs_tag():
     assert series[0]["val"] == 500
 
 
+# ── revenue_series: 매출 태그 불일치 검사 ───────────────────────────────────
+
+
+def test_revenue_series_no_mismatch_when_only_one_tag_has_value():
+    facts = _facts(**{"us-gaap:Revenues": [_entry("2020-12-31", 1000, "2099-01-01", 2020)]})
+    series, notes = moat.revenue_series(facts, _cfg(), date(2099, 12, 31))
+    assert series[0]["val"] == 1000
+    assert notes == []
+
+
+def test_revenue_series_flags_mismatch_over_tolerance_and_uses_larger_value():
+    facts = _facts(**{
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax": [_entry("2020-12-31", 100, "2099-01-01", 2020)],
+        "us-gaap:Revenues": [_entry("2020-12-31", 900, "2099-01-01", 2020)],
+    })
+    series, notes = moat.revenue_series(facts, _cfg(), date(2099, 12, 31))
+    assert series[0]["val"] == 900  # 큰 값 사용
+    assert series[0].get("tag_mismatch") is True
+    assert len(notes) == 1
+    assert "2020-12-31" in notes[0] and "태그 불일치" in notes[0]
+
+
+def test_revenue_series_no_flag_when_difference_within_tolerance():
+    facts = _facts(**{
+        "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax": [_entry("2020-12-31", 980, "2099-01-01", 2020)],
+        "us-gaap:Revenues": [_entry("2020-12-31", 1000, "2099-01-01", 2020)],
+    })
+    series, notes = moat.revenue_series(facts, _cfg(), date(2099, 12, 31))
+    assert notes == []
+    assert series[0]["val"] == 980  # 우선순위 태그 값 그대로(병합 규칙), 불일치 아니므로 안 바꿈
+
+
 # ── operating_income_series: 영업이익 대체 계산 ─────────────────────────────
 
 
@@ -219,15 +251,19 @@ def test_operating_income_series_prefers_real_tag_per_year_over_computed():
     assert by_end["2021-12-31"]["val"] == 670  # 실제 영업이익이 없는 연도만 대체 계산
 
 
-def test_operating_income_series_no_fallback_possible_stays_empty_for_that_year():
+def test_operating_income_series_pretax_only_when_no_interest_expense_tag():
+    """PCAR류(이자비용 태그가 아예 없음, 2026-10-01 확인) — 세전이익만으로 대신하고
+    "이자비용 없음"을 표시한다(사용자 지시)."""
     facts = _facts(**{
         "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": [
             _entry("2020-12-31", 400, "2099-01-01", 2020)
         ]
-        # 이자비용 공시가 없음 -> 대체 계산 불가
+        # 이자비용 공시가 없음
     })
     series = moat.operating_income_series(facts, date(2099, 12, 31))
-    assert series == []
+    assert len(series) == 1
+    assert series[0]["val"] == 400
+    assert series[0]["tag"] == ("computed", "pretax_income_only_no_interest_expense")
 
 
 # ── M1 ROIC (새 정의: 순운전자본 + 순유형자산) ────────────────────────────────
@@ -259,26 +295,54 @@ def test_compute_m1_roic_good_using_working_capital_plus_ppe():
 
 
 def test_compute_m1_roic_reference_values_use_old_formula():
-    facts = _m1_facts(op_income_by_year=100, current_assets=300, current_liabilities=100, net_ppe=200, revenue=1000, equity=400, cash=50)
+    # 새 식: WC=(300-50-0)-(100-0)=150, IC=150+200=350 -> 22.57%
+    # 참고(기존) 식: equity(600)+debt(0)-cash(50)=550 -> 100*0.79/550*100=14.36% (새 값과 달라야 함)
+    facts = _m1_facts(op_income_by_year=100, current_assets=300, current_liabilities=100, net_ppe=200, revenue=1000, equity=600, cash=50)
     result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
-    # 참고값(기존 식) = 100*0.79/(400-50) = 22.57%, 새 값과 달라야 함
     assert result.reference_yearly_values
     assert list(result.reference_yearly_values.values())[0] != list(result.yearly_values.values())[0]
 
 
-def test_compute_m1_roic_marks_tiny_denominator_as_unmeasurable():
-    # invested_capital = (101-100)+0 = 1, revenue=1000 -> ratio 0.001 < 0.02 min -> 측정 불가
-    facts = _m1_facts(op_income_by_year=100, current_assets=101, current_liabilities=100, net_ppe=0, revenue=1000)
+def test_compute_m1_roic_tiny_denominator_with_loss_is_unmeasurable():
+    """분모가 매출의 2% 미만인데 그해 세후영업이익이 0 이하면 "측정 불가"."""
+    # WC=(101-0-0)-(100-0)=1, IC=1+0=1, ratio=1/1000=0.001 < 0.02 -> too_small, 영업이익<=0 -> 측정 불가
+    facts = _m1_facts(op_income_by_year=-10, current_assets=101, current_liabilities=100, net_ppe=0, revenue=1000)
     result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
     assert result.status == "판단 불가"
     assert len(result.unmeasurable_years) == 5
+    assert result.capital_light_years == []
 
 
-def test_compute_m1_roic_negative_denominator_is_unmeasurable():
+def test_compute_m1_roic_negative_working_capital_floored_to_zero_not_unmeasurable():
+    """ADSK류(구독모델, 순운전자본이 항상 마이너스) — 0으로 바닥을 깔아 순유형자산만 남는다.
+    분모가 매출의 2% 미만이어도 세후영업이익>0이면 "기준 충족"(100% 이상)으로 센다."""
+    # WC=(50-0-0)-(200-0)=-150 -> max(-150,0)=0, IC=0+0(PPE)=0, ratio=0 < 0.02 -> too_small, 영업이익>0 -> 기준 충족
     facts = _m1_facts(op_income_by_year=100, current_assets=50, current_liabilities=200, net_ppe=0, revenue=1000)
     result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
+    assert result.status == "좋음"
+    assert len(result.capital_light_years) == 5
+    assert all(v == 100.0 for v in result.yearly_values.values())
+    assert all(d == "100% 이상" for d in result.yearly_display.values())
+    assert result.unmeasurable_years == []
+
+
+def test_compute_m1_roic_negative_working_capital_with_loss_is_unmeasurable():
+    facts = _m1_facts(op_income_by_year=-5, current_assets=50, current_liabilities=200, net_ppe=0, revenue=1000)
+    result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
     assert result.status == "판단 불가"
     assert len(result.unmeasurable_years) == 5
+    assert result.capital_light_years == []
+
+
+def test_compute_m1_roic_normal_high_value_displayed_as_100_percent_or_more():
+    """분모가 작지 않아도(too_small 아님) 실제 ROIC가 100%를 넘으면 표시만 "100% 이상"."""
+    # WC=(1000-0-0)-(0-0)=1000, IC=1000+0=1000, revenue=10000 -> ratio=0.1 (too_small 아님)
+    # val = 100000*0.79/1000*100 = 7900% (>100)
+    facts = _m1_facts(op_income_by_year=100000, current_assets=1000, current_liabilities=0, net_ppe=0, revenue=10000)
+    result = moat.compute_m1_roic(facts, _cfg(), date(2099, 12, 31))
+    assert all(v >= 100 for v in result.yearly_values.values())
+    assert all(d == "100% 이상" for d in result.yearly_display.values())
+    assert result.capital_light_years == []  # too_small 경로가 아니라 일반 계산 경로로 나온 값
 
 
 def test_compute_m1_roic_insufficient_data_when_core_items_missing():
@@ -401,6 +465,26 @@ def test_compute_m4_cash_conversion_missing_capex_defaults_to_zero():
     assert result.status == "좋음"  # (90-0)/100 = 0.9
 
 
+def test_compute_m4_reference_status_differs_from_main_status_when_capex_matters():
+    """설비투자가 커서 주 지표(0.8 기준)는 "보통"이지만, 참고 비율(설비투자 안 뺌, 0.9
+    기준)로는 "좋음"이 나오는 경우 — 등급 판정엔 참고값을 안 쓴다(사용자 지시)."""
+    ends = _make_years()
+    facts = _facts(**{
+        "us-gaap:NetCashProvidedByUsedInOperatingActivities": [_entry(e, 95, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:PaymentsToAcquirePropertyPlantAndEquipment": [_entry(e, 20, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+        "us-gaap:NetIncomeLoss": [_entry(e, 100, "2099-01-01", 2000 + i) for i, e in enumerate(ends)],
+    })
+    result = moat.compute_m4_cash_conversion(facts, _cfg(), date(2099, 12, 31))
+    assert result.status == "보통"  # (95-20)/100 = 0.75 < 0.8
+    assert result.reference_status == "좋음"  # 95/100 = 0.95 >= 0.9
+    assert result.reference_yearly_values
+
+
+def test_compute_m4_reference_status_none_when_insufficient_data():
+    result = moat.compute_m4_cash_conversion(_facts(), _cfg(), date(2099, 12, 31))
+    assert result.reference_status is None
+
+
 def test_compute_m5_dilution_good_when_shrinking():
     facts = _facts(**{
         "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding": [
@@ -459,17 +543,34 @@ def test_compute_moat_grade_none_when_less_than_two_good():
 # ── 이상치 탐지 ────────────────────────────────────────────────────────────
 
 
-def test_detect_outliers_flags_extreme_roic_and_negative_equity():
-    m1 = moat.IndicatorResult(status="좋음", yearly_values={"2020-12-31": 150.0, "2021-12-31": 20.0})
+def test_detect_outliers_no_longer_flags_high_roic():
+    """2026-10-01 사용자 지시: ROIC 100% 초과는 더 이상 이상치로 안 본다(M1이 "100% 이상"으로
+    표시만 한다)."""
+    m1 = moat.IndicatorResult(status="좋음", yearly_values={"2020-12-31": 150.0})
+    out = moat.detect_outliers(m1, _cfg(), None)
+    assert not any("ROIC" in o for o in out)
+
+
+def test_detect_outliers_flags_negative_equity():
+    m1 = moat.IndicatorResult(status="좋음")
     equity_series = [{"end": "2020-12-31", "val": -500}, {"end": "2021-12-31", "val": 400}]
     out = moat.detect_outliers(m1, _cfg(), equity_series)
-    assert any("ROIC" in o and "2020-12-31" in o for o in out)
     assert any("자기자본 음수" in o and "2020-12-31" in o for o in out)
     assert not any("2021-12-31" in o for o in out)
 
 
+def test_detect_outliers_restricted_to_lookback_years():
+    """2026-10-01 사용자 지시: 이상치 점검은 최근 lookback_years(기본 5) 안으로 좁힌다 —
+    오래된 상장 전·초기 성장기 음수 자기자본까지 매번 뜨지 않게."""
+    m1 = moat.IndicatorResult(status="좋음")
+    equity_series = [{"end": f"{2000+i}-12-31", "val": -100} for i in range(10)]  # 10년치, 전부 음수
+    out = moat.detect_outliers(m1, _cfg(), equity_series)  # lookback_years=5
+    assert len(out) == 5
+    assert all(str(2005 + i) in out[i] for i in range(5))
+
+
 def test_detect_outliers_empty_when_nothing_unusual():
-    m1 = moat.IndicatorResult(status="좋음", yearly_values={"2020-12-31": 20.0})
+    m1 = moat.IndicatorResult(status="좋음")
     assert moat.detect_outliers(m1, _cfg(), [{"end": "2020-12-31", "val": 400}]) == []
 
 
