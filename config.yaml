@@ -272,3 +272,12 @@ moat:
   m5_dilution:
     good_max_pct: 3 # 계획서 3장(연 3% 미만)
     caution_min_pct: 10 # [가정: 계획서에 없음]
+
+# ── 해자 과거 검증 (H4, scripts/moat_h4_backtest.py, docs/design/moat_plan.md 4장) ──
+# moat: 섹션과 별개다 — 이 섹션은 check_lock()의 잠금 대상이 아니다(H2 지표·등급
+# 기준만 잠겼다). 여기 숫자는 전부 [가정](계획서 4장에 근거값 없음).
+moat_backtest:
+  sector_cap_pct: 30 # 계획서 4장 "비중" — 한 업종 최대 30%, 초과분은 비례 배분
+  random_trials: 1000 # 계획서 4장 "비교 대상" — 무작위 포트폴리오 반복 횟수
+  random_seed: 20261001 # [가정] 재현 가능한 고정 시드(임의로 정함 — 작성일과 동일해 기억하기 쉽게)
+  rebalance_month: 4 # 계획서 4장 "교체일" — 매년 이 달의 첫 거래일
