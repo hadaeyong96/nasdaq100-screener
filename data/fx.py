@@ -138,37 +138,106 @@ def fetch_usd_krw_range(start, end) -> dict[str, float]:
     return out
 
 
-def fetch_fred_series_range(series_id: str, start, end) -> dict[str, float]:
-    """FRED(Federal Reserve Economic Data)의 [start, end] 일별 시계열을 CSV로 받는다
-    (API 키 불필요 — P5-5 3번, yfinance KRW=X가 부족한 기간의 환율 보완용).
+_FRED_API_URL = "https://api.stlouisfed.org/fred/series/observations"
+_FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+_FRED_UA = {"User-Agent": "nasdaq100-screener/1.0 (backtest research)"}
 
-    입력: series_id(예: "DEXKOUS" — 원/달러), start, end(date 또는 date-like)
-    출력: {"YYYY-MM-DD": 값, ...} (결측일·공백 값은 제외)
-    예외: 네트워크·응답 형식 오류는 그대로 올린다
-    """
+
+class FredFetchError(RuntimeError):
+    """FRED 조회 실패. 메시지에 요청 URL(API 키 포함)을 절대 넣지 않는다."""
+
+
+def _fred_value(text: str) -> float | None:
+    text = (text or "").strip()
+    if not text or text == ".":
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _fetch_fred_api(series_id: str, start, end, api_key: str) -> dict[str, float]:
+    """FRED 공식 API(series/observations, JSON). 키는 메시지·로그에 남기지 않는다."""
     import requests
 
-    resp = requests.get(
-        "https://fred.stlouisfed.org/graph/fredgraph.csv",
-        params={"id": series_id, "cosd": str(start), "coed": str(end)},
-        headers={"User-Agent": "nasdaq100-screener/1.0 (backtest research)"},
-        timeout=30,
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.get(
+            _FRED_API_URL,
+            params={
+                "series_id": series_id, "api_key": api_key, "file_type": "json",
+                "observation_start": str(start), "observation_end": str(end),
+            },
+            headers=_FRED_UA,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise FredFetchError(f"FRED API 연결 실패({type(exc).__name__})") from None
+    if resp.status_code != 200:
+        raise FredFetchError(f"FRED API HTTP {resp.status_code}")
+    try:
+        observations = resp.json()["observations"]
+    except (ValueError, KeyError):
+        raise FredFetchError("FRED API 응답 형식 오류") from None
     out: dict[str, float] = {}
-    lines = resp.text.splitlines()
-    for line in lines[1:]:  # 첫 줄은 헤더(observation_date,<series_id>)
+    for ob in observations:
+        value = _fred_value(ob.get("value"))
+        if ob.get("date") and value is not None:
+            out[ob["date"]] = value
+    return out
+
+
+def _fetch_fred_csv(series_id: str, start, end) -> dict[str, float]:
+    """키 없는 fredgraph.csv (폴백 — GitHub 러너에서는 막히는 경우가 있다)."""
+    import requests
+
+    try:
+        resp = requests.get(
+            _FRED_CSV_URL,
+            params={"id": series_id, "cosd": str(start), "coed": str(end)},
+            headers=_FRED_UA,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise FredFetchError(f"fredgraph.csv 연결 실패({type(exc).__name__})") from None
+    if resp.status_code != 200:
+        raise FredFetchError(f"fredgraph.csv HTTP {resp.status_code}")
+    out: dict[str, float] = {}
+    for line in resp.text.splitlines()[1:]:  # 첫 줄은 헤더(observation_date,<series_id>)
         parts = line.split(",")
         if len(parts) != 2:
             continue
-        d, v = parts[0].strip(), parts[1].strip()
-        if not d or not v or v == ".":
-            continue
-        try:
-            out[d] = float(v)
-        except ValueError:
-            continue
+        value = _fred_value(parts[1])
+        if parts[0].strip() and value is not None:
+            out[parts[0].strip()] = value
     return out
+
+
+def fetch_fred_series_range(series_id: str, start, end, api_key: str | None = None) -> dict[str, float]:
+    """FRED(Federal Reserve Economic Data)의 [start, end] 일별 시계열을 받는다
+    (P5-5 3번 환율 보완, P3.8 시장 온도 지표).
+
+    환경변수 FRED_API_KEY(또는 api_key 인자)가 있으면 공식 API
+    (api.stlouisfed.org/fred/series/observations)를 쓰고, 실패하면 키 없는
+    fredgraph.csv로 한 번 더 시도한다. 키가 없으면 처음부터 fredgraph.csv.
+    키 값은 어떤 경우에도 예외 메시지·로그에 넣지 않는다 (CLAUDE.md 보안).
+
+    입력: series_id(예: "DGS10", "DEXKOUS"), start, end(date 또는 date-like)
+    출력: {"YYYY-MM-DD": 값, ...} (결측일·"." 값은 제외)
+    예외: FredFetchError (두 방식 모두 실패 — 호출부가 경고로 모은다)
+    """
+    import os
+
+    key = (api_key if api_key is not None else os.environ.get("FRED_API_KEY") or "").strip()
+    if not key:
+        return _fetch_fred_csv(series_id, start, end)
+    try:
+        return _fetch_fred_api(series_id, start, end, key)
+    except FredFetchError as api_exc:
+        try:
+            return _fetch_fred_csv(series_id, start, end)
+        except FredFetchError as csv_exc:
+            raise FredFetchError(f"{api_exc}; CSV 폴백도 실패: {csv_exc}") from None
 
 
 def merge_fx_with_fallback(primary: dict[str, float], fallback: dict[str, float]) -> tuple[dict[str, float], dict]:

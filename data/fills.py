@@ -612,13 +612,14 @@ def fills_for(df: pd.DataFrame, ticker: str, date) -> list[dict]:
     return match.to_dict(orient="records")
 
 
-def fills_between(df: pd.DataFrame, ticker: str, after, upto) -> list[dict]:
-    """특정 종목의 (after, upto] 구간 체결 기록을 날짜 순 행 dict 목록으로 반환한다.
-    after가 None이면 upto 이하 전부. 주말·휴장일 날짜로 적힌 체결을 다음 거래일에
-    반영하려고 쓴다 (engine.daily.simulate_since)."""
-    if df.empty:
-        return []
-    mask = (df["ticker"] == ticker) & (df["date"] <= pd.Timestamp(upto))
-    if after is not None:
-        mask &= df["date"] > pd.Timestamp(after)
-    return df[mask].sort_values("date", kind="stable").to_dict(orient="records")
+
+def fill_key(rec: dict) -> tuple:
+    """체결 한 줄의 식별 키 (날짜, 종목, 매수매도, 수량, 체결가). store fill_ledger와 시트를
+    비교해 이미 반영한 체결을 다시 반영하지 않는 데 쓴다 (engine.daily)."""
+    return (
+        str(pd.Timestamp(rec["date"]).date()),
+        str(rec["ticker"]).upper(),
+        str(rec["side"]),
+        int(rec["qty"]),
+        round(float(rec["price"]), 4),
+    )

@@ -1,11 +1,13 @@
 name: Daily screener
 
-# 매일 한국시간(KST) 07:00 = UTC 22:00 (한국은 서머타임이 없어 cron이 항상 고정).
+# 매일 한국시간(KST) 06:17 = UTC 21:17 (한국은 서머타임이 없어 cron이 항상 고정).
+# 정각(:00)은 GitHub 예약 실행이 몰려 지연·누락되기 쉬워 17분으로 옮겼다 (2026-09-30
+# 07:00 예약 실행이 아예 돌지 않음). 미국장 마감(ET 16:00 = KST 05:00/06:00) 뒤다.
 # docs/design/live_advisor.md 4번. scripts/run_daily.ps1(윈도우 작업 스케줄러)과
 # 같은 순서(live -> paper --no-send)를 그대로 옮긴 것 — 로직은 새로 안 만든다.
 on:
   schedule:
-    - cron: "0 22 * * *"
+    - cron: "17 21 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -41,6 +43,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: |
           python -m engine.daily --mode live
           python -m engine.daily --mode paper --no-send

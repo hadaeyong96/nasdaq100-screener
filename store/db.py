@@ -339,6 +339,13 @@ def record_fill_ledger(conn: sqlite3.Connection, rows: list[dict]) -> None:
     conn.commit()
 
 
+def delete_fill_ledger(conn: sqlite3.Connection, mode: str) -> None:
+    """그 모드의 fill_ledger를 모두 지운다 — 체결 기록 소급 반영으로 상태를 다시 계산할 때
+    반영 목록을 새로 쓰기 위해 (engine.daily)."""
+    conn.execute("DELETE FROM fill_ledger WHERE mode = ?", (mode,))
+    conn.commit()
+
+
 def get_fill_ledger(conn: sqlite3.Connection, mode: str | None = None) -> list[dict]:
     """fill_ledger를 id 순서(기록 순)로 읽는다. mode를 주면 그 모드만."""
     if mode is None:

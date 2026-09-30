@@ -1,13 +1,15 @@
 """구글 스프레드시트 입력 (계획·체결) — 라이브 어드바이저 1단계
 (docs/design/live_advisor.md 1번).
 
-data/fills.xlsx를 대체한다. 서비스 계정으로 두 탭을 읽는다 (실제 시트 헤더):
-  - "계획": 티커, 계획금액(원), 등록일, 메모  (등록일은 읽지 않음)
-  - "체결": 날짜, 티커, 구분(매수/매도), 수량, 체결가($), 환율(원/$), 수수료($), 메모
-체결 탭에는 차수 열이 없다 — data/fills.py가 종목별 매수 순서로 1차/2차/3차를
-배정한다. 환율이 비면 체결일 원/달러 종가(data/fx), 수수료가 비면 config의
-수수료율(backtest.costs.commission_buy_pct/sell_pct)로 채운다. 행 검증은
-data/fills.py의 기존 파서(parse_fill_records·parse_plan_records)를 그대로 쓴다.
+data/fills.xlsx를 대체한다. 서비스 계정으로 두 탭을 읽는다 (2026-09-30 확정 시트 헤더):
+  - "계획": 티커, 계획금액, 등록일, 1차금액, 2차금액, 3차금액, 합계, 메모
+    (계획금액은 원화, "3,000,000"처럼 쉼표 가능. 1~3차금액·합계는 시트 수식이라 읽지 않음)
+  - "체결": 날짜, 종목, 매수매도, 수량, 체결가, 차수, 메모
+수식 때문에 1000행까지 생기는 빈 줄은 건너뛴다. 헤더의 괄호 설명("계획금액(원)" 등)은
+무시하고 비교하며, 차수가 비면 data/fills.py가 매수 순서로 배정한다. 환율·수수료 열이
+있으면 쓰고, 없거나 비면 체결일 원/달러 종가(data/fx)와 config 수수료율
+(backtest.costs.commission_buy_pct/sell_pct)로 채운다. 행 검증은 data/fills.py의
+parse_fill_records·parse_plan_records를 그대로 쓴다.
 
 인증: 환경변수 GOOGLE_SERVICE_ACCOUNT_JSON — 값이 "{"로 시작하면 JSON
 문자열 그대로(GitHub Actions Secret), 아니면 JSON 키 파일 경로로 취급한다

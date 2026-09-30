@@ -380,5 +380,34 @@ def test_read_sheets_fx_network_failure_is_reported(monkeypatch):
 def test_briefing_input_error_line():
     assert briefing.build_input_error_line([]) is None
     line = briefing.build_input_error_line(["계획 기록 오류: 1번째 줄 - 계획금액이 올바르지 않음('')", "x"])
-    assert line.startswith("⚠️ 시트 입력 오류 2건 · 계획 기록 오류")
+    assert line.startswith("⚠️ 시트 오류: 계획 기록 오류")
+    assert line.endswith("외 1건")
     assert "\n" not in line
+
+
+# ---------- 2026-09-30 확정 시트 형식 (계획 8열, 체결 7열, 수식 때문에 1000행까지 빈 줄) ----------
+
+
+def _plan(ticker, budget, reg="", memo=""):
+    return {"티커": ticker, "계획금액": budget, "등록일": reg, "1차금액": "", "2차금액": "", "3차금액": "",
+            "합계": "", "메모": memo}
+
+
+def test_plan_tab_final_format_with_formula_blank_rows():
+    formula_blank = {"티커": "", "계획금액": "", "등록일": "", "1차금액": 0, "2차금액": 0, "3차금액": 0, "합계": 0, "메모": ""}
+    records = [_plan("ODFL", "3,000,000", "2026-09-28", "운송"), _plan("NVDA", 5000000)] + [formula_blank] * 998
+    df, errors = sheets.parse_plan_records(records)
+    assert errors == []
+    assert list(df["ticker"]) == ["ODFL", "NVDA"]
+    assert list(df["budget_krw"]) == [3_000_000.0, 5_000_000.0]
+
+
+def test_fills_tab_final_format_with_unit_column_and_blank_rows():
+    cols = ["날짜", "종목", "매수매도", "수량", "체결가", "차수", "메모"]
+    blank = dict.fromkeys(cols, "")
+    records = [dict(zip(cols, ["2026-09-29", "ODFL", "매수", 4, 178.41, "1차", ""]))] + [blank] * 999
+    result = sheets.parse_fill_records(records)
+    assert result.errors == []
+    assert len(result.df) == 1
+    row = result.df.iloc[0]
+    assert (row["ticker"], row["unit"], row["side"], row["qty"], row["price"]) == ("ODFL", "1", "buy", 4, 178.41)

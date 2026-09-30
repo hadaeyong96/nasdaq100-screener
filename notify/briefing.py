@@ -71,14 +71,25 @@ def _sell_short_label(row: dict) -> str:
 def build_input_error_line(errors: list[str], max_len: int = 80) -> str | None:
     """계획·체결 시트 읽기 오류 목록 -> 텔레그램 한 줄 경고 (없으면 None).
 
-    출력 예: "⚠️ 시트 입력 오류 2건 · 계획 기록 오류: 1번째 줄 - ... (보고서 경고 확인)"
+    출력 예: "⚠️ 시트 오류: 계획 기록 오류: 1번째 줄 - ... 외 1건"
     """
     if not errors:
         return None
     first = errors[0]
     if len(first) > max_len:
         first = first[: max_len - 1] + "…"
-    return f"⚠️ 시트 입력 오류 {len(errors)}건 · {first} (보고서 경고 확인)"
+    more = f" 외 {len(errors) - 1}건" if len(errors) > 1 else ""
+    return f"⚠️ 시트 오류: {first}{more}"
+
+
+def build_fred_missing_line(missing_codes: list[str]) -> str | None:
+    """FRED 지표가 하나라도 빠졌으면 텔레그램 한 줄 경고 (없으면 None).
+
+    출력 예: "⚠️ FRED 지표 수집 실패: DGS10, T10Y2Y"
+    """
+    if not missing_codes:
+        return None
+    return f"⚠️ FRED 지표 수집 실패: {', '.join(missing_codes)}"
 
 
 def build_briefing_text(summary: dict, cfg: dict) -> str:
@@ -159,9 +170,16 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     lines.append("🎯 오늘의 신호")
     lines.extend(f"- {s}" for s in signal_lines)
 
-    input_line = build_input_error_line(summary.get("input_errors", []))
-    if input_line:
+    alert_lines = [
+        line
+        for line in (
+            build_input_error_line(summary.get("input_errors", [])),
+            build_fred_missing_line(summary.get("fred_missing", [])),
+        )
+        if line
+    ]
+    if alert_lines:
         lines.append("")
-        lines.append(input_line)
+        lines.extend(alert_lines)
 
     return "\n".join(lines) + "\n"
