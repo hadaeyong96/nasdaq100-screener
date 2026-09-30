@@ -8,23 +8,16 @@ DEXKOUS(FRED)는 보통 1주일 정도 늦게 갱신되므로, 그 뒤 며칠은
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
+
+import yaml
 
 from data import fx
 from engine import daily
 
-_CFG = {
-    "macro": {
-        "enabled": True,
-        "fear_greed": {"source": "cnn", "fallback": "VIXCLS", "fallback_after_days": 3},
-        "thresholds": {
-            "FEAR_GREED": {"extreme_fear": 25, "fear": 45, "neutral_high": 55, "greed": 75},
-            "VIXCLS": {"caution": 20, "alert": 30}, "DGS10": {"rise_3m_caution": 0.5},
-            "T10Y2Y": {"normal": 0.5, "alert": 0}, "BAMLH0A0HYM2": {"caution": 4, "alert": 6},
-            "DEXKOUS": {"pct_high": 80, "pct_low": 20},
-        },
-        "stale_days": 5, "lookback_trading_days_3m": 63,
-    }
-}
+_ROOT = Path(__file__).resolve().parents[1]
+with open(_ROOT / "config.yaml", encoding="utf-8") as _f:
+    _CFG = {"macro": {**yaml.safe_load(_f)["macro"], "enabled": True}}  # 기준값은 실제 config.yaml 그대로
 
 
 def test_dexkous_is_filled_with_recent_krwx_and_shows_actual_latest_date(monkeypatch):

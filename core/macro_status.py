@@ -2,7 +2,8 @@
 
 표시 전용이다. 여기서 나오는 어떤 값도 신호 판정·필터·수량 계산에 쓰이지 않는다
 (docs/p3_8_instructions.md — P5-2에서 국면 필터가 성과를 나쁘게 만들었기 때문).
-상태 배지는 기호(■·▲·●·▼)와 글자를 함께 써서 색만으로 구분하지 않는다.
+모든 지표를 🟢안정 · 🟡주의 · 🔴위험 3단계로 통일해 classify_macro 한 곳에서 판정한다
+(기준값은 config.yaml macro.thresholds). 이모지와 글자를 함께 써서 색만으로 구분하지 않는다.
 """
 
 from __future__ import annotations
@@ -10,123 +11,162 @@ from __future__ import annotations
 STATUS_OK = "ok"
 STATUS_WARN = "warn"
 STATUS_BAD = "bad"
-STATUS_INFO = "info"
+STATUS_INFO = "info"  # 비교값이 없어 판단을 못 한 경우(기준금리 6개월 전 값 없음 등)만
 
-_SYMBOL = {STATUS_OK: "●", STATUS_WARN: "▲", STATUS_BAD: "■", STATUS_INFO: "▼"}
+# 초보자용 3단계 (2026-09-30): 모든 지표를 🟢안정 · 🟡주의 · 🔴위험 하나로 통일한다.
+# 색만으로 구분하지 않게 이모지 + 글자를 함께 쓴다.
+_SYMBOL = {STATUS_OK: "🟢", STATUS_WARN: "🟡", STATUS_BAD: "🔴", STATUS_INFO: "⚪"}
+_LABEL = {STATUS_OK: "안정", STATUS_WARN: "주의", STATUS_BAD: "위험", STATUS_INFO: "판단 보류"}
+LEVELS = (STATUS_OK, STATUS_WARN, STATUS_BAD)
+
+# 공포·탐욕 구간 이름 (0~100)
+_FG_ZONES = ("극단적 공포", "공포", "중립", "탐욕", "극단적 탐욕")
 
 
-def _badge(status: str, label: str) -> dict:
-    return {"status": status, "symbol": _SYMBOL[status], "label": label, "text": f"{_SYMBOL[status]} {label}"}
+def _fmt(x: float) -> str:
+    """기준값을 config.yaml에 적힌 모양 그대로 표시: 1300 -> "1,300", 4.0 -> "4.0", 0.5 -> "0.5", 6 -> "6"."""
+    return format(x, ",")
 
 
-def classify_fear_greed(value: float, thresholds: dict) -> dict:
-    """0~100 공포·탐욕 지수(또는 대체 VIX) -> 상태 배지.
+def _judgment(status: str, scale_ranges: dict[str, str], zone: str | None = None) -> dict:
+    """판정 결과 dict. scale은 🟢→🟡→🔴 순서의 3칸 눈금이고 오늘 칸에 current=True(★).
 
-    입력: value, thresholds({extreme_fear, fear, neutral_high, greed})
-    출력: {status, symbol, label, text}. 경계는 표(0~24/25~44/45~55/56~75/76~100) 그대로:
-         value < extreme_fear -> 극단적 공포, < fear -> 공포, <= neutral_high -> 중립,
-         <= greed -> 탐욕, 그 외 -> 극단적 탐욕.
+    출력: {status, symbol, label, text, zone, scale:[{status, symbol, label, range, current}]}
     """
-    if value < thresholds["extreme_fear"]:
-        return _badge(STATUS_BAD, "극단적 공포")
-    if value < thresholds["fear"]:
-        return _badge(STATUS_WARN, "공포")
-    if value <= thresholds["neutral_high"]:
-        return _badge(STATUS_OK, "중립")
-    if value <= thresholds["greed"]:
-        return _badge(STATUS_WARN, "탐욕")
-    return _badge(STATUS_BAD, "극단적 탐욕")
+    scale = [
+        {"status": lv, "symbol": _SYMBOL[lv], "label": _LABEL[lv], "range": scale_ranges[lv], "current": lv == status}
+        for lv in LEVELS
+    ]
+    return {
+        "status": status, "symbol": _SYMBOL[status], "label": _LABEL[status],
+        "text": f"{_SYMBOL[status]} {_LABEL[status]}", "zone": zone, "scale": scale,
+    }
 
 
-def classify_vix_fallback(value: float, thresholds: dict) -> dict:
-    """공포·탐욕 지수를 3일 넘게 못 받았을 때 대체하는 VIX 상태 배지 (P3.8 1번).
+def _higher_is_worse(value: float, caution: float, danger: float, unit: str) -> dict:
+    """값이 클수록 위험한 지표: value < caution 안정 · caution <= value < danger 주의 · value >= danger 위험."""
+    ranges = {
+        STATUS_OK: f"{_fmt(caution)}{unit} 미만",
+        STATUS_WARN: f"{_fmt(caution)}~{_fmt(danger)}{unit}",
+        STATUS_BAD: f"{_fmt(danger)}{unit} 이상",
+    }
+    if value < caution:
+        return _judgment(STATUS_OK, ranges)
+    if value < danger:
+        return _judgment(STATUS_WARN, ranges)
+    return _judgment(STATUS_BAD, ranges)
 
-    입력: value(VIXCLS), thresholds({caution, alert})
-    출력: {status, symbol, label, text}. value < caution -> 안정, < alert -> 주의, 그 외 -> 경계.
+
+def fear_greed_zone(value: float, th: dict) -> str:
+    """공포·탐욕 구간 이름: <extreme_fear 극단적 공포 · <fear 공포 · <=neutral_high 중립 ·
+    <=greed 탐욕 · 그 외 극단적 탐욕 (0~24/25~44/45~55/56~75/76~100)."""
+    if value < th["extreme_fear"]:
+        return _FG_ZONES[0]
+    if value < th["fear"]:
+        return _FG_ZONES[1]
+    if value <= th["neutral_high"]:
+        return _FG_ZONES[2]
+    if value <= th["greed"]:
+        return _FG_ZONES[3]
+    return _FG_ZONES[4]
+
+
+def classify_fear_greed(value: float, th: dict) -> dict:
+    """CNN 공포·탐욕(0~100): 중립(45~55) 안정 · 공포(25~44)·탐욕(56~75) 주의 ·
+    극단적 공포(0~24)·극단적 탐욕(76~100) 위험. 구간 이름을 zone으로 함께 돌려준다.
+
+    입력: value, th({extreme_fear, fear, neutral_high, greed})
     """
-    if value < thresholds["caution"]:
-        return _badge(STATUS_OK, "안정")
-    if value < thresholds["alert"]:
-        return _badge(STATUS_WARN, "주의")
-    return _badge(STATUS_BAD, "경계")
+    zone = fear_greed_zone(value, th)
+    ef, f, nh, g = th["extreme_fear"], th["fear"], th["neutral_high"], th["greed"]
+    ranges = {
+        STATUS_OK: f"{f}~{nh} (중립)",
+        STATUS_WARN: f"{ef}~{f - 1} (공포) · {nh + 1}~{g} (탐욕)",
+        STATUS_BAD: f"0~{ef - 1} (극단적 공포) · {g + 1}~100 (극단적 탐욕)",
+    }
+    status = {"중립": STATUS_OK, "공포": STATUS_WARN, "탐욕": STATUS_WARN}.get(zone, STATUS_BAD)
+    return _judgment(status, ranges, zone)
 
 
-def classify_rise_over_window(current: float, value_n_ago: float | None, threshold_pp: float) -> dict:
-    """DGS10: 일정 기간(63거래일 약 3개월) 전 대비 상승폭이 기준(pp) 이상이면 주의.
+def classify_t10y2y(value: float, th: dict) -> dict:
+    """장단기 금리차(%p): >= stable 안정 · danger <= v < stable 주의 · v < danger(0, 역전) 위험.
 
-    입력: current, value_n_ago(그 기간 전 값, 없으면 비교 불가), threshold_pp
-    출력: {status, symbol, label, text}. value_n_ago가 None이면 비교 불가로 "정보 없음"(info).
+    입력: value, th({stable, danger})
     """
-    if value_n_ago is None:
-        return _badge(STATUS_INFO, "비교값 없음")
-    if current - value_n_ago >= threshold_pp:
-        return _badge(STATUS_WARN, "주의")
-    return _badge(STATUS_OK, "안정")
+    stable, danger = th["stable"], th["danger"]
+    ranges = {
+        STATUS_OK: f"+{_fmt(stable)}%p 이상",
+        STATUS_WARN: f"{_fmt(danger)}~+{_fmt(stable)}%p",
+        STATUS_BAD: f"{_fmt(danger)} 미만 (역전)",
+    }
+    if value >= stable:
+        return _judgment(STATUS_OK, ranges)
+    if value >= danger:
+        return _judgment(STATUS_WARN, ranges)
+    return _judgment(STATUS_BAD, ranges)
 
 
-def classify_t10y2y(value: float, thresholds: dict) -> dict:
-    """장단기 금리차: >=normal 정상 · 0<=v<normal 주의 · v<0 경계(역전).
+def classify_fed_funds(current: float, value_before: float | None, th: dict, epsilon: float = 1e-9) -> dict:
+    """기준금리(상단): lookback_months개월 전보다 내렸으면 안정(인하) · 같으면 주의(동결) ·
+    올렸으면 위험(인상). 비교값이 없으면 판단 보류(info, ★ 없음).
 
-    입력: value, thresholds({normal, alert})
+    입력: current, value_before(lookback_months개월 전 값 또는 None), th({lookback_months})
     """
-    if value >= thresholds["normal"]:
-        return _badge(STATUS_OK, "정상")
-    if value >= thresholds["alert"]:
-        return _badge(STATUS_WARN, "주의")
-    return _badge(STATUS_BAD, "경계(역전)")
-
-
-def classify_hy_spread(value: float, thresholds: dict) -> dict:
-    """하이일드 스프레드: <caution 안정 · caution<=v<alert 주의 · v>=alert 경계.
-
-    입력: value, thresholds({caution, alert})
-    """
-    if value < thresholds["caution"]:
-        return _badge(STATUS_OK, "안정")
-    if value < thresholds["alert"]:
-        return _badge(STATUS_WARN, "주의")
-    return _badge(STATUS_BAD, "경계")
-
-
-def classify_fed_funds_trend(current: float, value_3m_ago: float | None, epsilon: float = 1e-9) -> dict:
-    """기준금리 상단: 3개월 전보다 높으면 인상 흐름 · 낮으면 인하 흐름 · 같으면 동결.
-
-    입력: current, value_3m_ago(없으면 비교 불가)
-    출력: {status, symbol, label, text}. 인상=warn(▲), 인하=info(▼), 동결=ok(●), 비교불가=info.
-    """
-    if value_3m_ago is None:
-        return _badge(STATUS_INFO, "비교값 없음")
-    diff = current - value_3m_ago
-    if diff > epsilon:
-        return _badge(STATUS_WARN, "인상 흐름")
+    m = th["lookback_months"]
+    ranges = {
+        STATUS_OK: f"최근 {m}개월 인하",
+        STATUS_WARN: f"최근 {m}개월 동결",
+        STATUS_BAD: f"최근 {m}개월 인상",
+    }
+    if value_before is None:
+        return _judgment(STATUS_INFO, ranges)
+    diff = current - value_before
     if diff < -epsilon:
-        return _badge(STATUS_INFO, "인하 흐름")
-    return _badge(STATUS_OK, "동결")
+        return _judgment(STATUS_OK, ranges, "인하")
+    if diff > epsilon:
+        return _judgment(STATUS_BAD, ranges, "인상")
+    return _judgment(STATUS_WARN, ranges, "동결")
 
 
-def percentile_rank(series: list[float], value: float) -> float:
-    """series 안에서 value가 차지하는 백분위(0~100, <= 기준)를 구한다.
+def value_months_ago(series: dict[str, float], latest_date_iso: str, months: int) -> float | None:
+    """series({날짜: 값})에서 latest_date_iso의 months개월 전 날짜 이하 가장 최근 값 (없으면 None)."""
+    import calendar
+    from datetime import date
 
-    입력: series(1년치 등 과거 값 목록, value 포함 여부 무관), value(오늘 값)
-    출력: series 중 value 이하인 값의 비율(%). series가 비어 있으면 50.0(중립 취급).
+    d = date.fromisoformat(latest_date_iso)
+    y, mo = divmod(d.month - 1 - months, 12)
+    target_year, target_month = d.year + y, mo + 1
+    day = min(d.day, calendar.monthrange(target_year, target_month)[1])  # 8/31의 6개월 전 -> 2/28(29)
+    target = date(target_year, target_month, day).isoformat()
+    candidates = [k for k in series if k <= target]
+    return series[max(candidates)] if candidates else None
+
+
+def classify_macro(code: str, value: float, thresholds: dict, *, value_before: float | None = None) -> dict:
+    """시장 온도 지표 하나를 🟢안정·🟡주의·🔴위험으로 판정한다 — 판정은 이 함수 한 곳에서만 한다.
+    기준값은 모두 config.yaml macro.thresholds에서 받는다(하드코딩 금지). 표시 전용.
+
+    입력: code("FEAR_GREED"|"VIXCLS"|"DGS10"|"T10Y2Y"|"BAMLH0A0HYM2"|"DFEDTARU"|"DEXKOUS"),
+         value(오늘 값), thresholds(macro.thresholds 전체),
+         value_before(DFEDTARU만: lookback_months개월 전 값)
+    출력: {status, symbol, label, text, zone, scale}
     """
-    if not series:
-        return 50.0
-    count_leq = sum(1 for v in series if v <= value)
-    return count_leq / len(series) * 100
+    th = thresholds[code]
+    if code == "FEAR_GREED":
+        return classify_fear_greed(value, th)
+    if code == "T10Y2Y":
+        return classify_t10y2y(value, th)
+    if code == "DFEDTARU":
+        return classify_fed_funds(value, value_before, th)
+    unit = {"DGS10": "%", "BAMLH0A0HYM2": "%", "DEXKOUS": "원", "VIXCLS": ""}[code]
+    return _higher_is_worse(value, th["caution"], th["danger"], unit)
 
 
-def classify_fx_percentile(value: float, series_1y: list[float], thresholds: dict) -> dict:
-    """원/달러 환율: 1년 백분위 >=pct_high 달러 비쌈 · <=pct_low 달러 쌈 · 그 외 보통.
-
-    입력: value, series_1y(최근 1년 값), thresholds({pct_high, pct_low})
-    """
-    pct = percentile_rank(series_1y, value)
-    if pct >= thresholds["pct_high"]:
-        return _badge(STATUS_WARN, "달러 비쌈")
-    if pct <= thresholds["pct_low"]:
-        return _badge(STATUS_INFO, "달러 쌈")
-    return _badge(STATUS_OK, "보통")
+def scale_ranges(code: str, thresholds: dict) -> list[dict]:
+    """판정과 무관하게 그 지표의 3칸 기준표만 (읽는 법 표 등). 출력: [{status, symbol, label, range}] 3개."""
+    probe = {"FEAR_GREED": 50, "T10Y2Y": 1.0, "DFEDTARU": 0.0}.get(code, 0.0)
+    out = classify_macro(code, probe, thresholds, value_before=0.0)["scale"]
+    return [{k: v for k, v in row.items() if k != "current"} for row in out]
 
 
 def is_stale(as_of_date_iso: str, report_date_iso: str, stale_days: int, trading_days_between) -> bool:

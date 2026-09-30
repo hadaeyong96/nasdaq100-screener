@@ -203,9 +203,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 .mhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;font-size:12px;color:var(--sub);margin-bottom:8px}
 .mhead>b{font-size:15px;color:var(--ink)}
 .mhead a{margin-left:auto;color:var(--info);font-weight:700;cursor:pointer}
-.mgrid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.mgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .mt{border:1px solid var(--grid);border-radius:8px;padding:8px 10px;min-width:0}
-.mn{font-size:12px;color:var(--sub);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mn{display:block;font-size:12px;color:var(--sub);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none}
+.mn .q{color:var(--info);font-weight:700}
 .mn small{display:block;font-weight:400;color:var(--mute);font-size:11px}
 .mv{display:flex;align-items:baseline;gap:3px;margin:2px 0}
 .mv b{font-size:22px;font-weight:800;letter-spacing:-0.02em;color:var(--ink)}
@@ -220,8 +221,30 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 .st-ok{background:var(--buy-bg);color:var(--buy)}.st-warn{background:var(--warn-bg);color:var(--warn)}
 .st-bad{background:var(--sell-bg);color:var(--sell)}.st-info{background:var(--info-bg);color:var(--info)}
 .mr{font-size:11px;color:var(--mute);line-height:1.35}
-@media (max-width:1100px){.mgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:640px){.mgrid{grid-template-columns:repeat(2,minmax(0,1fr))}.mhead a{margin-left:0}}
+/* 그래프 옆 3칸 세로 눈금 (휴대폰에서는 그래프 아래) — 오늘 칸에 ★ */
+.mbody{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:8px;align-items:center}
+.mchart{display:block;color:inherit;text-decoration:none;min-width:0}
+.mchart small{display:block;font-size:10px;color:var(--info);text-align:right}
+.mscale{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--sub)}
+.mscale li{display:grid;grid-template-columns:auto 1fr auto;gap:4px;align-items:baseline;border-radius:5px;padding:1px 4px}
+.mscale li b{font-weight:700;white-space:nowrap}
+.mscale li .rg{color:var(--mute);line-height:1.3}
+.mscale li.cur{background:var(--tab);color:var(--ink);font-weight:700}
+.mscale li.cur .rg{color:var(--ink)}
+.mscale .star{color:var(--warn);font-weight:800}
+@media (max-width:1100px){.mgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.mgrid{grid-template-columns:minmax(0,1fr)}.mhead a{margin-left:0}.mbody{grid-template-columns:minmax(0,1fr)}}
+/* 지표 설명 (초보자용, 보고서 맨 아래 — 탭 밖이라 파일로 열어도 #앵커 이동이 된다) */
+.mexp{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:16px}
+.mexp>h2{margin:0 0 4px;font-size:17px}
+.mexp article{border-top:1px solid var(--grid);padding:12px 0 6px;scroll-margin-top:64px}
+.mexp h3{margin:0 0 6px;font-size:15px}
+.mexp p{margin:4px 0;font-size:14px;line-height:1.6}
+.mexp p b{display:block;color:var(--sub);font-size:13px;margin-bottom:1px}
+.mexp .now{background:var(--tab);border-radius:6px;padding:6px 8px}
+.mexp .back{font-size:13px;color:var(--info);font-weight:700;text-decoration:none}
+.mexp .disc{margin-top:10px;font-size:13px;color:var(--sub);font-weight:700}
+.mt{scroll-margin-top:64px} /* 위에 붙는 탭 줄에 가리지 않게 */
 </style>
 </head>
 <body data-fx="{{ data_fx }}" data-date="{{ as_of_str }}" data-total="{{ total_krw }}" data-limit-pct="{{ strategy_limit_pct }}" data-used="{{ data_used }}" data-reserved="{{ data_reserved }}" data-slot="{{ data_slot }}">
@@ -266,22 +289,29 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 {% if macro_rows %}
 <section class="macro" aria-label="시장 온도">
-  <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 {{ macro_as_of_str }} · 변화는 1주 전 대비 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span><a data-goto="guide">지표 읽는 법 →</a></div>
+  <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 {{ macro_as_of_str }} · 🟢안정 · 🟡주의 · 🔴위험, ★ = 오늘 위치 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span><a href="#macro-explain">지표 설명 ↓</a></div>
   <div class="mgrid">
   {% for m in macro_rows %}
-    <div class="mt" title="{{ m.name }}{% if m.code %} · {{ m.code }}{% endif %}{% if m.range_str != '-' %} · 1년 {{ m.range_str }}{% endif %}">
-      <div class="mn">{{ m.name }}<small>{{ m.code }}</small></div>
-      <div class="mv"><b>{{ m.value_str }}</b>{% if m.unit %}<span class="u">{{ m.unit }}</span>{% endif %}{% if m.change_str %}<span class="mc">{{ m.change_str }}</span>{% endif %}</div>
-      {% if m.spark_points %}
-      <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true">
-        {% for y in m.ref_ys %}<line x1="2" x2="148" y1="{{ y }}" y2="{{ y }}" class="ref"/>{% endfor %}
-        <polyline points="{{ m.spark_points }}"/>
-        {% set last = m.spark_points.split(' ')[-1].split(',') %}
-        <circle cx="{{ last[0] }}" cy="{{ last[1] }}" r="2.5"/>
-      </svg>
-      {% endif %}
+    <div class="mt" id="macro-{{ m.slug }}" title="{{ m.name }}{% if m.code %} · {{ m.code }}{% endif %}{% if m.range_str != '-' %} · 1년 {{ m.range_str }}{% endif %}">
+      <a class="mn" href="#explain-{{ m.slug }}">{{ m.name }} <span class="q">ⓘ</span><small>{{ m.code }}</small></a>
+      <div class="mv"><b>{{ m.value_str }}</b>{% if m.unit %}<span class="u">{{ m.unit }}</span>{% endif %}{% if m.change_str %}<span class="mc">1주 {{ m.change_str }}</span>{% endif %}</div>
+      <div class="mbody">
+        <a class="mchart" href="#explain-{{ m.slug }}" aria-label="{{ m.name }} 설명 보기">
+        {% if m.spark_points %}
+        <svg class="spark" viewBox="0 0 150 34" preserveAspectRatio="none" aria-hidden="true">
+          {% for y in m.ref_ys %}<line x1="2" x2="148" y1="{{ y }}" y2="{{ y }}" class="ref"/>{% endfor %}
+          <polyline points="{{ m.spark_points }}"/>
+          {% set last = m.spark_points.split(' ')[-1].split(',') %}
+          <circle cx="{{ last[0] }}" cy="{{ last[1] }}" r="2.5"/>
+        </svg>
+        {% endif %}
+        <small>1년 그래프 · 설명 보기 ↓</small></a>
+        <ol class="mscale" aria-label="{{ m.name }} 판정 기준">
+          {% for sc in m.scale %}<li class="{{ 'cur' if sc.current else '' }}"><b>{{ sc.symbol }} {{ sc.label }}</b><span class="rg">{{ sc.range }}</span><span class="star">{{ '★' if sc.current else '' }}</span></li>{% endfor %}
+        </ol>
+      </div>
       <div class="mf">
-        <span class="stb st-{{ m.badge.status }}">{{ m.badge.text }}</span>
+        <span class="stb st-{{ m.badge.status }}">{{ m.badge.text }}{% if m.badge.zone %} · {{ m.badge.zone }}{% endif %}</span>
         <span class="mr">{% if m.is_stale %}지연({{ m.as_of }}) · {% endif %}{% if m.short_range %}기간 짧음 · {% endif %}{{ m.note or '' }}</span>
       </div>
     </div>
@@ -676,17 +706,15 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <tr><td>보유 한도·자금 한도 초과</td><td>한 번에 너무 많은 종목에 돈이 몰리지 않게 막아요. 점수 높은 종목부터 사요</td></tr>
   </tbody></table></div>
 
-  <h2>시장 온도 지표 6가지 (맨 위 칸)</h2>
-  <p class="lead2">첫 칸은 CNN의 공포·탐욕 지수, 나머지 5칸은 미국 연준이 운영하는 경제 데이터 사이트 FRED의 지표예요. 시장 전체의 분위기를 보는 <b>참고용</b>이고, 매수·매도 규칙에는 쓰지 않아요. 백테스트(P5-2)에서 시장 국면 필터를 넣었더니 오히려 성과가 나빠졌기 때문이에요.</p>
+  <h2>시장 온도 지표 (맨 위 칸)</h2>
+  <p class="lead2">첫 칸은 CNN의 공포·탐욕 지수, 나머지는 미국 연준이 운영하는 경제 데이터 사이트 FRED의 지표예요. 모든 지표를 <b>🟢안정 · 🟡주의 · 🔴위험</b> 3단계로 똑같이 읽어요. 시장 전체의 분위기를 보는 <b>참고용</b>이고, 매수·매도 규칙에는 쓰지 않아요(백테스트 P5-2에서 시장 국면 필터를 넣었더니 오히려 성과가 나빠졌어요). 지표마다 자세한 설명은 보고서 맨 아래 <a href="#macro-explain">지표 설명</a>에 있어요.</p>
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">지표</th><th class="nosort">무엇인가</th><th class="nosort">표시 기준</th><th class="nosort">투자자에게 뜻하는 것</th></tr></thead>
+  <thead><tr><th class="nosort">지표</th><th class="nosort">🟢 안정</th><th class="nosort">🟡 주의</th><th class="nosort">🔴 위험</th></tr></thead>
   <tbody>
-  <tr><td>공포·탐욕 지수 (CNN)</td><td>CNN이 주가 추세, 52주 신고가·신저가 종목 수, 거래량 흐름, 풋·콜 옵션 비율, 정크본드 수요, 변동성(VIX), 안전자산 수요 7가지를 합쳐 0~100으로 만든 투자 심리 지수</td><td>0~{{ guide.macro.fg.extreme_fear - 1 }} 극단적 공포 · {{ guide.macro.fg.extreme_fear }}~{{ guide.macro.fg.fear - 1 }} 공포 · {{ guide.macro.fg.fear }}~{{ guide.macro.fg.neutral_high }} 중립 · {{ guide.macro.fg.neutral_high + 1 }}~{{ guide.macro.fg.greed }} 탐욕 · {{ guide.macro.fg.greed + 1 }}~100 극단적 탐욕</td><td>남들이 겁먹을 때({{ guide.macro.fg.extreme_fear }} 이하)가 장기 매수에 유리했던 경우가 많아요. 다만 탐욕({{ guide.macro.fg.neutral_high + 1 }} 이상)일 때 팔면 이후 상승을 놓치는 경우가 많다는 연구가 있어요. S&amp;P 500 기준 지수라 나스닥과 조금 다를 수 있어요. 3일 넘게 못 받으면 VIX로 대신 보여줘요</td></tr>
-  <tr><td>미국 10년물 국채금리</td><td>미국 정부가 10년 동안 돈을 빌릴 때 주는 이자</td><td>3개월 새 +{{ guide.macro.dgs10_pp }}%p 넘게 오르면 주의</td><td>금리가 빠르게 오르면 미래 이익의 가치가 줄어 기술주(나스닥)가 특히 약해지기 쉬워요 (2022년처럼)</td></tr>
-  <tr><td>장단기 금리차 (10년−2년)</td><td>10년물 금리에서 2년물 금리를 뺀 값</td><td>{{ guide.macro.t10y2y.normal }}%p 위 정상 · 0~{{ guide.macro.t10y2y.normal }} 주의 · 0 아래(역전) 경계</td><td>보통은 오래 빌릴수록 이자가 높아요. 거꾸로 뒤집히면(역전) 과거에 경기 침체가 뒤따른 경우가 많았어요. 역전이 풀린 직후도 조심하는 구간이에요</td></tr>
-  <tr><td>하이일드 스프레드</td><td>신용등급이 낮은 회사채 금리가 국채보다 얼마나 높은지</td><td>{{ guide.macro.hy.caution }}% 아래 안정 · {{ guide.macro.hy.caution }}~{{ guide.macro.hy.alert }}% 주의 · {{ guide.macro.hy.alert }}% 위 경계</td><td>회사들이 돈 빌리기 어려워지면 먼저 벌어져요. 주식보다 먼저 위험을 알려 주는 경우가 많아요</td></tr>
-  <tr><td>미국 기준금리 (상단)</td><td>연준이 정한 정책 금리의 위쪽 끝</td><td>3개월 전보다 올랐으면 인상 · 내렸으면 인하 흐름</td><td>인하 흐름은 보통 주식에 우호적이지만, 경기가 나빠져서 내리는 경우도 있어서 다른 지표와 함께 봐야 해요</td></tr>
-  <tr><td>원/달러 환율</td><td>1달러를 사는 데 드는 원화</td><td>1년 중 상위 {{ 100 - guide.macro.fx.pct_high }}%면 "달러 비쌈"</td><td>환율이 높을 때 달러로 바꾸면 불리하고, 나중에 환율이 내리면 원화 기준 수익이 줄어요. QQQM을 새로 살 때 참고해요</td></tr>
+  {% set macro_names = {"FEAR_GREED": "공포·탐욕 지수 (CNN)", "VIXCLS": "VIX (공포·탐욕 대체)", "DGS10": "미국 10년물 국채금리", "T10Y2Y": "장단기 금리차 (10년−2년)", "BAMLH0A0HYM2": "하이일드 스프레드", "DFEDTARU": "미국 기준금리 (상단)", "DEXKOUS": "원/달러 환율"} %}
+  {% for code, scale in guide.macro.items() %}
+  <tr><td>{{ macro_names.get(code, code) }}</td>{% for sc in scale %}<td>{{ sc.range }}</td>{% endfor %}</tr>
+  {% endfor %}
   </tbody></table></div>
 
   <h2>용어 사전</h2>
@@ -711,6 +739,24 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 {% if pending_names %}<b>주문 후 체결 기록 필요</b>: {{ pending_names }}<br>{% endif %}
 오늘 주문할 종목은 체결 후 아래 파일에 한 줄씩 기록하세요.<br>
 <code style="font-size:12px">{{ fills_path }}</code> · 형식: 날짜, 종목, 차수, 매수매도, 체결가, 수량 (예: {{ as_of_str }}, PEP, 1차, 매수, 131.80, 34)</div>
+
+{% if macro_rows %}
+<section class="mexp" id="macro-explain" aria-label="시장 온도 지표 설명">
+  <h2>시장 온도 지표 설명 (처음 보는 분용)</h2>
+  <p>맨 위 시장 온도 칸의 그래프나 제목을 누르면 여기로 와요. 각 설명 끝의 링크를 누르면 그래프로 돌아가요.</p>
+  {% for m in macro_rows %}
+  <article id="explain-{{ m.slug }}">
+    <h3>{{ m.explain.title }} — 오늘 {{ m.value_str }}{% if m.unit and m.unit != '/100' %}{{ m.unit }}{% endif %} {{ m.badge.text }}</h3>
+    <p><b>① 이게 뭔가요</b>{{ m.explain.what }}</p>
+    <p><b>② 주식시장에 왜 영향을 주나요</b>{{ m.explain.why }}</p>
+    <p><b>③ 실제 예시</b>{{ m.explain.example }}</p>
+    <p class="now"><b>④ 지금 수치는 어떻게 읽나요</b>{{ m.explain.now }}</p>
+    <a class="back" href="#macro-{{ m.slug }}">↑ 그래프로 돌아가기</a>
+  </article>
+  {% endfor %}
+  <p class="disc">{{ macro_disclaimer }}</p>
+</section>
+{% endif %}
 
 <footer>
 데이터: yfinance 일봉(분할 반영) · 구성 종목 출처 Nasdaq 공식 · 일목 이동 {{ ichimoku_shift }} · 원/달러 환율 yfinance KRW=X · 운용 모드: {{ mode_label }}<br>

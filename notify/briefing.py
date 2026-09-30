@@ -21,28 +21,33 @@ _SELL_KIND_SHORT = {
 }
 
 
-# 텔레그램 "시장 온도" 한 줄 (P3.8 4번) — 표시 전용, 매매 규칙에는 안 쓴다.
-_MACRO_SHORT_NAME = {
-    "공포·탐욕 지수": "공포·탐욕", "미국 10년물 국채금리": "10년물", "장단기 금리차 (10년−2년)": "금리차",
-    "하이일드 스프레드": "HY", "미국 기준금리 (상단)": "기준금리", "원/달러 환율": "환율",
-}
+# 텔레그램 "시장 온도" 줄 (P3.8 4번) — 표시 전용, 매매 규칙에는 안 쓴다. 판정 단어는
+# 보고서와 같은 core.macro_status.classify_macro 결과(🟢안정·🟡주의·🔴위험)를 그대로 쓴다.
+def _macro_value_text(row: dict) -> str:
+    """지표별 짧은 이름 + 값. 예: "10년물 5.17%", "금리차 +0.52%p", "환율 1,392원"."""
+    slug, v = row.get("slug"), row["value"]
+    zone = (row.get("badge") or {}).get("zone")
+    if slug == "fear-greed":
+        return f"공포·탐욕 {v:g}" + (f"({zone})" if zone else "")
+    if slug == "vix":
+        return f"VIX {v:.1f}"
+    if slug == "dgs10":
+        return f"10년물 {v:.2f}%"
+    if slug == "t10y2y":
+        return f"금리차 {v:+.2f}%p"
+    if slug == "hy":
+        return f"HY 스프레드 {v:.2f}%"
+    if slug == "fed":
+        return f"기준금리 {v:g}%" + (f"({zone})" if zone else "")
+    if slug == "fx":
+        return f"환율 {v:,.0f}원"
+    return f"{row['name']} {v:g}{row.get('unit', '')}"
 
 
 def _macro_item_text(row: dict) -> str:
-    name = _MACRO_SHORT_NAME.get(row["name"], row["name"])
-    value = row["value"]
-    label = row["badge"]["label"]
-    if row["name"] == "공포·탐욕 지수":
-        text = f"{name} {value:g} {label}"
-    elif row["name"] == "장단기 금리차 (10년−2년)":
-        text = f"{name} {value:+g}"
-    elif row["name"] == "미국 기준금리 (상단)":
-        text = f"{name} {value:g}% {label.replace(' 흐름', '')}"
-    elif row["name"] == "원/달러 환율":
-        text = f"{name} {value:,.0f} {label}"
-    else:
-        text = f"{name} {value:g}{row.get('unit', '')}"
-    return ("⚠" + text) if row["badge"]["status"] in ("warn", "bad") else text
+    """"10년물 5.17% 🔴위험" 형식 한 항목."""
+    badge = row.get("badge") or {}
+    return f"{_macro_value_text(row)} {badge.get('symbol', '')}{badge.get('label', '')}".rstrip()
 
 
 def build_macro_line(macro_rows: list[dict]) -> str | None:

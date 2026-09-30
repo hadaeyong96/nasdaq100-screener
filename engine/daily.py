@@ -841,6 +841,7 @@ _MACRO_FRED_DEFS = [
     ("DFEDTARU", "미국 기준금리 (상단)", "%"),
     ("DEXKOUS", "원/달러 환율", "원"),
 ]
+_MACRO_SLUG = {"DGS10": "dgs10", "T10Y2Y": "t10y2y", "BAMLH0A0HYM2": "hy", "DFEDTARU": "fed", "DEXKOUS": "fx"}
 _MACRO_CODE_LABEL = {"DEXKOUS": "DEXKOUS · KRW=X"}  # DEXKOUS는 최근 며칠 KRW=X로 보완하므로 출처를 함께 표시
 
 
@@ -873,9 +874,13 @@ def _n_periods_ago(series: dict, latest_date: str, n: int) -> float | None:
 def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
     """시장 온도 6칸(공포·탐욕 + FRED 5개) 데이터를 만든다 (P3.8, 표시 전용).
 
+    판정(🟢안정·🟡주의·🔴위험)은 core.macro_status.classify_macro 한 곳에서, 기준값은
+    config.yaml macro.thresholds에서 온다. 매매 신호에는 전혀 쓰지 않는다.
+
     입력: cfg(config.yaml의 macro 설정), as_of_date(보고서 기준일, date)
-    출력: (rows, warnings). rows 각 항목: name, code, value, unit, as_of, change_1w,
-         series(1년치, 스파크라인용), badge({status,symbol,label,text}), is_stale, note.
+    출력: (rows, warnings). rows 각 항목: slug(앵커 id용), name, code, value, unit, as_of,
+         change_1w, series(1년치, 스파크라인용), badge(classify_macro 결과 — status, symbol,
+         label, text, zone, scale), is_stale, note(보조 설명), ref_values.
     실패해도 조용히 넘기지 않는다 — 못 받은 지표는 warnings에 남기고 칸에서 뺀다
     (호출부가 "지연"으로 표시).
     """
@@ -897,13 +902,14 @@ def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
         warnings.append(fg["warning"])
 
     if fg["value"] is not None and not fg["use_vix_fallback"]:
-        badge = macro_status.classify_fear_greed(fg["value"], th["FEAR_GREED"])
+        badge = macro_status.classify_macro("FEAR_GREED", fg["value"], th)
         rows.append({
-            "name": "공포·탐욕 지수", "code": "CNN Fear & Greed", "value": round(fg["value"]),
+            "slug": "fear-greed", "name": "공포·탐욕 지수", "code": "CNN Fear & Greed", "value": round(fg["value"]),
             "unit": "/100", "as_of": fg["as_of"], "change_1w": None, "series": fg["series_1y"],
             "badge": badge, "is_stale": fg["is_fallback"], "short_range": True,
-            "note": "25 이하 극단적 공포 · 75 이상 극단적 탐욕",
-            "ref_values": [th["FEAR_GREED"]["extreme_fear"], th["FEAR_GREED"]["greed"]],
+            "note": f"지금 구간: {badge['zone']}",
+            "ref_values": [th["FEAR_GREED"]["extreme_fear"], th["FEAR_GREED"]["fear"],
+                           th["FEAR_GREED"]["neutral_high"], th["FEAR_GREED"]["greed"]],
         })
     else:
         if fg["use_vix_fallback"]:
@@ -915,13 +921,14 @@ def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
         if series:
             latest_date = max(series)
             value = series[latest_date]
-            badge = macro_status.classify_vix_fallback(value, th["VIXCLS"])
             rows.append({
-                "name": "공포·탐욕 지수", "code": "VIX(대체) · VIXCLS", "value": round(value, 2),
+                "slug": "vix", "name": "변동성 지수 VIX (공포·탐욕 대체)", "code": "VIXCLS", "value": round(value, 2),
                 "unit": "", "as_of": latest_date, "change_1w": None,
-                "series": [v for _, v in sorted(series.items())], "badge": badge,
+                "series": [v for _, v in sorted(series.items())],
+                "badge": macro_status.classify_macro("VIXCLS", value, th),
                 "is_stale": macro_status.is_stale(latest_date, report_date_iso, stale_days, _trading_days_between_iso),
-                "note": f"{th['VIXCLS']['caution']} 위 주의 · {th['VIXCLS']['alert']} 위 경계 (공포·탐욕 대체)",
+                "note": "CNN 공포·탐욕 지수를 3일 넘게 못 받아 VIX로 대신 보여줘요",
+                "ref_values": [th["VIXCLS"]["caution"], th["VIXCLS"]["danger"]],
             })
 
     # 2~6) FRED 지표
@@ -950,16 +957,26 @@ def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
         prev_3m = _n_periods_ago(series, latest_date, n3m)
         prev_1w = _n_periods_ago(series, latest_date, 5)
 
-        if code == "DGS10":
-            badge = macro_status.classify_rise_over_window(value, prev_3m, th["DGS10"]["rise_3m_caution"])
+        value_before = None
+        note = None
+        ref_values: list[float] = []
+        if code == "DFEDTARU":
+            months = th["DFEDTARU"]["lookback_months"]
+            value_before = macro_status.value_months_ago(series, latest_date, months)
+            if value_before is not None:
+                note = f"{months}개월 전 {value_before:g}% → 지금 {value:g}%"
+        elif code == "DGS10":
+            ref_values = [th["DGS10"]["caution"], th["DGS10"]["danger"]]
+            if prev_3m is not None:
+                note = f"3개월 변화 {value - prev_3m:+.2f}%p (보조 설명)"
         elif code == "T10Y2Y":
-            badge = macro_status.classify_t10y2y(value, th["T10Y2Y"])
+            ref_values = [th["T10Y2Y"]["stable"], th["T10Y2Y"]["danger"]]
         elif code == "BAMLH0A0HYM2":
-            badge = macro_status.classify_hy_spread(value, th["BAMLH0A0HYM2"])
-        elif code == "DFEDTARU":
-            badge = macro_status.classify_fed_funds_trend(value, prev_3m)
-        else:  # DEXKOUS
-            badge = macro_status.classify_fx_percentile(value, [v for _, v in sorted(series.items())], th["DEXKOUS"])
+            ref_values = [th["BAMLH0A0HYM2"]["caution"], th["BAMLH0A0HYM2"]["danger"]]
+        elif code == "DEXKOUS":
+            ref_values = [th["DEXKOUS"]["caution"], th["DEXKOUS"]["danger"]]
+            note = "달러로 미국 주식을 사는 입장 기준"
+        badge = macro_status.classify_macro(code, value, th, value_before=value_before)
 
         earliest_date = min(series)
         short_range = (pd.Timestamp(as_of_date) - pd.Timestamp(earliest_date)).days < 365
@@ -967,17 +984,13 @@ def _build_macro_rows(cfg: dict, as_of_date) -> tuple[list[dict], list[str]]:
             warnings.append(f"{code}: 1년치를 못 받아 받은 만큼만 표시(기간 짧음)")
 
         rows.append({
-            "name": name, "code": _MACRO_CODE_LABEL.get(code, code), "value": round(value, 2), "unit": unit,
+            "slug": _MACRO_SLUG[code], "name": name, "code": _MACRO_CODE_LABEL.get(code, code),
+            "value": round(value, 2), "unit": unit,
             "as_of": latest_date, "change_1w": round(value - prev_1w, 2) if prev_1w is not None else None,
             "series": [v for _, v in sorted(series.items())], "badge": badge,
             "is_stale": macro_status.is_stale(latest_date, report_date_iso, stale_days, _trading_days_between_iso),
             "short_range": short_range, "prev_3m": round(prev_3m, 2) if prev_3m is not None else None,
-            "note": None,
-            "ref_values": (
-                [th["T10Y2Y"]["alert"]] if code == "T10Y2Y"
-                else [th["BAMLH0A0HYM2"]["caution"]] if code == "BAMLH0A0HYM2"
-                else []
-            ),
+            "note": note, "ref_values": ref_values,
         })
     return rows, warnings
 

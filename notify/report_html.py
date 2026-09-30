@@ -18,6 +18,7 @@ import jinja2
 import pandas as pd
 
 from core import macro_status
+from notify import macro_explain
 from core.sizing import format_krw
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -111,21 +112,38 @@ def _buy_row_ctx(r: dict, include_stage_label: bool) -> dict:
 
 
 def _macro_row_ctx(row: dict) -> dict:
-    """engine.daily._build_macro_rows의 행 하나 -> 템플릿에 넘길 context (P3.8, 표시 전용)."""
+    """engine.daily._build_macro_rows의 행 하나 -> 템플릿에 넘길 context (P3.8, 표시 전용).
+
+    판정·3칸 눈금(★)은 row["badge"](core.macro_status.classify_macro 결과)를 그대로 쓰고,
+    설명 섹션(#explain-{slug})의 ①~③은 notify.macro_explain, ④는 오늘 값으로 만든다.
+    """
     series = row.get("series") or []
     spark_points = macro_status.sparkline_points(series) if len(series) > 1 else ""
     ref_ys: list[float] = []
     if series:
         mn, mx = min(series), max(series)
-        ref_ys = [round(macro_status.value_to_y(rv, mn, mx), 1) for rv in row.get("ref_values", [])]
+        # 기준선은 1년 범위 안에 있을 때만 그린다(범위 밖이면 그래프 끝에 붙어 오해를 준다).
+        ref_ys = [round(macro_status.value_to_y(rv, mn, mx), 1) for rv in row.get("ref_values", []) if mn <= rv <= mx]
     value = row["value"]
-    value_str = f"{value:,.2f}" if isinstance(value, float) and not value.is_integer() else f"{value:,.0f}"
+    slug = row.get("slug") or "etc"
+    if slug == "fx":
+        value_str = f"{value:,.0f}"
+    elif slug == "t10y2y":
+        value_str = f"{value:+.2f}"
+    elif isinstance(value, float) and not value.is_integer():
+        value_str = f"{value:,.2f}"
+    else:
+        value_str = f"{value:,.0f}"
     change = row.get("change_1w")
     change_str = f"{change:+g}" if change is not None else None
     range_str = f"{min(series):,.2f} ~ {max(series):,.2f}" if series else "-"
+    badge = row["badge"]
+    explain = macro_explain.EXPLAIN.get(slug, {"title": row["name"], "what": "", "why": "", "example": ""})
     return {
-        **row, "spark_points": spark_points, "ref_ys": ref_ys,
+        **row, "slug": slug, "spark_points": spark_points, "ref_ys": ref_ys,
         "value_str": value_str, "change_str": change_str, "range_str": range_str,
+        "scale": badge.get("scale", []),
+        "explain": {**explain, "now": macro_explain.now_text(slug, value_str, row.get("unit", ""), badge, row.get("note"))},
     }
 
 
@@ -262,12 +280,11 @@ def build_context(summary: dict, cfg: dict) -> dict:
     # — 실제 운영은 config.yaml에 항상 이 섹션이 있어 아래 기본값은 쓰이지 않는다.
     macro_cfg = cfg.get("macro", {})
     macro_th = macro_cfg.get("thresholds", {})
+    # 읽는 법 탭의 시장 온도 표: 기준표 3칸을 macro_status에서 그대로 받아 쓴다(보고서 칸과 같은 기준).
     guide["macro"] = {
-        "fg": macro_th.get("FEAR_GREED") or {"extreme_fear": 25, "fear": 45, "neutral_high": 55, "greed": 75},
-        "dgs10_pp": (macro_th.get("DGS10") or {}).get("rise_3m_caution", 0.5),
-        "t10y2y": macro_th.get("T10Y2Y") or {"normal": 0.5, "alert": 0},
-        "hy": macro_th.get("BAMLH0A0HYM2") or {"caution": 4, "alert": 6},
-        "fx": macro_th.get("DEXKOUS") or {"pct_high": 80, "pct_low": 20},
+        code: macro_status.scale_ranges(code, macro_th)
+        for code in ("FEAR_GREED", "VIXCLS", "DGS10", "T10Y2Y", "BAMLH0A0HYM2", "DFEDTARU", "DEXKOUS")
+        if code in macro_th
     }
 
     is_live = summary.get("mode") == "live"
@@ -343,6 +360,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "guide": guide,
         "macro_rows": [_macro_row_ctx(r) for r in summary.get("macro_rows", [])],
         "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
+        "macro_disclaimer": macro_explain.DISCLAIMER,
     }
 
 

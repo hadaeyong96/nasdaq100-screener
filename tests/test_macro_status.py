@@ -1,78 +1,107 @@
-"""core.macro_status 테스트 (P3.8). 상태 판정 경계값 + 스파크라인 좌표."""
+"""core.macro_status 테스트. 🟢안정·🟡주의·🔴위험 3단계 판정 경계값(config.yaml 기준값 그대로)
++ 3칸 눈금(★) + 스파크라인 좌표."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import yaml
 
 from core import macro_status as ms
 
-FG_TH = {"extreme_fear": 25, "fear": 45, "neutral_high": 55, "greed": 75}
-VIX_TH = {"caution": 20, "alert": 30}
-T10Y2Y_TH = {"normal": 0.5, "alert": 0}
-HY_TH = {"caution": 4, "alert": 6}
-FX_TH = {"pct_high": 80, "pct_low": 20}
+_ROOT = Path(__file__).resolve().parents[1]
+with open(_ROOT / "config.yaml", encoding="utf-8") as _f:
+    TH = yaml.safe_load(_f)["macro"]["thresholds"]
+
+OK, WARN, BAD = "안정", "주의", "위험"
+
+
+def _label(code, value, **kw):
+    return ms.classify_macro(code, value, TH, **kw)["label"]
+
+
+def test_config_thresholds_match_agreed_values():
+    """기준값은 코드가 아니라 config.yaml에 있다 — 합의한 값인지 한 번에 확인."""
+    assert TH["FEAR_GREED"] == {"extreme_fear": 25, "fear": 45, "neutral_high": 55, "greed": 75}
+    assert TH["DGS10"] == {"caution": 4.0, "danger": 4.5}
+    assert TH["T10Y2Y"] == {"stable": 0.5, "danger": 0}
+    assert TH["BAMLH0A0HYM2"] == {"caution": 4, "danger": 6}
+    assert TH["DFEDTARU"] == {"lookback_months": 6}
+    assert TH["DEXKOUS"] == {"caution": 1300, "danger": 1400}
+    assert TH["VIXCLS"] == {"caution": 20, "danger": 30}
 
 
 @pytest.mark.parametrize(
-    "value,expected_label",
-    [(24, "극단적 공포"), (25, "공포"), (44, "공포"), (45, "중립"), (55, "중립"), (56, "탐욕"), (75, "탐욕"), (76, "극단적 탐욕")],
+    "value,label,zone",
+    [
+        (0, BAD, "극단적 공포"), (24, BAD, "극단적 공포"), (25, WARN, "공포"), (44, WARN, "공포"),
+        (45, OK, "중립"), (55, OK, "중립"), (56, WARN, "탐욕"), (75, WARN, "탐욕"),
+        (76, BAD, "극단적 탐욕"), (100, BAD, "극단적 탐욕"),
+    ],
 )
-def test_classify_fear_greed_boundaries(value, expected_label):
-    assert ms.classify_fear_greed(value, FG_TH)["label"] == expected_label
+def test_fear_greed_boundaries_and_zone_names(value, label, zone):
+    out = ms.classify_macro("FEAR_GREED", value, TH)
+    assert (out["label"], out["zone"]) == (label, zone)
 
 
-@pytest.mark.parametrize("value,expected_label", [(19.99, "안정"), (20, "주의"), (29.99, "주의"), (30, "경계")])
-def test_classify_vix_fallback_boundaries(value, expected_label):
-    assert ms.classify_vix_fallback(value, VIX_TH)["label"] == expected_label
+@pytest.mark.parametrize("value,label", [(3.99, OK), (4.0, WARN), (4.49, WARN), (4.5, BAD), (5.17, BAD)])
+def test_dgs10_boundaries(value, label):
+    assert _label("DGS10", value) == label
 
 
-def test_classify_rise_over_window_boundary_exact_half_point():
-    assert ms.classify_rise_over_window(4.5, 4.0, 0.5)["label"] == "주의"  # 정확히 +0.5%p
-    assert ms.classify_rise_over_window(4.49, 4.0, 0.5)["label"] == "안정"
+@pytest.mark.parametrize("value,label", [(0.5, OK), (1.2, OK), (0.49, WARN), (0.0, WARN), (-0.01, BAD)])
+def test_t10y2y_boundaries(value, label):
+    assert _label("T10Y2Y", value) == label
 
 
-def test_classify_rise_over_window_no_comparison_value():
-    out = ms.classify_rise_over_window(4.5, None, 0.5)
-    assert out["status"] == ms.STATUS_INFO
+@pytest.mark.parametrize("value,label", [(3.99, OK), (4, WARN), (5.99, WARN), (6, BAD)])
+def test_hy_spread_boundaries(value, label):
+    assert _label("BAMLH0A0HYM2", value) == label
 
 
-@pytest.mark.parametrize("value,expected_label", [(0.5, "정상"), (0.49, "주의"), (0, "주의"), (-0.01, "경계(역전)")])
-def test_classify_t10y2y_boundaries(value, expected_label):
-    assert ms.classify_t10y2y(value, T10Y2Y_TH)["label"] == expected_label
+@pytest.mark.parametrize("value,label", [(1299.9, OK), (1300, WARN), (1399.9, WARN), (1400, BAD)])
+def test_usdkrw_boundaries(value, label):
+    assert _label("DEXKOUS", value) == label
 
 
-@pytest.mark.parametrize("value,expected_label", [(3.99, "안정"), (4, "주의"), (5.99, "주의"), (6, "경계")])
-def test_classify_hy_spread_boundaries(value, expected_label):
-    assert ms.classify_hy_spread(value, HY_TH)["label"] == expected_label
+@pytest.mark.parametrize("value,label", [(19.99, OK), (20, WARN), (29.99, WARN), (30, BAD)])
+def test_vix_boundaries(value, label):
+    assert _label("VIXCLS", value) == label
 
 
-def test_classify_fed_funds_trend_up_down_flat():
-    assert ms.classify_fed_funds_trend(4.75, 4.50)["label"] == "인상 흐름"
-    assert ms.classify_fed_funds_trend(4.25, 4.50)["label"] == "인하 흐름"
-    assert ms.classify_fed_funds_trend(4.50, 4.50)["label"] == "동결"
+def test_fed_funds_cut_hold_hike_over_six_months():
+    assert _label("DFEDTARU", 4.25, value_before=4.50) == OK  # 인하
+    assert _label("DFEDTARU", 4.50, value_before=4.50) == WARN  # 동결
+    assert _label("DFEDTARU", 4.75, value_before=4.50) == BAD  # 인상
+    out = ms.classify_macro("DFEDTARU", 4.50, TH, value_before=None)
+    assert out["status"] == ms.STATUS_INFO and not any(r["current"] for r in out["scale"])
 
 
-def test_classify_fed_funds_trend_no_comparison_value():
-    assert ms.classify_fed_funds_trend(4.50, None)["status"] == ms.STATUS_INFO
+def test_value_months_ago_picks_last_value_on_or_before_target():
+    series = {"2026-03-15": 4.75, "2026-03-31": 4.5, "2026-04-15": 4.25, "2026-09-29": 4.0}
+    assert ms.value_months_ago(series, "2026-09-29", 6) == 4.75  # 목표일 03-29 이하 마지막 값(03-15)
+    assert ms.value_months_ago(series, "2026-10-01", 6) == 4.5  # 목표일 04-01 -> 03-31 값
+    assert ms.value_months_ago({"2026-02-27": 3.0}, "2026-08-31", 6) == 3.0  # 2월 말일로 맞춤
+    assert ms.value_months_ago({"2026-09-01": 1.0}, "2026-09-29", 6) is None
 
 
-def test_percentile_rank_basic():
-    series = [10, 20, 30, 40, 50]
-    assert ms.percentile_rank(series, 30) == 60.0  # 10,20,30 <= 30 -> 3/5
-    assert ms.percentile_rank(series, 5) == 0.0
-    assert ms.percentile_rank(series, 50) == 100.0
+@pytest.mark.parametrize("code", ["FEAR_GREED", "VIXCLS", "DGS10", "T10Y2Y", "BAMLH0A0HYM2", "DEXKOUS"])
+def test_scale_has_three_levels_in_order_with_single_star(code):
+    probe = {"FEAR_GREED": 60, "T10Y2Y": 0.2}.get(code, TH[code].get("caution", 0) + 0.01)
+    out = ms.classify_macro(code, probe, TH)
+    assert [r["label"] for r in out["scale"]] == [OK, WARN, BAD]
+    assert [r["symbol"] for r in out["scale"]] == ["🟢", "🟡", "🔴"]
+    assert sum(r["current"] for r in out["scale"]) == 1
+    assert next(r for r in out["scale"] if r["current"])["label"] == out["label"] == WARN
+    assert out["text"] == "🟡 주의"
 
 
-def test_percentile_rank_empty_series_is_neutral():
-    assert ms.percentile_rank([], 100) == 50.0
-
-
-def test_classify_fx_percentile_boundaries():
-    series = list(range(1, 101))  # 1..100, value=v -> percentile=v%
-    assert ms.classify_fx_percentile(80, series, FX_TH)["label"] == "달러 비쌈"
-    assert ms.classify_fx_percentile(79, series, FX_TH)["label"] == "보통"
-    assert ms.classify_fx_percentile(20, series, FX_TH)["label"] == "달러 쌈"
-    assert ms.classify_fx_percentile(21, series, FX_TH)["label"] == "보통"
+def test_scale_range_texts_match_spec():
+    assert [r["range"] for r in ms.scale_ranges("DGS10", TH)] == ["4.0% 미만", "4.0~4.5%", "4.5% 이상"]
+    assert [r["range"] for r in ms.scale_ranges("T10Y2Y", TH)] == ["+0.5%p 이상", "0~+0.5%p", "0 미만 (역전)"]
+    assert [r["range"] for r in ms.scale_ranges("DEXKOUS", TH)] == ["1,300원 미만", "1,300~1,400원", "1,400원 이상"]
+    assert [r["range"] for r in ms.scale_ranges("FEAR_GREED", TH)][0] == "45~55 (중립)"
 
 
 # ── 지연("stale") 표시 ────────────────────────────────────────────────────
