@@ -256,30 +256,54 @@ def splice_pre_inception_series(proxy_df: pd.DataFrame, real_df: pd.DataFrame, p
     return out
 
 
-def prepare_data(cfg: dict, warmup_start: date, end: date) -> BacktestData:
-    """종목·QQQ·QQQM·환율·배당·시점별 구성 종목을 모두 받아 지표까지 계산해 둔다."""
+def prepare_data(
+    cfg: dict, warmup_start: date, end: date, force_universe_mode: str | None = None, unseal: bool = False
+) -> BacktestData:
+    """종목·QQQ·QQQM·환율·배당·시점별 구성 종목을 모두 받아 지표까지 계산해 둔다.
+
+    입력에 force_universe_mode·unseal 추가 (AI 펀드 F2, docs/design/fund_sim.md 5.8
+    B0.5 재현 테스트용):
+    - force_universe_mode: "POINT_IN_TIME"(기본, 생략 시와 같음) | "CURRENT_CONSTITUENTS"
+      (시점별 구성 종목 재구성을 아예 시도하지 않고 처음부터 현재 구성 종목만 쓴다 —
+      기존의 "재구성 실패 시에만" 자동 폴백과 달리, 일부러 생존 편향 있는 실행을
+      만들 때 쓴다. 5.8의 1번 단계).
+    - unseal: False(기본)면 end가 cfg["backtest"]["seal_date"]를 넘을 때 맨 처음(어떤
+      네트워크 요청도 하기 전에) core.seal.SealedDataError로 멈춘다. seal_date가
+      config에 없으면 이 함수는 봉인을 확인하지 않는다(기존 P5/P6 호출부 그대로).
+    """
     bt_cfg = cfg["backtest"]
+    seal_date_str = bt_cfg.get("seal_date")
+    seal_date = _parse_date(seal_date_str) if seal_date_str else None
+    from core.seal import enforce_not_sealed
+
+    enforce_not_sealed(end, seal_date, unseal)
 
     print("[backtest] 나스닥 100 현재 구성 종목을 가져오는 중...")
     current_tickers = set(get_universe()["ticker"])
 
     universe_mode = "POINT_IN_TIME"
     checkpoints: list = []
-    try:
-        changes = uh.get_changes()
-        checkpoints = uh.membership_checkpoints(current_tickers, changes, warmup_start)
-        all_needed = set(current_tickers)
-        for _, members in checkpoints:
-            all_needed |= set(members)
-        print(f"[backtest] 시점별 구성 종목 재구성 성공 — 기간 중 등장한 종목 {len(all_needed)}개")
-    except Exception as exc:
-        print(f"[backtest] 시점별 구성 종목 재구성 실패({exc}) — 현재 구성 종목만 쓴다 (SURVIVORSHIP_BIAS)")
+    if force_universe_mode == "CURRENT_CONSTITUENTS":
+        print("[backtest] force_universe_mode=CURRENT_CONSTITUENTS — 시점별 구성 종목 재구성을 건너뛴다 (SURVIVORSHIP_BIAS)")
         universe_mode = "CURRENT_CONSTITUENTS"
         all_needed = set(current_tickers)
         checkpoints = [(warmup_start, frozenset(current_tickers))]
+    else:
+        try:
+            changes = uh.get_changes()
+            checkpoints = uh.membership_checkpoints(current_tickers, changes, warmup_start)
+            all_needed = set(current_tickers)
+            for _, members in checkpoints:
+                all_needed |= set(members)
+            print(f"[backtest] 시점별 구성 종목 재구성 성공 — 기간 중 등장한 종목 {len(all_needed)}개")
+        except Exception as exc:
+            print(f"[backtest] 시점별 구성 종목 재구성 실패({exc}) — 현재 구성 종목만 쓴다 (SURVIVORSHIP_BIAS)")
+            universe_mode = "CURRENT_CONSTITUENTS"
+            all_needed = set(current_tickers)
+            checkpoints = [(warmup_start, frozenset(current_tickers))]
 
     print(f"[backtest] 종목 {len(all_needed)}개의 과거 일봉을 받는 중... (시간이 걸립니다)")
-    price_result = bp.fetch_universe_history(sorted(all_needed), warmup_start, end)
+    price_result = bp.fetch_universe_history(sorted(all_needed), warmup_start, end, seal_date=seal_date, unseal=unseal)
     print(f"[backtest]   성공 {len(price_result.prices)}종목 / 실패 {len(price_result.failed)}종목")
 
     # 생존자 편향 표시 (P5-1.1 5번): 시점별 구성 종목을 못 구했으면 TRUE, 구했지만
@@ -384,9 +408,15 @@ def simulate_portfolio(
     entry_type_allowed: set | None = None, rs_filter: dict | None = None,
     a1_whipsaw_block: dict | None = None, volume_filter: dict | None = None,
     atr_trail_mult: float | None = None, partial_tp_r_mult: float | None = None,
-    blocked_new_entries: set | None = None,
+    blocked_new_entries: set | None = None, stop_next_day_open: bool = False,
 ) -> BacktestResult:
     """core.state.process_day를 하루씩 재생해 포트폴리오를 시뮬레이션한다.
+
+    stop_next_day_open(AI 펀드 F2, docs/design/fund_sim.md 5.8 B0.5 재현 테스트
+    3번째 단계용): 기본(False)은 손절을 신호 당일(증권사 예약 주문 가정, 모듈
+    설명 "체결 타이밍" 참고)에 체결시킨다. True면 손절도 나머지 매도 사유(E1·
+    E2·E3·A1 만료)와 똑같이 다음 거래일 시가에 체결한다 — "체결 가정의 영향"을
+    격리해서 재는 단일 변수 실험 오버라이드다(다른 P5-3 오버라이드와 같은 패턴).
 
     apply_costs=False/apply_tax=False는 원인 분해용(P5-1.1 4번)이다. core.sizing이
     쓰는 수량 결정은 cfg의 고정값(총자금·전략한도)과 시세만 보고 Broker의 실제
@@ -618,7 +648,10 @@ def simulate_portfolio(
                     )
                 elif event["kind"] in _SELL_KINDS:
                     position_id = open_positions.get(ticker, {}).get("id")
-                    _settle_sell(event, ticker, position_id, date_, ts, indicator_map[ticker], broker, cfg, fx_rate, trades)
+                    _settle_sell(
+                        event, ticker, position_id, date_, ts, indicator_map[ticker], broker, cfg, fx_rate, trades,
+                        stop_next_day_open=stop_next_day_open,
+                    )
                     if event["kind"] == "STOP" and ticker in atr_trail_active and trades:
                         # P5-4 0-1번: 오늘 발동한 손절이 추적 손절이 덮어쓴 값이었으면 STOP과
                         # 섞이지 않게 ATR_TRAIL로 다시 표시한다(_settle_sell이 방금 append한 행).
@@ -755,12 +788,19 @@ def _price_on_or_before(df: pd.DataFrame, ts: pd.Timestamp) -> float | None:
     return None if pd.isna(close) else float(close)
 
 
-def _settle_sell(event, ticker, position_id, date_, ts, df, broker: Broker, cfg, fx_rate, trades: list) -> None:
-    """매도 이벤트의 체결가를 정해(손절=당일, 나머지=다음날 시가) 현금에 반영하고 trades에 남긴다."""
+def _settle_sell(
+    event, ticker, position_id, date_, ts, df, broker: Broker, cfg, fx_rate, trades: list,
+    stop_next_day_open: bool = False,
+) -> None:
+    """매도 이벤트의 체결가를 정해(손절=당일, 나머지=다음날 시가) 현금에 반영하고 trades에 남긴다.
+
+    stop_next_day_open=True면 손절도 다음날 시가 체결로 취급한다(simulate_portfolio
+    docstring 참고, 5.8 체결 가정 영향 실험 전용).
+    """
     kind = event["kind"]
     qty = event["qty"]
     entry_price = event.get("entry_price")
-    if kind == "STOP":
+    if kind == "STOP" and not stop_next_day_open:
         row = df.loc[ts]
         exit_price = ex.resolve_stop_fill(event.get("stop_price"), row.get("open"), row.get("low"))
     else:

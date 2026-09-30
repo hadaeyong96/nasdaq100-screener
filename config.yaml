@@ -170,6 +170,10 @@ backtest:
   train_start: "2015-01-01"
   train_end: "2021-12-31"
   validation_start: "2022-01-01" # 검증 구간 — 이번 단계(P5-1)는 봉인, 계산·보고하지 않는다
+  # AI 펀드 F2(docs/design/fund_sim.md 2.2 "봉인 구간") — validation_start와 같은 날짜다.
+  # engine.backtest.prepare_data·data/backtest_prices.py·data/fx.py가 이 날짜를 넘는
+  # 구간을 unseal=True 없이 요청하면 core.seal.SealedDataError로 막는다(로더 단).
+  seal_date: "2022-01-01"
   b4_short_treasury_ticker: BIL # P5-2 B4 실험용 단기 국채 ETF. SGOV는 2020-05 상장이라
   # 2015년부터 필요한 이번 실험은 처음부터 데이터가 있는 BIL(상장 2007)을 그대로 쓴다.
   costs:
@@ -181,3 +185,17 @@ backtest:
     capital_gains_rate_pct: 22 # 공제 초과분 세율(%)
     dividend_withholding_pct: 15 # 배당 원천징수(%)
     payment_month: 5 # 실현손익 발생 다음 해 이 달에 납부한 것으로 처리
+
+# ── 데이터 품질 검사 (AI 펀드 F2, engine/dataqc.py, docs/design/fund_sim.md 5.1) ──
+# 표시·판정용 — 신호·수량 계산에는 쓰지 않는다. 여기 숫자는 전부 [가정](문서에 근거값
+# 없음, 백테스트로 확정 전까지 임시값).
+dataqc:
+  expected_constituent_count: {min: 90, max: 110} # 나스닥100은 복수 주식군 때문에 100~102가 정상 — data/universe.py의 EXPECTED_COUNT_RANGE와 같은 값
+  min_coverage_pct: 98 # [가정] 시점별 구성종목 중 가격을 실제로 받은 비율이 이 미만이면 그 구간 판정 INCONCLUSIVE(설계 5.1·5.7)
+  extreme_daily_move_pct: 50 # [가정] 하루 등락률이 이 비율을 넘으면 이상치·분할 누락 의심으로 표시
+
+# ── AI 가상 펀드 (F2, docs/design/fund_sim.md) ──────────────────────────────
+# 화면·텔레그램에 아직 안 나간다 — F2 범위는 시점별 유니버스·데이터 품질 검사·공통
+# 백테스트 엔진·시도 로그 스키마·B0.5 재현 테스트뿐이다(F3 이후 미구현).
+fund_sim:
+  b05_reproduction_tolerance_pct: 0.1 # [가정] B0.5 재현(설계 5.8 1번)에서 기존 +19.78%(세후a)와 이 오차(%p) 안이면 "일치"로 본다

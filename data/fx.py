@@ -116,15 +116,22 @@ def get_usd_krw_rate(as_of_date, fetch_provider=fetch_usd_krw_history) -> FxRate
     return FxRateResult(rate=rate, rate_date=rate_date, is_fallback=True, warning=warning)
 
 
-def fetch_usd_krw_range(start, end) -> dict[str, float]:
+def fetch_usd_krw_range(start, end, seal_date=None, unseal: bool = False) -> dict[str, float]:
     """yfinance `KRW=X`의 [start, end] 구간 일별 종가를 {날짜: 환율} dict로 받는다 (백테스트용).
 
-    입력: start, end(date 또는 date-like)
+    입력: start, end(date 또는 date-like), seal_date(AI 펀드 봉인 기준일 — 넘기면 end가
+         이 날짜를 넘을 때 core.seal.SealedDataError로 막는다. None이면(기본) 이 함수
+         단독으로는 봉인을 확인하지 않는다 — 기존 P5/P6 호출부를 그대로 둔다),
+         unseal(True면 봉인 구간이어도 통과)
     출력: {"YYYY-MM-DD": 환율, ...}
-    예외: 네트워크·응답 형식 오류는 그대로 올린다
+    예외: 네트워크·응답 형식 오류는 그대로 올린다, 봉인 구간이면 core.seal.SealedDataError
     """
-    import yfinance as yf
     from datetime import timedelta
+
+    from core.seal import enforce_not_sealed
+
+    enforce_not_sealed(end, seal_date, unseal)
+    import yfinance as yf
 
     raw = yf.Ticker("KRW=X").history(start=start, end=end + timedelta(days=1), auto_adjust=False)
     if raw.empty:

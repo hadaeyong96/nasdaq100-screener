@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from core.seal import enforce_not_sealed
 from data.prices import CLOSE_SOURCE_YAHOO, find_mid_series_gaps, recover_gap_days
 
 CACHE_DIR = Path(__file__).resolve().parent / "cache" / "backtest"
@@ -74,13 +75,19 @@ def _fetch_raw(ticker: str, start: date, end: date) -> pd.DataFrame:
     return out
 
 
-def fetch_history(ticker: str, start: date, end: date) -> tuple[pd.DataFrame, list[str]]:
+def fetch_history(
+    ticker: str, start: date, end: date, seal_date: date | None = None, unseal: bool = False
+) -> tuple[pd.DataFrame, list[str]]:
     """ticker의 [start, end] 확정 일봉을 받는다 (캐시가 그 구간을 덮으면 재사용).
 
-    입력: yfinance 형식 ticker, start, end
+    입력: yfinance 형식 ticker, start, end, seal_date(AI 펀드 봉인 기준일 — 넘기면
+         end가 이 날짜를 넘을 때 core.seal.SealedDataError로 막는다. None이면(기본)
+         이 함수 단독으로는 봉인을 확인하지 않는다 — 기존 P5/P6 호출부를 그대로 둔다),
+         unseal(True면 봉인 구간이어도 통과)
     출력: (DataFrame(open,high,low,close,volume,close_source), 경고 목록)
-    예외: 확정 데이터가 전혀 없으면 ValueError
+    예외: 확정 데이터가 전혀 없으면 ValueError, 봉인 구간이면 core.seal.SealedDataError
     """
+    enforce_not_sealed(end, seal_date, unseal)
     warnings: list[str] = []
     cached = _load_cache(ticker)
     if cached is not None and len(cached) and cached.index[0].date() <= start and cached.index[-1].date() >= end:
@@ -121,12 +128,17 @@ def fetch_history(ticker: str, start: date, end: date) -> tuple[pd.DataFrame, li
     return out, warnings
 
 
-def fetch_universe_history(tickers: list[str], start: date, end: date) -> BacktestPriceResult:
+def fetch_universe_history(
+    tickers: list[str], start: date, end: date, seal_date: date | None = None, unseal: bool = False
+) -> BacktestPriceResult:
     """여러 종목의 과거 일봉을 받는다. 실패 종목은 모아서 반환하고 계속 진행한다.
 
-    입력: yfinance 형식 ticker 목록, start, end
+    입력: yfinance 형식 ticker 목록, start, end, seal_date·unseal(fetch_history 참고 —
+         여기서 한 번만 확인하고 종목별 fetch_history 호출에는 넘기지 않는다)
     출력: BacktestPriceResult
+    예외: 봉인 구간이면 core.seal.SealedDataError (종목별 반복을 시작하기 전에 막는다)
     """
+    enforce_not_sealed(end, seal_date, unseal)
     result = BacktestPriceResult()
     for ticker in tickers:
         try:
@@ -140,11 +152,16 @@ def fetch_universe_history(tickers: list[str], start: date, end: date) -> Backte
     return result
 
 
-def fetch_dividends(ticker: str, start: date, end: date) -> pd.Series:
+def fetch_dividends(
+    ticker: str, start: date, end: date, seal_date: date | None = None, unseal: bool = False
+) -> pd.Series:
     """ticker의 [start, end] 배당 이력(주당 배당금)을 받는다. 실패하면 빈 Series.
 
+    입력: ticker, start, end, seal_date·unseal(fetch_history 참고)
     출력: pd.Series(index=배당락일, value=주당 배당금(달러))
+    예외: 봉인 구간이면 core.seal.SealedDataError
     """
+    enforce_not_sealed(end, seal_date, unseal)
     import yfinance as yf
 
     try:

@@ -266,6 +266,81 @@ def test_splice_pre_inception_series_is_continuous_at_boundary():
     assert abs(before / after - 1) < 0.05  # 하루 전후 괴리가 크면(예전처럼 반토막) 안 된다
 
 
+# ── AI 펀드 F2: prepare_data 봉인 구간 차단 (docs/design/fund_sim.md 2.2) ───────
+# 봉인 검사는 prepare_data 맨 앞(get_universe 등 어떤 네트워크 호출보다 먼저) 있어
+# 네트워크 없이도 SealedDataError를 확인할 수 있다.
+
+
+def test_prepare_data_raises_before_any_network_call_when_sealed(full_cfg, monkeypatch):
+    from core.seal import SealedDataError
+
+    def _boom(*a, **k):
+        raise AssertionError("봉인 구간이면 get_universe()조차 부르면 안 된다")
+
+    monkeypatch.setattr(bt, "get_universe", _boom)
+    cfg = {**full_cfg, "backtest": {**full_cfg["backtest"], "seal_date": "2022-01-01"}}
+    with pytest.raises(SealedDataError):
+        bt.prepare_data(cfg, date(2015, 1, 1), date(2022, 6, 1))
+
+
+def test_prepare_data_unseal_true_reaches_past_the_seal_check(full_cfg, monkeypatch):
+    from core.seal import SealedDataError
+
+    def _boom(*a, **k):
+        raise RuntimeError("네트워크 호출 지점까지는 도달했다(더는 진행하지 않음, 테스트용 신호)")
+
+    monkeypatch.setattr(bt, "get_universe", _boom)
+    cfg = {**full_cfg, "backtest": {**full_cfg["backtest"], "seal_date": "2022-01-01"}}
+    with pytest.raises(RuntimeError) as exc_info:
+        bt.prepare_data(cfg, date(2015, 1, 1), date(2022, 6, 1), unseal=True)
+    assert not isinstance(exc_info.value, SealedDataError)
+
+
+def test_prepare_data_no_seal_date_in_cfg_is_unaffected(full_cfg, monkeypatch):
+    """cfg["backtest"]에 seal_date가 아예 없으면(기존 P5/P6 cfg) 봉인 검사를 하지 않는다."""
+    def _boom(*a, **k):
+        raise RuntimeError("네트워크 호출 지점까지는 도달했다(더는 진행하지 않음, 테스트용 신호)")
+
+    monkeypatch.setattr(bt, "get_universe", _boom)
+    assert "seal_date" not in full_cfg["backtest"]
+    with pytest.raises(RuntimeError):
+        bt.prepare_data(full_cfg, date(2015, 1, 1), date(2022, 6, 1))
+
+
+# ── AI 펀드 F2: stop_next_day_open (docs/design/fund_sim.md 5.8 체결 가정 실험) ──
+
+
+def test_settle_sell_stop_default_fills_same_day_at_resolve_stop_fill_price(full_cfg):
+    idx = pd.bdate_range("2020-01-02", periods=2, name="date")
+    df = pd.DataFrame(
+        {"open": [93.0, 85.0], "high": [96.0, 87.0], "low": [90.0, 83.0], "close": [94.0, 84.0], "volume": [1_000_000, 1_000_000]},
+        index=idx,
+    )
+    ts = idx[0]
+    event = {"kind": "STOP", "qty": 10, "entry_price": 100.0, "stop_price": 92.0}
+    broker = bt.Broker(cash_usd=100_000.0, apply_costs=False, apply_tax=False)
+    trades: list = []
+    bt._settle_sell(event, "AAA", 1, ts.date(), ts, df, broker, full_cfg, fx_rate=1300.0, trades=trades)
+    assert trades[0]["price"] == pytest.approx(92.0)  # 시가(93)>손절가(92)지만 저가(90)가 닿아 손절가 그대로 체결
+    assert trades[0]["date"] == ts.date().isoformat()  # 신호 당일
+
+
+def test_settle_sell_stop_next_day_open_fills_next_day_at_open_instead():
+    idx = pd.bdate_range("2020-01-02", periods=2, name="date")
+    df = pd.DataFrame(
+        {"open": [93.0, 85.0], "high": [96.0, 87.0], "low": [90.0, 83.0], "close": [94.0, 84.0], "volume": [1_000_000, 1_000_000]},
+        index=idx,
+    )
+    ts = idx[0]
+    cfg = {"backtest": {"costs": {"commission_buy_pct": 0.0, "commission_sell_pct": 0.0}}}
+    event = {"kind": "STOP", "qty": 10, "entry_price": 100.0, "stop_price": 92.0}
+    broker = bt.Broker(cash_usd=100_000.0, apply_costs=False, apply_tax=False)
+    trades: list = []
+    bt._settle_sell(event, "AAA", 1, ts.date(), ts, df, broker, cfg, fx_rate=1300.0, trades=trades, stop_next_day_open=True)
+    assert trades[0]["price"] == pytest.approx(85.0)  # 다음날(2번째 행) 시가로 체결, 당일 저가(90)·손절가(92)는 안 쓴다
+    assert trades[0]["date"] == ts.date().isoformat()  # 이벤트가 기록되는 날짜 자체는 그대로(신호일) — 체결가만 바뀐다
+
+
 def test_simulate_portfolio_raises_when_account_and_backtest_total_krw_differ(full_cfg):
     """KJB-1.1 가드: account.total_krw와 backtest.total_krw가 다르면 core.sizing이
     실제 백테스트 자금이 아니라 account.total_krw 기준으로 슬롯을 계산해 포지션이
