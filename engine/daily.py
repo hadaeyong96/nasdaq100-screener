@@ -1762,6 +1762,8 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
     macro_rows, macro_warnings = _build_macro_rows(cfg, actual_date) if actual_date is not None else ([], [])
     for line in macro_warnings:
         print(f"  [시장 온도] {line}")
+    for row in macro_rows:  # 텔레그램과 같은 판정 문구 (예: "10년물 5.17% 🔴위험") — Actions 로그로 확인용
+        print(f"  [시장 온도 값] {briefing._macro_item_text(row)} (기준일 {row.get('as_of')})")
     run_warnings.extend(macro_warnings)
 
     summary = build_report_summary(
