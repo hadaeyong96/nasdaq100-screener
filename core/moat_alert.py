@@ -159,10 +159,11 @@ def gross_margin_alert(quarterly_margins: list[dict]) -> dict:
     yoy_triggered = yoy_drop_pp >= _GROSS_MARGIN_YOY_DROP_PP
     triggered = consecutive_decline and yoy_triggered
 
+    yoy_label = f"{yoy_drop_pp:.1f}%p 하락" if yoy_drop_pp >= 0 else f"{abs(yoy_drop_pp):.1f}%p 상승"
     detail = (
         f"{latest['end']} {latest['margin_pct']:.1f}% (직전 {prev1['end']} {prev1['margin_pct']:.1f}%, "
         f"전전 {prev2['end']} {prev2['margin_pct']:.1f}%, 전년동분기 {yoy['end']} {yoy['margin_pct']:.1f}%, "
-        f"전년동분기 대비 하락폭 {yoy_drop_pp:+.1f}%p — 양수면 하락, 음수면 오히려 상승)"
+        f"전년동분기 대비 {yoy_label})"
     )
     return {"status": "경보" if triggered else "경보 아님", "detail": detail, "consecutive_decline": consecutive_decline, "yoy_drop_pp": yoy_drop_pp}
 
