@@ -301,8 +301,13 @@ def test_build_briefing_text_one_share_warning_line_only_when_present():
     assert "1차 매수 0주" not in text_none
 
 
-def test_report_attachment_name_uses_korean_title_and_date():
-    assert telegram.report_attachment_name("2026-09-23") == "나스닥100_2026-09-23.html"
+def test_report_attachment_name_uses_config_short_title_and_date(cfg):
+    short_title = cfg["report"]["short_title"]
+    assert telegram.report_attachment_name("2026-09-23", cfg) == f"{short_title}_2026-09-23.html"
+
+
+def test_report_attachment_name_follows_changed_short_title():
+    assert telegram.report_attachment_name("2026-09-23", {"report": {"short_title": "테스트"}}) == "테스트_2026-09-23.html"
 
 
 def test_resend_last_no_send_flag_never_calls_network(tmp_path, monkeypatch):

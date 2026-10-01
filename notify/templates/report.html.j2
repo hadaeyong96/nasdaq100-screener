@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>나스닥 100 일일 브리핑 · {{ as_of_str }} ({{ mode_label }})</title>
+<title>{{ titles.title }} · {{ as_of_str }} ({{ mode_label }})</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
 <style>
 :root{
@@ -29,6 +29,7 @@ header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:fle
 h1{font-size:24px;font-weight:800;margin:0;letter-spacing:-0.02em}
 .mode-badge{display:inline-block;margin-left:8px;padding:2px 10px;border-radius:999px;font-size:13px;font-weight:700;
   background:var(--info-bg);color:var(--info);vertical-align:middle}
+.subtitle{color:var(--ink);font-size:14px;font-weight:600;margin-top:4px}
 .lead{color:var(--sub);font-size:13px;margin-top:4px}
 .meta{color:var(--sub);font-size:13px;text-align:right}
 .meta b{color:var(--ink)}
@@ -81,6 +82,7 @@ td.calc{color:var(--info);font-weight:700}
 .panel{display:none;padding-top:12px}.panel.on{display:block}
 .sub{display:none}.sub.on{display:block}
 .desc{color:var(--sub);font-size:13px;margin:0 0 10px}
+.plan-note{color:var(--mute);font-size:12px;margin:0 0 6px}
 .risk-line{font-weight:700;color:var(--ink)}
 
 /* 시트 표 */
@@ -232,6 +234,8 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 .mscale li.cur{background:var(--tab);color:var(--ink);font-weight:700}
 .mscale li.cur .rg{color:var(--ink)}
 .mscale .star{color:var(--warn);font-weight:800}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;vertical-align:middle;margin:0 3px 1px 0;flex:none}
+.dot-ok{background:var(--buy)}.dot-warn{background:var(--warn)}.dot-bad{background:var(--sell)}
 @media (max-width:1100px){.mgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:640px){.mgrid{grid-template-columns:minmax(0,1fr)}.mhead a{margin-left:0}.mbody{grid-template-columns:minmax(0,1fr)}}
 /* 지표 설명 (초보자용, 보고서 맨 아래 — 탭 밖이라 파일로 열어도 #앵커 이동이 된다) */
@@ -277,7 +281,8 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 <header>
   <div>
-    <h1>나스닥 100 일일 브리핑<span class="mode-badge">{{ mode_label }}</span></h1>
+    <h1>{{ titles.title }}<span class="mode-badge">{{ mode_label }}</span></h1>
+    <div class="subtitle">{{ titles.subtitle }}</div>
     <div class="lead">MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준</div>
   </div>
   <div class="meta">
@@ -289,7 +294,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 {% if macro_rows %}
 <section class="macro" aria-label="시장 온도">
-  <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 {{ macro_as_of_str }} · 🟢안정 · 🟡주의 · 🔴위험, ★ = 오늘 위치 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span><a href="#macro-explain">지표 설명 ↓</a></div>
+  <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 {{ macro_as_of_str }} · <i class="dot dot-ok" aria-hidden="true"></i>안정 · <i class="dot dot-warn" aria-hidden="true"></i>주의 · <i class="dot dot-bad" aria-hidden="true"></i>위험, ★ = 오늘 위치 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span><a href="#macro-explain">지표 설명 ↓</a></div>
   <div class="mgrid">
   {% for m in macro_rows %}
     <div class="mt" id="macro-{{ m.slug }}" title="{{ m.name }}{% if m.code %} · {{ m.code }}{% endif %}{% if m.range_str != '-' %} · 1년 {{ m.range_str }}{% endif %}">
@@ -307,7 +312,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
         {% endif %}
         <small>1년 그래프 · 설명 보기 ↓</small></a>
         <ol class="mscale" aria-label="{{ m.name }} 판정 기준">
-          {% for sc in m.scale %}<li class="{{ 'cur' if sc.current else '' }}"><b>{{ sc.symbol }} {{ sc.label }}</b><span class="rg">{{ sc.range }}</span><span class="star">{{ '★' if sc.current else '' }}</span></li>{% endfor %}
+          {% for sc in m.scale %}<li class="{{ 'cur' if sc.current else '' }}"><b><i class="dot dot-{{ sc.status }}" aria-hidden="true"></i>{{ sc.label }}</b><span class="rg">{{ sc.range }}</span><span class="star">{{ '★' if sc.current else '' }}</span></li>{% endfor %}
         </ol>
       </div>
       <div class="mf">
@@ -386,6 +391,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <button data-sub="{{ tab.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" class="{{ 'has' if tab.count else 'empty' }}">{{ tab.title }} ({{ tab.count }})</button>
   {% endfor %}
   </div>
+  <p class="plan-note">수량·투입금액은 구글 시트 '계획' 탭의 계획금액으로 계산합니다. 계획이 없는 종목은 비워 둡니다.</p>
 
   {% for tab in buy_tabs %}
   <div class="sub{{ ' on' if loop.first else '' }}" id="{{ tab.key }}"><div class="sheet"><table>
@@ -651,7 +657,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <div><b>손절부터 확인</b>매도·손절 탭에 "손절"이 있으면 가장 먼저 처리해요. 손실을 작게 끝내는 게 모든 규칙보다 우선이에요.</div>
     <div><b>매도 신호 처리</b>E1·E2·E3 신호가 난 종목은 표에 적힌 범위(1차분·2차분·전량)만큼 팔아요.</div>
     <div><b>신규 매수 주문</b>신규 매수 탭의 지정가·수량 그대로 주문하고, 체결되면 손절 예약 주문을 바로 걸어요.</div>
-    <div><b>체결 기록</b>fills.xlsx에 체결 내역을 적어요. 내일 보고서가 이걸 보고 보유 현황을 계산해요.</div>
+    <div><b>체결 기록</b>구글 시트 '체결' 탭에 체결 내역을 적어요. 내일 보고서가 이걸 보고 보유 현황을 계산해요.</div>
   </div>
 
   <h2>이 프로그램이 쓰는 지표 4가지</h2>
@@ -742,8 +748,8 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <div class="todo" style="margin-top:16px">
 {% if unfilled_names %}<b>미체결 (기록 없음)</b>: {{ unfilled_names }}<br>{% endif %}
 {% if pending_names %}<b>주문 후 체결 기록 필요</b>: {{ pending_names }}<br>{% endif %}
-오늘 주문할 종목은 체결 후 아래 파일에 한 줄씩 기록하세요.<br>
-<code style="font-size:12px">{{ fills_path }}</code> · 형식: 날짜, 종목, 차수, 매수매도, 체결가, 수량 (예: {{ as_of_str }}, PEP, 1차, 매수, 131.80, 34)</div>
+오늘 주문할 종목은 체결 후 구글 시트 '체결' 탭에 한 줄씩 기록하세요.<br>
+형식: 날짜, 종목, 매수매도, 수량, 체결가, 차수, 메모 (예: {{ as_of_str }}, PEP, 매수, 34, 131.80, 1차)</div>
 
 {% if macro_rows %}
 <section class="mexp" id="macro-explain" aria-label="시장 온도 지표 설명">

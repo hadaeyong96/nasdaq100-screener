@@ -34,6 +34,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from notify.briefing import report_titles
 from store import db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -192,9 +193,13 @@ def notify_ops_error(message: str) -> bool:
     return all(_send_text(token, chat_id, chunk) for chunk in split_message(message))
 
 
-def report_attachment_name(as_of_str: str) -> str:
-    """휴대폰 파일 목록에서 알아보기 쉬운 첨부 파일 이름 (P3.4 2번): 나스닥100_YYYY-MM-DD.html"""
-    return f"나스닥100_{as_of_str}.html"
+def report_attachment_name(as_of_str: str, cfg: dict | None = None) -> str:
+    """휴대폰 파일 목록에서 알아보기 쉬운 첨부 파일 이름 (P3.4 2번).
+
+    입력: as_of_str(기준일 YYYY-MM-DD), cfg(config.yaml — report.short_title을 쓴다)
+    출력: "{short_title}_YYYY-MM-DD.html" (예: 데이터브리핑_2026-09-23.html)
+    """
+    return f"{report_titles(cfg)['short_title']}_{as_of_str}.html"
 
 
 def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = False) -> Path:
@@ -235,7 +240,7 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
         report_path = summary.get("report_path")
         if report_path and Path(report_path).exists():
             time.sleep(1)
-            ok = _send_document(token, chat_id, Path(report_path), report_attachment_name(as_of_str)) and ok
+            ok = _send_document(token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg)) and ok
 
         if ok:
             db.record_notified(conn, as_of_str, datetime.now().isoformat(timespec="seconds"))
@@ -363,7 +368,7 @@ def send_group_briefing(
         if ok and report_path and Path(report_path).exists():
             time.sleep(1)
             d_ok, d_migrate, d_err = _send_document_checked(
-                token, group_chat_id, Path(report_path), report_attachment_name(as_of_str)
+                token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg)
             )
             ok = ok and d_ok
             migrate_id = migrate_id or d_migrate
@@ -397,13 +402,16 @@ def group_send_warning_line(result: dict | None) -> str | None:
     return f"⚠️ 단체방 발송 실패: {result.get('error') or '알 수 없는 오류'}"
 
 
-def resend_last(report_path: Path, text_path: Path, as_of_str: str, force_no_send: bool = False) -> bool:
+def resend_last(
+    report_path: Path, text_path: Path, as_of_str: str, force_no_send: bool = False, cfg: dict | None = None
+) -> bool:
     """--resend(P3.4 3번): 상태를 다시 처리하지 않고, 이미 만들어 둔 보고서·글
     파일을 다시 보낸다. 중복 발송 방지 기록(store.db)은 확인하지도, 남기지도 않는다.
 
     입력: report_path(outputs/report_live_YYYY-MM-DD.html — engine.daily.main은 항상 이 실전
          파일만 넘긴다), text_path(outputs/telegram_live_YYYY-MM-DD.txt),
-         as_of_str(첨부 파일 이름에 쓸 기준일), force_no_send(--no-send 플래그)
+         as_of_str(첨부 파일 이름에 쓸 기준일), force_no_send(--no-send 플래그),
+         cfg(첨부 파일 이름의 report.short_title)
     출력: 발송(또는 --no-send 처리) 성공 여부
     """
     if not text_path.exists():
@@ -424,7 +432,7 @@ def resend_last(report_path: Path, text_path: Path, as_of_str: str, force_no_sen
     ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
     if report_path.exists():
         time.sleep(1)
-        ok = _send_document(token, chat_id, report_path, report_attachment_name(as_of_str)) and ok
+        ok = _send_document(token, chat_id, report_path, report_attachment_name(as_of_str, cfg)) and ok
     else:
         print(f"[telegram] {report_path}가 없어 보고서 없이 글만 보냅니다.")
     return ok
