@@ -454,3 +454,48 @@ def test_group_send_warning_line_generic_error():
     )
     assert line is not None
     assert "단체방 발송 실패" in line
+
+
+# ── 단체방도 보고서 파일만 (2026-10-01) ─────────────────────────────────────
+
+
+def test_send_group_briefing_sends_only_public_report_with_title_caption(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setattr(telegram, "ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "data" / "state.db")
+
+    calls = []
+    monkeypatch.setattr(telegram, "_send_text_checked", lambda *a, **k: pytest.fail("본문 글을 따로 보내면 안 된다"))
+    monkeypatch.setattr(
+        telegram, "_send_document_checked",
+        lambda token, chat_id, path, filename=None, caption=None: calls.append((path.name, caption)) or (True, None, None),
+    )
+    report_path = tmp_path / "report_public_2026-09-23.html"
+    report_path.write_text("<html></html>", encoding="utf-8")
+    text = briefing.build_public_briefing_text(_sensitive_summary(), {})
+
+    result = telegram.send_group_briefing(text, report_path, _base_group_summary(), {}, force_no_send=False)
+
+    assert result["ok"] is True
+    assert calls == [("report_public_2026-09-23.html", text.splitlines()[0])]  # 제목 줄만, 추천·시장 온도 본문 없음
+
+
+def test_send_group_briefing_document_migrate_reports_new_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_GROUP_CHAT_ID", "-100123")
+    monkeypatch.setattr(telegram, "ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "data" / "state.db")
+    monkeypatch.setattr(
+        telegram, "_send_document_checked", lambda *a, **k: (False, -1009876543210, "sendDocument: upgraded")
+    )
+    report_path = tmp_path / "report_public_2026-09-23.html"
+    report_path.write_text("<html></html>", encoding="utf-8")
+
+    result = telegram.send_group_briefing("📊 제목", report_path, _base_group_summary(), {}, force_no_send=False)
+    assert result["ok"] is False and result["migrate_to_chat_id"] == -1009876543210
+    conn = db.connect(db.db_path_for_mode("live"))
+    assert db.has_notified(conn, "2026-09-23:group") is False
+    conn.close()

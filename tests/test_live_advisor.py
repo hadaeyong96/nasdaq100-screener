@@ -19,6 +19,7 @@ from engine.daily import (
     build_report_summary,
     compute_live_judgments,
 )
+from tests._offline import block_engine_network
 from tests.test_state import make_df
 
 _CFG = {"entry": {"limit_markup": 1.01}}
@@ -477,6 +478,7 @@ def _patch_run_io(monkeypatch, tmp_path):
         def now(cls, tz=None):
             return now_et if tz is not None else now_et.replace(tzinfo=None)
 
+    block_engine_network(monkeypatch)  # 시장 온도·환율 네트워크 차단
     monkeypatch.setattr(engine_daily, "datetime", _FrozenDateTime)
     return engine_daily
 

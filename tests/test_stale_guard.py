@@ -16,6 +16,7 @@ from data.fills import FillsResult
 from data.prices import US_EASTERN, PriceFetchResult
 from engine import daily as engine_daily
 from store import db
+from tests._offline import block_engine_network
 
 
 def _make_price_df(end_date: str, periods: int = 60, seed: int = 0) -> pd.DataFrame:
@@ -57,6 +58,7 @@ def _patch_io(monkeypatch, tmp_path, last_date: str, fixed_now_et: datetime):
     # 테스트가 실제 네트워크를 타지 않도록 강제로 없앤다(CLAUDE.md 네트워크 없는 테스트 원칙).
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SHEETS_ID", raising=False)
+    block_engine_network(monkeypatch)  # 시장 온도·환율도 네트워크를 타므로 막는다
 
     class _FrozenDateTime(datetime):
         @classmethod
@@ -86,7 +88,8 @@ def test_stale_data_skips_state_changes_and_marks_summary(monkeypatch, tmp_path,
     assert "데이터 지연" in summary["report_path"].read_text(encoding="utf-8")
 
 
-def test_stale_summary_sends_single_delay_notice_no_report_attached(monkeypatch, tmp_path, cfg):
+def test_stale_summary_sends_single_delay_report_with_notice_caption(monkeypatch, tmp_path, cfg):
+    """지연 모드도 보고서 파일 한 통만 (지연 문구는 첨부 설명) — 글은 따로 보내지 않는다."""
     from notify import telegram
 
     now_et = datetime(2026, 9, 24, 7, 0, tzinfo=US_EASTERN)
@@ -98,13 +101,14 @@ def test_stale_summary_sends_single_delay_notice_no_report_attached(monkeypatch,
     summary = engine_daily.run(cfg, "live", do_replay=False, dry_run=False)
 
     calls = []
-    monkeypatch.setattr(telegram, "_send_text", lambda *a, **k: calls.append("text") or True)
     monkeypatch.setattr(
-        telegram, "_send_document", lambda *a, **k: calls.append("doc") or pytest.fail("보고서를 첨부하면 안 된다")
+        telegram, "_send_text", lambda *a, **k: calls.append("text") or pytest.fail("본문 글을 따로 보내면 안 된다")
     )
+    monkeypatch.setattr(telegram, "_send_document", lambda *a, **k: calls.append(("doc", k.get("caption"))) or True)
     path = telegram.send_delay_notice(summary, cfg, force_no_send=False)
 
-    assert calls == ["text"]  # 문서 첨부 없이 글 한 통만
+    assert len(calls) == 1 and calls[0][0] == "doc"  # 보고서 한 통만
+    assert calls[0][1].startswith("데이터 지연:")
     assert "데이터 지연" in path.read_text(encoding="utf-8")
 
 

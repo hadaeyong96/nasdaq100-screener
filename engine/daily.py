@@ -1984,7 +1984,7 @@ def main() -> None:
     print(f"보고서: {summary['report_path']}")
 
     if not args.dry_run:
-        if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 알림 한 통만 보낸다(보고서 첨부 없음)
+        if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 배너 보고서 한 통만 보낸다(지연 문구는 첨부 설명)
             sent_path = telegram.send_delay_notice(summary, cfg, force_no_send=args.no_send)
         else:
             text = briefing.build_briefing_text(summary, cfg)
