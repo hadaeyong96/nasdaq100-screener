@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 import pytest
 
@@ -87,6 +88,56 @@ def test_extract_fact_entries_missing_tag_returns_empty():
 
 def test_extract_fact_entries_missing_taxonomy_returns_empty():
     assert edgar.extract_fact_entries(_sample_facts(), "dei", "EntityCommonStockSharesOutstanding") == []
+
+
+# ── extract_duration_fact_entries (분기 추출, B3 경보용, 2026-10-01) ────────
+
+
+def _quarterly_facts():
+    return {
+        "facts": {
+            "us-gaap": {
+                "Revenues": {
+                    "units": {
+                        "USD": [
+                            # 3개월(분기) 값 — 91일
+                            {"start": "2026-04-01", "end": "2026-06-30", "val": 300, "filed": "2026-08-01", "form": "10-Q", "fp": "Q2"},
+                            # 6개월 누적 값(같은 분기말, 다른 start) — 181일, min_days=80~100 범위 밖
+                            {"start": "2026-01-01", "end": "2026-06-30", "val": 620, "filed": "2026-08-01", "form": "10-Q", "fp": "Q2"},
+                            # 연간(10-K) — form이 10-Q가 아니라 기본 forms에서 제외
+                            {"start": "2025-01-01", "end": "2025-12-31", "val": 1200, "filed": "2026-02-01", "form": "10-K", "fp": "FY"},
+                            # as_of 이후 filed — 미래 데이터
+                            {"start": "2026-07-01", "end": "2026-09-30", "val": 310, "filed": "2026-11-01", "form": "10-Q", "fp": "Q3"},
+                        ]
+                    }
+                }
+            }
+        }
+    }
+
+
+def test_extract_duration_fact_entries_filters_by_day_range():
+    out = edgar.extract_duration_fact_entries(_quarterly_facts(), "us-gaap", "Revenues", date(2026, 9, 1), min_days=80, max_days=100)
+    assert len(out) == 1
+    assert out[0]["val"] == 300
+
+
+def test_extract_duration_fact_entries_excludes_future_filed():
+    out = edgar.extract_duration_fact_entries(_quarterly_facts(), "us-gaap", "Revenues", date(2026, 9, 1), min_days=80, max_days=100)
+    assert all(e["end"] != "2026-09-30" for e in out)  # filed 2026-11-01은 as_of(09-01)보다 미래
+
+
+def test_extract_duration_fact_entries_cumulative_window():
+    out = edgar.extract_duration_fact_entries(_quarterly_facts(), "us-gaap", "Revenues", date(2026, 9, 1), min_days=170, max_days=190)
+    assert len(out) == 1
+    assert out[0]["val"] == 620
+
+
+def test_extract_duration_fact_entries_form_filter_excludes_10k():
+    out = edgar.extract_duration_fact_entries(
+        _quarterly_facts(), "us-gaap", "Revenues", date(2026, 9, 1), min_days=300, max_days=400, forms=("10-Q",)
+    )
+    assert out == []  # 10-K(연간, 365일)는 forms에 없어서 제외
 
 
 # ── 캐시 동작 ────────────────────────────────────────────────────────────

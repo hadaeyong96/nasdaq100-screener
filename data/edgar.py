@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -167,4 +168,37 @@ def extract_fact_entries(company_facts: dict, taxonomy: str, tag: str) -> list[d
     for unit, entries in node.get("units", {}).items():
         for e in entries:
             out.append({**e, "unit": unit})
+    return out
+
+
+def extract_duration_fact_entries(
+    company_facts: dict, taxonomy: str, tag: str, as_of: date,
+    min_days: int, max_days: int, forms: tuple[str, ...] = ("10-Q",),
+) -> list[dict]:
+    """extract_fact_entries 결과 중 기간(duration) 길이가 [min_days, max_days] 안인 것만 고른다
+    (순수 함수, 해자 약화 경보 B3용 분기 추출 — core/moat_alert.py·core/moat_paper.py에서 쓴다).
+
+    XBRL 10-Q는 같은 개념·같은 분기말(end)에 대해 "그 분기 3개월"과 "회계연도 시작부터
+    그 분기까지 누적"을 둘 다 start만 다르게 내는 경우가 많다 — (end-start) 일수로 둘을
+    구분한다(3개월≈80~100일, 9개월 누적≈260~290일, 호출부가 min_days·max_days로 지정).
+
+    입력: company_facts, taxonomy, tag, as_of(filed가 이 날짜보다 미래인 사실은 제외 —
+         미래 데이터 금지), min_days·max_days(기간 일수 범위, 양끝 포함), forms(허용할
+         form 목록, 기본 10-Q만)
+    출력: start·filed·end가 모두 있고 조건을 만족하는 extract_fact_entries 항목 그대로
+         (정렬 안 함 — 호출부가 필요에 따라 정렬·병합한다)
+    """
+    as_of_str = as_of.isoformat()
+    out = []
+    for e in extract_fact_entries(company_facts, taxonomy, tag):
+        if e.get("form") not in forms:
+            continue
+        start, filed, end = e.get("start"), e.get("filed"), e.get("end")
+        if not start or not filed or not end:
+            continue
+        if filed > as_of_str:
+            continue
+        days = (date.fromisoformat(end) - date.fromisoformat(start)).days
+        if min_days <= days <= max_days:
+            out.append(e)
     return out

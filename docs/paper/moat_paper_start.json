@@ -1,0 +1,1284 @@
+{
+  "created_at": "2026-10-01T21:35:17",
+  "rules_doc_hash": "102f78f88e2e7e07",
+  "judgment_date": "2026-09-30",
+  "entry_date": "2026-10-01",
+  "universe": [
+    "AAPL",
+    "ABNB",
+    "ADBE",
+    "ADI",
+    "ADP",
+    "ADSK",
+    "AEP",
+    "ALAB",
+    "ALNY",
+    "AMAT",
+    "AMD",
+    "AMGN",
+    "AMZN",
+    "APP",
+    "ARM",
+    "ASML",
+    "AVGO",
+    "AXON",
+    "BKNG",
+    "BKR",
+    "CCEP",
+    "CDNS",
+    "CEG",
+    "CMCSA",
+    "COST",
+    "CPRT",
+    "CRWD",
+    "CRWV",
+    "CSCO",
+    "CSX",
+    "CTAS",
+    "DASH",
+    "DDOG",
+    "DXCM",
+    "EXC",
+    "FANG",
+    "FAST",
+    "FER",
+    "FTNT",
+    "GEHC",
+    "GILD",
+    "GOOG",
+    "GOOGL",
+    "HON",
+    "HONA",
+    "IDXX",
+    "INTC",
+    "INTU",
+    "ISRG",
+    "KDP",
+    "KLAC",
+    "LIN",
+    "LITE",
+    "LRCX",
+    "MAR",
+    "MCHP",
+    "MDLZ",
+    "MELI",
+    "META",
+    "MNST",
+    "MPWR",
+    "MRVL",
+    "MSFT",
+    "MSTR",
+    "MU",
+    "NBIS",
+    "NFLX",
+    "NVDA",
+    "NXPI",
+    "ODFL",
+    "ORLY",
+    "PANW",
+    "PAYX",
+    "PCAR",
+    "PDD",
+    "PEP",
+    "PLTR",
+    "PYPL",
+    "QCOM",
+    "REGN",
+    "RKLB",
+    "ROP",
+    "ROST",
+    "SBUX",
+    "SHOP",
+    "SNDK",
+    "SNPS",
+    "SPCX",
+    "STX",
+    "TER",
+    "TMUS",
+    "TRI",
+    "TSLA",
+    "TTWO",
+    "TXN",
+    "VRTX",
+    "WBD",
+    "WDAY",
+    "WDC",
+    "WMT",
+    "XEL"
+  ],
+  "sectors": {
+    "AAPL": "Technology",
+    "ABNB": "Consumer Cyclical",
+    "ADBE": "Technology",
+    "ADI": "Technology",
+    "ADP": "Technology",
+    "ADSK": "Technology",
+    "AEP": "Utilities",
+    "ALAB": "Technology",
+    "ALNY": "Healthcare",
+    "AMAT": "Technology",
+    "AMD": "Technology",
+    "AMGN": "Healthcare",
+    "AMZN": "Consumer Cyclical",
+    "APP": "Communication Services",
+    "ARM": "Technology",
+    "ASML": "Technology",
+    "AVGO": "Technology",
+    "AXON": "Industrials",
+    "BKNG": "Consumer Cyclical",
+    "BKR": "Energy",
+    "CCEP": "Consumer Defensive",
+    "CDNS": "Technology",
+    "CEG": "Utilities",
+    "CMCSA": "Communication Services",
+    "COST": "Consumer Defensive",
+    "CPRT": "Industrials",
+    "CRWD": "Technology",
+    "CRWV": "Technology",
+    "CSCO": "Technology",
+    "CSX": "Industrials",
+    "CTAS": "Industrials",
+    "DASH": "Consumer Cyclical",
+    "DDOG": "Technology",
+    "DXCM": "Healthcare",
+    "EXC": "Utilities",
+    "FANG": "Energy",
+    "FAST": "Industrials",
+    "FER": "Industrials",
+    "FTNT": "Technology",
+    "GEHC": "Healthcare",
+    "GILD": "Healthcare",
+    "GOOG": "Communication Services",
+    "GOOGL": "Communication Services",
+    "HON": "Industrials",
+    "HONA": "Industrials",
+    "IDXX": "Healthcare",
+    "INTC": "Technology",
+    "INTU": "Technology",
+    "ISRG": "Healthcare",
+    "KDP": "Consumer Defensive",
+    "KLAC": "Technology",
+    "LIN": "Basic Materials",
+    "LITE": "Technology",
+    "LRCX": "Technology",
+    "MAR": "Consumer Cyclical",
+    "MCHP": "Technology",
+    "MDLZ": "Consumer Defensive",
+    "MELI": "Consumer Cyclical",
+    "META": "Communication Services",
+    "MNST": "Consumer Defensive",
+    "MPWR": "Technology",
+    "MRVL": "Technology",
+    "MSFT": "Technology",
+    "MSTR": "Technology",
+    "MU": "Technology",
+    "NBIS": "Communication Services",
+    "NFLX": "Communication Services",
+    "NVDA": "Technology",
+    "NXPI": "Technology",
+    "ODFL": "Industrials",
+    "ORLY": "Consumer Cyclical",
+    "PANW": "Technology",
+    "PAYX": "Technology",
+    "PCAR": "Industrials",
+    "PDD": "Consumer Cyclical",
+    "PEP": "Consumer Defensive",
+    "PLTR": "Technology",
+    "PYPL": "Financial Services",
+    "QCOM": "Technology",
+    "REGN": "Healthcare",
+    "RKLB": "Industrials",
+    "ROP": "Technology",
+    "ROST": "Consumer Cyclical",
+    "SBUX": "Consumer Cyclical",
+    "SHOP": "Technology",
+    "SNDK": "Technology",
+    "SNPS": "Technology",
+    "SPCX": "Industrials",
+    "STX": "Technology",
+    "TER": "Technology",
+    "TMUS": "Communication Services",
+    "TRI": "Industrials",
+    "TSLA": "Consumer Cyclical",
+    "TTWO": "Communication Services",
+    "TXN": "Technology",
+    "VRTX": "Healthcare",
+    "WBD": "Communication Services",
+    "WDAY": "Technology",
+    "WDC": "Technology",
+    "WMT": "Consumer Defensive",
+    "XEL": "Utilities"
+  },
+  "grades": {
+    "AAPL": "넓음",
+    "ABNB": "좁음",
+    "ADBE": "넓음",
+    "ADI": "넓음",
+    "ADP": "넓음",
+    "ADSK": "넓음",
+    "AEP": "없음",
+    "ALAB": "판단 불가",
+    "ALNY": "없음",
+    "AMAT": "넓음",
+    "AMD": "넓음",
+    "AMGN": "좁음",
+    "AMZN": "없음",
+    "APP": "없음",
+    "ARM": "좁음",
+    "ASML": "넓음",
+    "AVGO": "좁음",
+    "AXON": "없음",
+    "BKNG": "없음",
+    "BKR": "없음",
+    "CCEP": "좁음",
+    "CDNS": "좁음",
+    "CEG": "없음",
+    "CMCSA": "좁음",
+    "COST": "넓음",
+    "CPRT": "좁음",
+    "CRWD": "없음",
+    "CRWV": "판단 불가",
+    "CSCO": "넓음",
+    "CSX": "없음",
+    "CTAS": "넓음",
+    "DASH": "없음",
+    "DDOG": "좁음",
+    "DXCM": "없음",
+    "EXC": "없음",
+    "FANG": "없음",
+    "FAST": "넓음",
+    "FER": "판단 불가",
+    "FTNT": "넓음",
+    "GEHC": "없음",
+    "GILD": "좁음",
+    "GOOG": "넓음",
+    "GOOGL": "넓음",
+    "HON": "넓음",
+    "HONA": "판단 불가",
+    "IDXX": "넓음",
+    "INTC": "없음",
+    "INTU": "좁음",
+    "ISRG": "넓음",
+    "KDP": "넓음",
+    "KLAC": "넓음",
+    "LIN": "좁음",
+    "LITE": "없음",
+    "LRCX": "넓음",
+    "MAR": "좁음",
+    "MCHP": "없음",
+    "MDLZ": "좁음",
+    "MELI": "넓음",
+    "META": "좁음",
+    "MNST": "넓음",
+    "MPWR": "넓음",
+    "MRVL": "없음",
+    "MSFT": "넓음",
+    "MSTR": "없음",
+    "MU": "없음",
+    "NBIS": "없음",
+    "NFLX": "없음",
+    "NVDA": "좁음",
+    "NXPI": "넓음",
+    "ODFL": "좁음",
+    "ORLY": "넓음",
+    "PANW": "넓음",
+    "PAYX": "넓음",
+    "PCAR": "좁음",
+    "PDD": "좁음",
+    "PEP": "넓음",
+    "PLTR": "좁음",
+    "PYPL": "좁음",
+    "QCOM": "넓음",
+    "REGN": "좁음",
+    "RKLB": "없음",
+    "ROP": "넓음",
+    "ROST": "넓음",
+    "SBUX": "좁음",
+    "SHOP": "좁음",
+    "SNDK": "판단 불가",
+    "SNPS": "넓음",
+    "SPCX": "판단 불가",
+    "STX": "없음",
+    "TER": "넓음",
+    "TMUS": "없음",
+    "TRI": "좁음",
+    "TSLA": "좁음",
+    "TTWO": "없음",
+    "TXN": "좁음",
+    "VRTX": "좁음",
+    "WBD": "없음",
+    "WDAY": "없음",
+    "WDC": "없음",
+    "WMT": "넓음",
+    "XEL": "좁음"
+  },
+  "cik": {
+    "AAPL": 320193,
+    "ABNB": 1559720,
+    "ADBE": 796343,
+    "ADI": 6281,
+    "ADP": 8670,
+    "ADSK": 769397,
+    "AEP": 4904,
+    "ALAB": 1736297,
+    "ALNY": 1178670,
+    "AMAT": 6951,
+    "AMD": 2488,
+    "AMGN": 318154,
+    "AMZN": 1018724,
+    "APP": 1751008,
+    "ARM": 1973239,
+    "ASML": 937966,
+    "AVGO": 1730168,
+    "AXON": 1069183,
+    "BKNG": 1075531,
+    "BKR": 1701605,
+    "CCEP": 1650107,
+    "CDNS": 813672,
+    "CEG": 1868275,
+    "CMCSA": 1166691,
+    "COST": 909832,
+    "CPRT": 900075,
+    "CRWD": 1535527,
+    "CRWV": 1769628,
+    "CSCO": 858877,
+    "CSX": 277948,
+    "CTAS": 723254,
+    "DASH": 1792789,
+    "DDOG": 1561550,
+    "DXCM": 1093557,
+    "EXC": 1109357,
+    "FANG": 1539838,
+    "FAST": 815556,
+    "FER": 1468522,
+    "FTNT": 1262039,
+    "GEHC": 1932393,
+    "GILD": 882095,
+    "GOOG": 1652044,
+    "GOOGL": 1652044,
+    "HON": 773840,
+    "HONA": 2089271,
+    "IDXX": 874716,
+    "INTC": 50863,
+    "INTU": 896878,
+    "ISRG": 1035267,
+    "KDP": 1418135,
+    "KLAC": 319201,
+    "LIN": 1707925,
+    "LITE": 1633978,
+    "LRCX": 707549,
+    "MAR": 1048286,
+    "MCHP": 827054,
+    "MDLZ": 1103982,
+    "MELI": 1099590,
+    "META": 1326801,
+    "MNST": 865752,
+    "MPWR": 1280452,
+    "MRVL": 1835632,
+    "MSFT": 789019,
+    "MSTR": 1050446,
+    "MU": 723125,
+    "NBIS": 1513845,
+    "NFLX": 1065280,
+    "NVDA": 1045810,
+    "NXPI": 1413447,
+    "ODFL": 878927,
+    "ORLY": 898173,
+    "PANW": 1327567,
+    "PAYX": 723531,
+    "PCAR": 75362,
+    "PDD": 1737806,
+    "PEP": 77476,
+    "PLTR": 1321655,
+    "PYPL": 1633917,
+    "QCOM": 804328,
+    "REGN": 872589,
+    "RKLB": 1819994,
+    "ROP": 882835,
+    "ROST": 745732,
+    "SBUX": 829224,
+    "SHOP": 1594805,
+    "SNDK": 2023554,
+    "SNPS": 883241,
+    "SPCX": 1181412,
+    "STX": 1137789,
+    "TER": 97210,
+    "TMUS": 1283699,
+    "TRI": 1075124,
+    "TSLA": 1318605,
+    "TTWO": 946581,
+    "TXN": 97476,
+    "VRTX": 875320,
+    "WBD": 1437107,
+    "WDAY": 1327811,
+    "WDC": 106040,
+    "WMT": 104169,
+    "XEL": 72903
+  },
+  "shares_outstanding": {
+    "AAPL": {
+      "value": 14594180000.0,
+      "source": "dei_cover_page"
+    },
+    "ABNB": {
+      "value": 597000000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "ADBE": {
+      "value": 389200000.0,
+      "source": "dei_cover_page"
+    },
+    "ADI": {
+      "value": 484565465.0,
+      "source": "dei_cover_page"
+    },
+    "ADP": {
+      "value": 397262737.0,
+      "source": "dei_cover_page"
+    },
+    "ADSK": {
+      "value": 209000000.0,
+      "source": "dei_cover_page"
+    },
+    "AEP": {
+      "value": 544104955.0,
+      "source": "dei_cover_page"
+    },
+    "ALAB": {
+      "value": 173485104.0,
+      "source": "dei_cover_page"
+    },
+    "ALNY": {
+      "value": 133809118.0,
+      "source": "dei_cover_page"
+    },
+    "AMAT": {
+      "value": 793597443.0,
+      "source": "dei_cover_page"
+    },
+    "AMD": {
+      "value": 1632475042.0,
+      "source": "dei_cover_page"
+    },
+    "AMGN": {
+      "value": 540632005.0,
+      "source": "dei_cover_page"
+    },
+    "AMZN": {
+      "value": 10786313572.0,
+      "source": "dei_cover_page"
+    },
+    "APP": {
+      "value": 337031000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "ARM": {
+      "value": 1064055252.0,
+      "source": "dei_cover_page"
+    },
+    "ASML": {
+      "value": 385417665.0,
+      "source": "dei_cover_page"
+    },
+    "AVGO": {
+      "value": 4773629865.0,
+      "source": "dei_cover_page"
+    },
+    "AXON": {
+      "value": 81237415.0,
+      "source": "dei_cover_page"
+    },
+    "BKNG": {
+      "value": 751380500.0,
+      "source": "dei_cover_page"
+    },
+    "BKR": {
+      "value": 992674071.0,
+      "source": "dei_cover_page"
+    },
+    "CCEP": {
+      "value": 449086551.0,
+      "source": "dei_cover_page"
+    },
+    "CDNS": {
+      "value": 275816000.0,
+      "source": "dei_cover_page"
+    },
+    "CEG": {
+      "value": 354307379.0,
+      "source": "dei_cover_page"
+    },
+    "CMCSA": {
+      "value": 2063073161.0,
+      "source": "dei_cover_page"
+    },
+    "COST": {
+      "value": 443478804.0,
+      "source": "dei_cover_page"
+    },
+    "CPRT": {
+      "value": 926330452.0,
+      "source": "dei_cover_page"
+    },
+    "CRWD": {
+      "value": 1023934842.0,
+      "source": "dei_cover_page"
+    },
+    "CRWV": {
+      "value": 551000000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "CSCO": {
+      "value": 3942586873.0,
+      "source": "dei_cover_page"
+    },
+    "CSX": {
+      "value": 1852474917.0,
+      "source": "dei_cover_page"
+    },
+    "CTAS": {
+      "value": 400169561.0,
+      "source": "dei_cover_page"
+    },
+    "DASH": {
+      "value": 439345000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "DDOG": {
+      "value": 371023000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "DXCM": {
+      "value": 377360765.0,
+      "source": "dei_cover_page"
+    },
+    "EXC": {
+      "value": 1023208142.0,
+      "source": "dei_cover_page"
+    },
+    "FANG": {
+      "value": 280024353.0,
+      "source": "dei_cover_page"
+    },
+    "FAST": {
+      "value": 1147497573.0,
+      "source": "dei_cover_page"
+    },
+    "FER": {
+      "value": 720626181.0,
+      "source": "dei_cover_page"
+    },
+    "FTNT": {
+      "value": 733713653.0,
+      "source": "dei_cover_page"
+    },
+    "GEHC": {
+      "value": 454891786.0,
+      "source": "dei_cover_page"
+    },
+    "GILD": {
+      "value": 1239955155.0,
+      "source": "dei_cover_page"
+    },
+    "GOOG": {
+      "value": 24618000000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "GOOGL": {
+      "value": 24618000000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "HON": {
+      "value": 316940010.0,
+      "source": "dei_cover_page"
+    },
+    "HONA": {
+      "value": 316952725.0,
+      "source": "dei_cover_page"
+    },
+    "IDXX": {
+      "value": 78781116.0,
+      "source": "dei_cover_page"
+    },
+    "INTC": {
+      "value": 5044000000.0,
+      "source": "dei_cover_page"
+    },
+    "INTU": {
+      "value": 267236000.0,
+      "source": "dei_cover_page"
+    },
+    "ISRG": {
+      "value": 353278038.0,
+      "source": "dei_cover_page"
+    },
+    "KDP": {
+      "value": 1360826038.0,
+      "source": "dei_cover_page"
+    },
+    "KLAC": {
+      "value": 1306546783.0,
+      "source": "dei_cover_page"
+    },
+    "LIN": {
+      "value": 460980163.0,
+      "source": "dei_cover_page"
+    },
+    "LITE": {
+      "value": 89700000.0,
+      "source": "dei_cover_page"
+    },
+    "LRCX": {
+      "value": 1251321000.0,
+      "source": "dei_cover_page"
+    },
+    "MAR": {
+      "value": 260766288.0,
+      "source": "dei_cover_page"
+    },
+    "MCHP": {
+      "value": 543008691.0,
+      "source": "dei_cover_page"
+    },
+    "MDLZ": {
+      "value": 1283649766.0,
+      "source": "dei_cover_page"
+    },
+    "MELI": {
+      "value": 50696802.0,
+      "source": "dei_cover_page"
+    },
+    "META": {
+      "value": 2566000000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "MNST": {
+      "value": 979525882.0,
+      "source": "dei_cover_page"
+    },
+    "MPWR": {
+      "value": 49143000.0,
+      "source": "dei_cover_page"
+    },
+    "MRVL": {
+      "value": 876900000.0,
+      "source": "dei_cover_page"
+    },
+    "MSFT": {
+      "value": 7425545491.0,
+      "source": "dei_cover_page"
+    },
+    "MSTR": {
+      "value": 352534000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "MU": {
+      "value": 1129393151.0,
+      "source": "dei_cover_page"
+    },
+    "NBIS": {
+      "value": 238400165.0,
+      "source": "yfinance_current(시점 다름)"
+    },
+    "NFLX": {
+      "value": 4163939676.0,
+      "source": "dei_cover_page"
+    },
+    "NVDA": {
+      "value": 24100000000.0,
+      "source": "dei_cover_page"
+    },
+    "NXPI": {
+      "value": 252471079.0,
+      "source": "dei_cover_page"
+    },
+    "ODFL": {
+      "value": 207356622.0,
+      "source": "dei_cover_page"
+    },
+    "ORLY": {
+      "value": 808960792.0,
+      "source": "dei_cover_page"
+    },
+    "PANW": {
+      "value": 818000000.0,
+      "source": "dei_cover_page"
+    },
+    "PAYX": {
+      "value": 355980473.0,
+      "source": "dei_cover_page"
+    },
+    "PCAR": {
+      "value": 526364953.0,
+      "source": "dei_cover_page"
+    },
+    "PDD": {
+      "value": 1423396462.0,
+      "source": "yfinance_current(시점 다름)"
+    },
+    "PEP": {
+      "value": 1364891558.0,
+      "source": "dei_cover_page"
+    },
+    "PLTR": {
+      "value": 2568694000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "PYPL": {
+      "value": 882105493.0,
+      "source": "dei_cover_page"
+    },
+    "QCOM": {
+      "value": 1050000000.0,
+      "source": "dei_cover_page"
+    },
+    "REGN": {
+      "value": 93955110.0,
+      "source": "dei_cover_page"
+    },
+    "RKLB": {
+      "value": 598350482.0,
+      "source": "dei_cover_page"
+    },
+    "ROP": {
+      "value": 98900874.0,
+      "source": "dei_cover_page"
+    },
+    "ROST": {
+      "value": 319453110.0,
+      "source": "dei_cover_page"
+    },
+    "SBUX": {
+      "value": 1140000000.0,
+      "source": "dei_cover_page"
+    },
+    "SHOP": {
+      "value": 1297940958.0,
+      "source": "diluted_shares_fallback"
+    },
+    "SNDK": {
+      "value": 146419001.0,
+      "source": "dei_cover_page"
+    },
+    "SNPS": {
+      "value": 191636646.0,
+      "source": "dei_cover_page"
+    },
+    "SPCX": {
+      "value": 5864000000.0,
+      "source": "diluted_shares_fallback"
+    },
+    "STX": {
+      "value": 226644518.0,
+      "source": "dei_cover_page"
+    },
+    "TER": {
+      "value": 156340750.0,
+      "source": "dei_cover_page"
+    },
+    "TMUS": {
+      "value": 1072671613.0,
+      "source": "dei_cover_page"
+    },
+    "TRI": {
+      "value": 486092864.0,
+      "source": "dei_cover_page"
+    },
+    "TSLA": {
+      "value": 3949547394.0,
+      "source": "dei_cover_page"
+    },
+    "TTWO": {
+      "value": 186980443.0,
+      "source": "dei_cover_page"
+    },
+    "TXN": {
+      "value": 913247686.0,
+      "source": "dei_cover_page"
+    },
+    "VRTX": {
+      "value": 253460924.0,
+      "source": "dei_cover_page"
+    },
+    "WBD": {
+      "value": 2510703314.0,
+      "source": "dei_cover_page"
+    },
+    "WDAY": {
+      "value": 220000000.0,
+      "source": "dei_cover_page"
+    },
+    "WDC": {
+      "value": 360540944.0,
+      "source": "dei_cover_page"
+    },
+    "WMT": {
+      "value": 7933746241.0,
+      "source": "dei_cover_page"
+    },
+    "XEL": {
+      "value": 624634306.0,
+      "source": "dei_cover_page"
+    }
+  },
+  "wide_tickers": [
+    "AAPL",
+    "ADBE",
+    "ADI",
+    "ADP",
+    "ADSK",
+    "AMAT",
+    "AMD",
+    "ASML",
+    "COST",
+    "CSCO",
+    "CTAS",
+    "FAST",
+    "FTNT",
+    "GOOG",
+    "HON",
+    "IDXX",
+    "ISRG",
+    "KDP",
+    "KLAC",
+    "LRCX",
+    "MELI",
+    "MNST",
+    "MPWR",
+    "MSFT",
+    "NXPI",
+    "ORLY",
+    "PANW",
+    "PAYX",
+    "PEP",
+    "QCOM",
+    "ROP",
+    "ROST",
+    "SNPS",
+    "TER",
+    "WMT"
+  ],
+  "random": {
+    "pool": [
+      "AAPL",
+      "ABNB",
+      "ADBE",
+      "ADI",
+      "ADP",
+      "ADSK",
+      "AEP",
+      "ALAB",
+      "ALNY",
+      "AMAT",
+      "AMD",
+      "AMGN",
+      "AMZN",
+      "APP",
+      "ARM",
+      "ASML",
+      "AVGO",
+      "AXON",
+      "BKNG",
+      "BKR",
+      "CCEP",
+      "CDNS",
+      "CEG",
+      "CMCSA",
+      "COST",
+      "CPRT",
+      "CRWD",
+      "CRWV",
+      "CSCO",
+      "CSX",
+      "CTAS",
+      "DASH",
+      "DDOG",
+      "DXCM",
+      "EXC",
+      "FANG",
+      "FAST",
+      "FER",
+      "FTNT",
+      "GEHC",
+      "GILD",
+      "GOOG",
+      "GOOGL",
+      "HON",
+      "HONA",
+      "IDXX",
+      "INTC",
+      "INTU",
+      "ISRG",
+      "KDP",
+      "KLAC",
+      "LIN",
+      "LITE",
+      "LRCX",
+      "MAR",
+      "MCHP",
+      "MDLZ",
+      "MELI",
+      "META",
+      "MNST",
+      "MPWR",
+      "MRVL",
+      "MSFT",
+      "MSTR",
+      "MU",
+      "NBIS",
+      "NFLX",
+      "NVDA",
+      "NXPI",
+      "ODFL",
+      "ORLY",
+      "PANW",
+      "PAYX",
+      "PCAR",
+      "PDD",
+      "PEP",
+      "PLTR",
+      "PYPL",
+      "QCOM",
+      "REGN",
+      "RKLB",
+      "ROP",
+      "ROST",
+      "SBUX",
+      "SHOP",
+      "SNDK",
+      "SNPS",
+      "SPCX",
+      "STX",
+      "TER",
+      "TMUS",
+      "TRI",
+      "TSLA",
+      "TTWO",
+      "TXN",
+      "VRTX",
+      "WBD",
+      "WDAY",
+      "WDC",
+      "WMT",
+      "XEL"
+    ],
+    "n": 35,
+    "seed": 20261001,
+    "trials": 1000
+  },
+  "entries": {
+    "AAPL": {
+      "status": "진입 대기"
+    },
+    "ABNB": {
+      "status": "진입 대기"
+    },
+    "ADBE": {
+      "status": "진입 대기"
+    },
+    "ADI": {
+      "status": "진입 대기"
+    },
+    "ADP": {
+      "status": "진입 대기"
+    },
+    "ADSK": {
+      "status": "진입 대기"
+    },
+    "AEP": {
+      "status": "진입 대기"
+    },
+    "ALAB": {
+      "status": "진입 대기"
+    },
+    "ALNY": {
+      "status": "진입 대기"
+    },
+    "AMAT": {
+      "status": "진입 대기"
+    },
+    "AMD": {
+      "status": "진입 대기"
+    },
+    "AMGN": {
+      "status": "진입 대기"
+    },
+    "AMZN": {
+      "status": "진입 대기"
+    },
+    "APP": {
+      "status": "진입 대기"
+    },
+    "ARM": {
+      "status": "진입 대기"
+    },
+    "ASML": {
+      "status": "진입 대기"
+    },
+    "AVGO": {
+      "status": "진입 대기"
+    },
+    "AXON": {
+      "status": "진입 대기"
+    },
+    "BKNG": {
+      "status": "진입 대기"
+    },
+    "BKR": {
+      "status": "진입 대기"
+    },
+    "CCEP": {
+      "status": "진입 대기"
+    },
+    "CDNS": {
+      "status": "진입 대기"
+    },
+    "CEG": {
+      "status": "진입 대기"
+    },
+    "CMCSA": {
+      "status": "진입 대기"
+    },
+    "COST": {
+      "status": "진입 대기"
+    },
+    "CPRT": {
+      "status": "진입 대기"
+    },
+    "CRWD": {
+      "status": "진입 대기"
+    },
+    "CRWV": {
+      "status": "진입 대기"
+    },
+    "CSCO": {
+      "status": "진입 대기"
+    },
+    "CSX": {
+      "status": "진입 대기"
+    },
+    "CTAS": {
+      "status": "진입 대기"
+    },
+    "DASH": {
+      "status": "진입 대기"
+    },
+    "DDOG": {
+      "status": "진입 대기"
+    },
+    "DXCM": {
+      "status": "진입 대기"
+    },
+    "EXC": {
+      "status": "진입 대기"
+    },
+    "FANG": {
+      "status": "진입 대기"
+    },
+    "FAST": {
+      "status": "진입 대기"
+    },
+    "FER": {
+      "status": "진입 대기"
+    },
+    "FTNT": {
+      "status": "진입 대기"
+    },
+    "GEHC": {
+      "status": "진입 대기"
+    },
+    "GILD": {
+      "status": "진입 대기"
+    },
+    "GOOG": {
+      "status": "진입 대기"
+    },
+    "GOOGL": {
+      "status": "진입 대기"
+    },
+    "HON": {
+      "status": "진입 대기"
+    },
+    "HONA": {
+      "status": "진입 대기"
+    },
+    "IDXX": {
+      "status": "진입 대기"
+    },
+    "INTC": {
+      "status": "진입 대기"
+    },
+    "INTU": {
+      "status": "진입 대기"
+    },
+    "ISRG": {
+      "status": "진입 대기"
+    },
+    "KDP": {
+      "status": "진입 대기"
+    },
+    "KLAC": {
+      "status": "진입 대기"
+    },
+    "LIN": {
+      "status": "진입 대기"
+    },
+    "LITE": {
+      "status": "진입 대기"
+    },
+    "LRCX": {
+      "status": "진입 대기"
+    },
+    "MAR": {
+      "status": "진입 대기"
+    },
+    "MCHP": {
+      "status": "진입 대기"
+    },
+    "MDLZ": {
+      "status": "진입 대기"
+    },
+    "MELI": {
+      "status": "진입 대기"
+    },
+    "META": {
+      "status": "진입 대기"
+    },
+    "MNST": {
+      "status": "진입 대기"
+    },
+    "MPWR": {
+      "status": "진입 대기"
+    },
+    "MRVL": {
+      "status": "진입 대기"
+    },
+    "MSFT": {
+      "status": "진입 대기"
+    },
+    "MSTR": {
+      "status": "진입 대기"
+    },
+    "MU": {
+      "status": "진입 대기"
+    },
+    "NBIS": {
+      "status": "진입 대기"
+    },
+    "NFLX": {
+      "status": "진입 대기"
+    },
+    "NVDA": {
+      "status": "진입 대기"
+    },
+    "NXPI": {
+      "status": "진입 대기"
+    },
+    "ODFL": {
+      "status": "진입 대기"
+    },
+    "ORLY": {
+      "status": "진입 대기"
+    },
+    "PANW": {
+      "status": "진입 대기"
+    },
+    "PAYX": {
+      "status": "진입 대기"
+    },
+    "PCAR": {
+      "status": "진입 대기"
+    },
+    "PDD": {
+      "status": "진입 대기"
+    },
+    "PEP": {
+      "status": "진입 대기"
+    },
+    "PLTR": {
+      "status": "진입 대기"
+    },
+    "PYPL": {
+      "status": "진입 대기"
+    },
+    "QCOM": {
+      "status": "진입 대기"
+    },
+    "QQEW": {
+      "status": "진입 대기"
+    },
+    "QQQM": {
+      "status": "진입 대기"
+    },
+    "REGN": {
+      "status": "진입 대기"
+    },
+    "RKLB": {
+      "status": "진입 대기"
+    },
+    "ROP": {
+      "status": "진입 대기"
+    },
+    "ROST": {
+      "status": "진입 대기"
+    },
+    "SBUX": {
+      "status": "진입 대기"
+    },
+    "SHOP": {
+      "status": "진입 대기"
+    },
+    "SNDK": {
+      "status": "진입 대기"
+    },
+    "SNPS": {
+      "status": "진입 대기"
+    },
+    "SPCX": {
+      "status": "진입 대기"
+    },
+    "STX": {
+      "status": "진입 대기"
+    },
+    "TER": {
+      "status": "진입 대기"
+    },
+    "TMUS": {
+      "status": "진입 대기"
+    },
+    "TRI": {
+      "status": "진입 대기"
+    },
+    "TSLA": {
+      "status": "진입 대기"
+    },
+    "TTWO": {
+      "status": "진입 대기"
+    },
+    "TXN": {
+      "status": "진입 대기"
+    },
+    "VRTX": {
+      "status": "진입 대기"
+    },
+    "WBD": {
+      "status": "진입 대기"
+    },
+    "WDAY": {
+      "status": "진입 대기"
+    },
+    "WDC": {
+      "status": "진입 대기"
+    },
+    "WMT": {
+      "status": "진입 대기"
+    },
+    "XEL": {
+      "status": "진입 대기"
+    }
+  },
+  "p1_weights": null,
+  "p2_weights": null,
+  "p2_market_caps": null,
+  "status": "진입 대기"
+}
