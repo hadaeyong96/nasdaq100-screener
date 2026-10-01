@@ -16,6 +16,7 @@ from data.fills import FillsResult
 from data.prices import US_EASTERN, PriceFetchResult
 from engine import daily as engine_daily
 from store import db
+from tests._offline import block_engine_network
 
 
 def _make_price_df(end_date: str, periods: int = 60, seed: int = 0) -> pd.DataFrame:
@@ -57,6 +58,7 @@ def _patch_io(monkeypatch, tmp_path, last_date: str, fixed_now_et: datetime):
     # 테스트가 실제 네트워크를 타지 않도록 강제로 없앤다(CLAUDE.md 네트워크 없는 테스트 원칙).
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SHEETS_ID", raising=False)
+    block_engine_network(monkeypatch)  # 시장 온도·환율도 네트워크를 타므로 막는다
 
     class _FrozenDateTime(datetime):
         @classmethod
