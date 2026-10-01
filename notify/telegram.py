@@ -1,12 +1,16 @@
 """텔레그램 발송 (P3, 4번).
 
-토큰(.env의 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)이 없으면 보내지 않고
-outputs/telegram_{모드}_YYYY-MM-DD.txt에 저장만 한다. 에러로 멈추지 않는다.
-4096자를 넘으면 나눠 보내고, 실패하면 3번 재시도한다. 같은 기준일 중복 발송은
-store.db의 notifications 테이블로 막는다(성공적으로 다 보낸 뒤에만 기록한다).
+텔레그램에는 HTML 보고서 파일 한 통만 보낸다 — 본문 글(브리핑 텍스트)은 보내지
+않고, 제목 줄(+정정본·경고 줄)만 첨부 설명(caption)으로 붙인다(2026-10-01 사용자
+확정, `report_caption`). 보고서 파일이 없을 때만 본문 글을 대신 보낸다.
 
-데이터 지연 모드(P3.2 2번)에는 `send_delay_notice`로 알림 한 통만 보내고
-(보고서 첨부 없음), 일반 브리핑(`send_briefing`)은 부르지 않는다.
+토큰(.env의 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)이 없으면 보내지 않고
+outputs/telegram_{모드}_YYYY-MM-DD.txt에 본문을 저장만 한다. 에러로 멈추지 않는다.
+글을 보낼 때 4096자를 넘으면 나눠 보내고, 실패하면 3번 재시도한다. 같은 기준일 중복
+발송은 store.db의 notifications 테이블로 막는다(성공적으로 다 보낸 뒤에만 기록한다).
+
+데이터 지연 모드(P3.2 2번)에는 `send_delay_notice`로 지연 배너가 붙은 보고서 한 통만
+(지연 문구를 첨부 설명으로) 보내고, 일반 브리핑(`send_briefing`)은 부르지 않는다.
 
 모의(paper) 모드는 두 함수 모두 --no-send 여부와 무관하게 절대 실제로 보내지
 않는다(파일 저장까지만 한다) — 모의를 실전과 매일 나란히 돌리기 시작하면서 생긴
@@ -15,7 +19,7 @@ store.db의 notifications 테이블로 막는다(성공적으로 다 보낸 뒤�
 ## 단체방(투자클럽) 공개 발송
 
 `send_group_briefing`은 TELEGRAM_GROUP_CHAT_ID(선택, 없으면 조용히 건너뜀)로
-공개용 브리핑(notify.briefing.build_public_briefing_text)만 보낸다. paper 모드는
+공개용 보고서 파일 한 통만 보낸다(제목 줄 첨부 설명, 본문 글은 보고서가 없을 때만). paper 모드는
 send_briefing과 같은 이유로 절대 보내지 않는다(하드 가드). 실패해도 예외를
 던지지 않고 결과 dict로 돌려준다 — 호출부(engine.daily)가 개인 채팅에 경고 한
 줄만 남기고 실행을 계속하기 위해서다. 그룹이 슈퍼그룹으로 전환돼 텔레그램이
@@ -45,6 +49,7 @@ load_dotenv(ENV_PATH, override=True)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_LEN = 4096
+MAX_CAPTION_LEN = 1024  # 텔레그램 sendDocument caption 한도
 MAX_RETRIES = 3
 
 
@@ -73,6 +78,22 @@ def split_message(text: str, limit: int = MAX_LEN) -> list[str]:
     return parts
 
 
+def report_caption(text: str, limit: int = MAX_CAPTION_LEN) -> str:
+    """브리핑 본문 -> 보고서 첨부에 붙일 짧은 설명 (순수 함수).
+
+    텔레그램은 보고서 파일 한 통만 보낸다(본문 글은 보내지 않는다, 2026-10-01 사용자 확정).
+    첨부만 봐도 무슨 파일인지 알 수 있게 본문 첫 줄(📊 제목 · 날짜 · 모드)과, 놓치면
+    안 되는 정정본(🔁)·오류 경고(⚠️) 줄만 남긴다. limit자를 넘으면 자른다.
+    출력 예: "📊 데이터브리핑 · 9/30(수) 마감 · 실전"
+    """
+    lines = [line for line in text.strip().split("\n") if line.strip()]
+    if not lines:
+        return ""
+    kept = [lines[0]] + [line for line in lines[1:] if line.startswith(("🔁", "⚠️"))]
+    caption = "\n".join(kept)
+    return caption if len(caption) <= limit else caption[: limit - 1] + "…"
+
+
 def _request_with_retry(request_fn, description: str) -> bool:
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -94,13 +115,24 @@ def _send_text(token: str, chat_id: str, text: str) -> bool:
     )
 
 
-def _send_document(token: str, chat_id: str, path: Path, filename: str | None = None) -> bool:
+def _document_data(chat_id: str, caption: str | None) -> dict:
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
+    return data
+
+
+def _send_document(
+    token: str, chat_id: str, path: Path, filename: str | None = None, caption: str | None = None
+) -> bool:
     url = TELEGRAM_API.format(token=token, method="sendDocument")
     display_name = filename or path.name
 
     def _do():
         with open(path, "rb") as f:
-            return requests.post(url, data={"chat_id": chat_id}, files={"document": (display_name, f)}, timeout=60)
+            return requests.post(
+                url, data=_document_data(chat_id, caption), files={"document": (display_name, f)}, timeout=60
+            )
 
     return _request_with_retry(_do, "sendDocument")
 
@@ -148,13 +180,17 @@ def _send_text_checked(token: str, chat_id: str, text: str) -> tuple[bool, int |
     )
 
 
-def _send_document_checked(token: str, chat_id: str, path: Path, filename: str | None = None) -> tuple[bool, int | None, str | None]:
+def _send_document_checked(
+    token: str, chat_id: str, path: Path, filename: str | None = None, caption: str | None = None
+) -> tuple[bool, int | None, str | None]:
     url = TELEGRAM_API.format(token=token, method="sendDocument")
     display_name = filename or path.name
 
     def _do():
         with open(path, "rb") as f:
-            return requests.post(url, data={"chat_id": chat_id}, files={"document": (display_name, f)}, timeout=60)
+            return requests.post(
+                url, data=_document_data(chat_id, caption), files={"document": (display_name, f)}, timeout=60
+            )
 
     return _post_checked(_do, "sendDocument")
 
@@ -203,11 +239,15 @@ def report_attachment_name(as_of_str: str, cfg: dict | None = None) -> str:
 
 
 def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = False) -> Path:
-    """브리핑을 보낸다(토큰 있으면). 항상 outputs/telegram_{모드}_YYYY-MM-DD.txt에 본문을 남긴다.
+    """보고서 HTML 파일 한 통만 보낸다(토큰 있으면). 항상 outputs/telegram_{모드}_YYYY-MM-DD.txt에 본문을 남긴다.
 
     입력: text(본문, notify.briefing.build_briefing_text 결과), summary(engine의 결과 —
          as_of, mode, report_path 포함), cfg, force_no_send(--no-send 플래그)
     출력: 저장한 txt 파일 경로
+
+    본문 글은 따로 보내지 않고, report_caption(text)(제목 줄 + 정정본·경고 줄)을 첨부
+    설명으로만 붙인다(2026-10-01 사용자 확정). 보고서 파일이 없을 때만 본문 글을 대신
+    보낸다 — 아무것도 못 받는 날이 없게 하기 위해서다.
 
     모의(paper) 모드는 --no-send 여부와 관계없이 절대 텔레그램을 보내지 않는다(하드
     가드) — 모의 모드를 실전과 매일 나란히 돌리기 시작하면서, 플래그를 깜빡해도
@@ -236,11 +276,14 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
             print(f"[telegram] {as_of_str} 기준 이미 발송한 기록이 있어 다시 보내지 않습니다.")
             return out_path
 
-        ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
         report_path = summary.get("report_path")
         if report_path and Path(report_path).exists():
-            time.sleep(1)
-            ok = _send_document(token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg)) and ok
+            ok = _send_document(
+                token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg), caption=report_caption(text)
+            )
+        else:
+            print("[telegram] 보고서 파일이 없어 본문 글을 대신 보냅니다.")
+            ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
 
         if ok:
             db.record_notified(conn, as_of_str, datetime.now().isoformat(timespec="seconds"))
@@ -252,7 +295,11 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
 
 
 def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> Path:
-    """데이터 지연 모드(P3.2 2번) 알림 한 통만 보낸다. 보고서는 첨부하지 않는다.
+    """데이터 지연 모드(P3.2 2번) 알림 한 통만 보낸다.
+
+    지연 배너가 붙은 보고서(summary["report_path"])가 있으면 그 파일을 지연 문구를
+    첨부 설명으로 붙여 한 통으로 보내고(보고서 파일만 보내는 방식, 2026-10-01),
+    없으면 지연 문구 글만 보낸다.
 
     입력: summary(engine 결과 — mode, expected_date, actual_date 문자열 포함), cfg,
          force_no_send(--no-send 플래그)
@@ -287,7 +334,14 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
             print(f"[telegram] {actual} 지연 알림을 이미 보낸 기록이 있어 다시 보내지 않습니다.")
             return out_path
 
-        if _send_text(token, chat_id, text):
+        report_path = summary.get("report_path")
+        if report_path and Path(report_path).exists():
+            ok = _send_document(
+                token, chat_id, Path(report_path), report_attachment_name(str(actual), cfg), caption=text.strip()
+            )
+        else:
+            ok = _send_text(token, chat_id, text)
+        if ok:
             db.record_notified(conn, dedup_key, datetime.now().isoformat(timespec="seconds"))
         else:
             print("[telegram] 지연 알림 발송에 실패했습니다 (다음 실행에서 재시도 가능).")
@@ -306,6 +360,10 @@ def send_group_briefing(
          summary, cfg, force_no_send(--no-send 플래그)
     출력: {"attempted": bool, "ok": bool, "skipped_reason": str|None, "error": str|None,
           "migrate_to_chat_id": int|None, "out_path": Path}
+
+    개인 발송과 같이 공개용 보고서 파일 한 통만 보내고 본문 글은 보내지 않는다
+    (report_caption(text) = 제목 줄만 첨부 설명으로, 2026-10-01). 보고서 파일이 없을
+    때만 본문 글을 대신 보낸다.
 
     TELEGRAM_GROUP_CHAT_ID가 없으면(Secret 미설정) 조용히 건너뛴다(skipped_reason =
     "no_group_chat_id") — 이 기능을 아직 안 쓰는 사용자에게 영향이 없어야 한다.
@@ -357,22 +415,20 @@ def send_group_briefing(
         ok = True
         migrate_id: int | None = None
         error: str | None = None
-        for chunk in split_message(text):
-            c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
-            ok = ok and c_ok
-            migrate_id = migrate_id or c_migrate
-            error = error or c_err
-            if not c_ok:
-                break  # 슈퍼그룹 전환 등으로 실패하면 뒤 청크를 더 보내도 소용없다
-
-        if ok and report_path and Path(report_path).exists():
-            time.sleep(1)
-            d_ok, d_migrate, d_err = _send_document_checked(
-                token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg)
+        if report_path and Path(report_path).exists():
+            ok, migrate_id, error = _send_document_checked(
+                token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
+                caption=report_caption(text),
             )
-            ok = ok and d_ok
-            migrate_id = migrate_id or d_migrate
-            error = error or d_err
+        else:
+            print("[telegram] 공개용 보고서 파일이 없어 본문 글을 대신 보냅니다.")
+            for chunk in split_message(text):
+                c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
+                ok = ok and c_ok
+                migrate_id = migrate_id or c_migrate
+                error = error or c_err
+                if not c_ok:
+                    break  # 슈퍼그룹 전환 등으로 실패하면 뒤 청크를 더 보내도 소용없다
 
         result["ok"] = ok
         result["migrate_to_chat_id"] = migrate_id
@@ -429,10 +485,10 @@ def resend_last(
         print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 재발송할 수 없습니다. ({env_status()})")
         return False
 
-    ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
+    # send_briefing과 같이 보고서 파일 한 통만 (본문 글은 보고서가 없을 때만)
     if report_path.exists():
-        time.sleep(1)
-        ok = _send_document(token, chat_id, report_path, report_attachment_name(as_of_str, cfg)) and ok
-    else:
-        print(f"[telegram] {report_path}가 없어 보고서 없이 글만 보냅니다.")
-    return ok
+        return _send_document(
+            token, chat_id, report_path, report_attachment_name(as_of_str, cfg), caption=report_caption(text)
+        )
+    print(f"[telegram] {report_path}가 없어 보고서 없이 글만 보냅니다.")
+    return all(_send_text(token, chat_id, chunk) for chunk in split_message(text))

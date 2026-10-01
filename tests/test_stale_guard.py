@@ -86,7 +86,8 @@ def test_stale_data_skips_state_changes_and_marks_summary(monkeypatch, tmp_path,
     assert "데이터 지연" in summary["report_path"].read_text(encoding="utf-8")
 
 
-def test_stale_summary_sends_single_delay_notice_no_report_attached(monkeypatch, tmp_path, cfg):
+def test_stale_summary_sends_single_delay_report_with_notice_caption(monkeypatch, tmp_path, cfg):
+    """지연 모드도 보고서 파일 한 통만 (지연 문구는 첨부 설명) — 글은 따로 보내지 않는다."""
     from notify import telegram
 
     now_et = datetime(2026, 9, 24, 7, 0, tzinfo=US_EASTERN)
@@ -98,13 +99,14 @@ def test_stale_summary_sends_single_delay_notice_no_report_attached(monkeypatch,
     summary = engine_daily.run(cfg, "live", do_replay=False, dry_run=False)
 
     calls = []
-    monkeypatch.setattr(telegram, "_send_text", lambda *a, **k: calls.append("text") or True)
     monkeypatch.setattr(
-        telegram, "_send_document", lambda *a, **k: calls.append("doc") or pytest.fail("보고서를 첨부하면 안 된다")
+        telegram, "_send_text", lambda *a, **k: calls.append("text") or pytest.fail("본문 글을 따로 보내면 안 된다")
     )
+    monkeypatch.setattr(telegram, "_send_document", lambda *a, **k: calls.append(("doc", k.get("caption"))) or True)
     path = telegram.send_delay_notice(summary, cfg, force_no_send=False)
 
-    assert calls == ["text"]  # 문서 첨부 없이 글 한 통만
+    assert len(calls) == 1 and calls[0][0] == "doc"  # 보고서 한 통만
+    assert calls[0][1].startswith("데이터 지연:")
     assert "데이터 지연" in path.read_text(encoding="utf-8")
 
 

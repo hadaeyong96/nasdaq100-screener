@@ -376,4 +376,75 @@ def test_resend_last_ignores_dedup_record(tmp_path, monkeypatch):
 
     ok = telegram.resend_last(report_path, text_path, "2026-09-23", force_no_send=False)
     assert ok is True
-    assert calls == ["text", "doc"]
+    assert calls == ["doc"]  # 보고서 파일 한 통만 (본문 글은 보내지 않는다)
+
+
+# ── 보고서 파일만 보내기 (2026-10-01): 본문 글 없이 첨부 + 짧은 설명 ─────────────
+
+
+def test_report_caption_keeps_title_and_alert_lines_only():
+    text = (
+        "📊 데이터브리핑 · 9/30(수) 마감 · 실전\n🔁 체결 기록 변경 반영 정정본 (2026-09-25부터 재계산)\n\n"
+        "📈 시장 온도\n- 공포·탐욕 38(공포) 🟡주의\n\n🎯 오늘의 신호\n- 매수 1 : NVDA(1차)\n\n"
+        "⚠️ 시트 오류: 체결 2번째 줄\n⚠️ FRED 지표 수집 실패: DGS10\n"
+    )
+    assert telegram.report_caption(text) == (
+        "📊 데이터브리핑 · 9/30(수) 마감 · 실전\n🔁 체결 기록 변경 반영 정정본 (2026-09-25부터 재계산)\n"
+        "⚠️ 시트 오류: 체결 2번째 줄\n⚠️ FRED 지표 수집 실패: DGS10"
+    )
+
+
+def test_report_caption_is_cut_to_telegram_limit():
+    caption = telegram.report_caption("📊 제목\n" + "⚠️ " + "가" * 2000)
+    assert len(caption) == telegram.MAX_CAPTION_LEN and caption.endswith("…")
+
+
+def _live_send_setup(tmp_path, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "dummy")
+    monkeypatch.setattr(telegram, "ROOT", tmp_path)
+    (tmp_path / "data").mkdir()
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "data" / "state.db")
+
+
+def test_send_briefing_sends_only_report_file_with_caption(tmp_path, monkeypatch, cfg):
+    _live_send_setup(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(telegram, "_send_text", lambda *a, **k: pytest.fail("본문 글을 따로 보내면 안 된다"))
+    monkeypatch.setattr(
+        telegram, "_send_document", lambda token, chat_id, path, filename=None, caption=None: calls.append((filename, caption)) or True
+    )
+    report_path = tmp_path / "report_live_2026-09-30.html"
+    report_path.write_text("<html></html>", encoding="utf-8")
+    summary = {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-30"), "report_path": report_path}
+
+    telegram.send_briefing("📊 데이터브리핑 · 9/30(수) 마감 · 실전\n\n🎯 오늘의 신호\n- 오늘 매매 신호 없음\n", summary, cfg)
+
+    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html", "📊 데이터브리핑 · 9/30(수) 마감 · 실전")]
+    conn = db.connect(db.db_path_for_mode("live"))
+    assert db.has_notified(conn, "2026-09-30") is True  # 보고서 한 통 성공이면 발송 기록
+    conn.close()
+
+
+def test_send_briefing_falls_back_to_text_without_report_file(tmp_path, monkeypatch, cfg):
+    _live_send_setup(tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(telegram, "_send_text", lambda token, chat_id, text: sent.append(text) or True)
+    monkeypatch.setattr(telegram, "_send_document", lambda *a, **k: pytest.fail("보고서가 없으면 첨부를 시도하면 안 된다"))
+    summary = {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-30"), "report_path": tmp_path / "없음.html"}
+
+    telegram.send_briefing("본문", summary, cfg)
+    assert sent == ["본문"]
+
+
+def test_send_briefing_failed_document_does_not_record_notification(tmp_path, monkeypatch, cfg):
+    _live_send_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(telegram, "_send_document", lambda *a, **k: False)
+    report_path = tmp_path / "report_live_2026-09-30.html"
+    report_path.write_text("<html></html>", encoding="utf-8")
+    summary = {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-30"), "report_path": report_path}
+
+    telegram.send_briefing("본문", summary, cfg)
+    conn = db.connect(db.db_path_for_mode("live"))
+    assert db.has_notified(conn, "2026-09-30") is False
+    conn.close()
