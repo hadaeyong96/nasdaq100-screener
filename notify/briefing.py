@@ -10,6 +10,19 @@ from __future__ import annotations
 # 단체방 공개용 고지 문구 (텔레그램 본문·공개 HTML 맨 아래 모두 이 상수를 쓴다).
 PUBLIC_DISCLAIMER = "개인 학습용 참고 자료이며 투자 권유가 아닙니다. 투자 판단과 책임은 본인에게 있습니다."
 
+# config.yaml report 섹션이 없을 때(구버전 테스트 fixture 등)만 쓰는 기본값 — 실제 값은 config.yaml에서 읽는다.
+_DEFAULT_REPORT_TITLES = {
+    "title": "데이터 투자 브리핑",
+    "subtitle": "미국 대형주 · 미국 종가 기준 · 규칙 기반 분석",
+    "short_title": "데이터브리핑",
+    "public_suffix": "투자클럽",
+}
+
+
+def report_titles(cfg: dict | None) -> dict:
+    """cfg -> {title, subtitle, short_title, public_suffix} (config.yaml report 섹션, 빠진 키는 기본값)."""
+    return {**_DEFAULT_REPORT_TITLES, **((cfg or {}).get("report") or {})}
+
 _STAGE_ORDER = ["b1", "b2", "b3", "b9"]
 _BUY_STAGE_SHORT = {"b1": "1차", "b2": "2차", "b3": "3차", "b9": "재진입"}
 _KOREAN_WEEKDAY = ["월", "화", "수", "목", "금", "토", "일"]
@@ -118,7 +131,7 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     else:
         date_str = "알수없음"
 
-    lines = [f"📊 나스닥100 · {date_str} 마감 · {mode_label}"]
+    lines = [f"📊 {report_titles(cfg)['short_title']} · {date_str} 마감 · {mode_label}"]
     if summary.get("rebuilt_from"):
         lines.append(f"🔁 체결 기록 변경 반영 정정본 ({summary['rebuilt_from']}부터 재계산)")
 
@@ -246,7 +259,8 @@ def build_public_briefing_text(summary: dict, cfg: dict) -> str:
     else:
         date_str = "알수없음"
 
-    lines = [f"📊 나스닥100 · {date_str} 마감 · 공개용"]
+    titles = report_titles(cfg)
+    lines = [f"📊 {titles['short_title']} · {date_str} 마감 · {titles['public_suffix']}"]
 
     macro_rows = summary.get("macro_rows", [])
     if macro_rows:

@@ -100,9 +100,12 @@ def test_every_indicator_has_anchor_links_star_scale_and_explanation(tmp_path, r
         scale = re.search(r'<ol class="mscale".*?</ol>', tile_html, re.S).group(0)
         assert scale.count("<li") == 3
         assert scale.count("★") == 1  # 오늘 칸에만 ★
-        assert "🟢 안정" in scale and "🟡 주의" in scale and "🔴 위험" in scale
+        # 판정 기준 목록의 🟢🟡🔴는 CSS 원(.dot)으로 바뀌었다 (이모지 없음)
+        for status, label in (("ok", "안정"), ("warn", "주의"), ("bad", "위험")):
+            assert f'<i class="dot dot-{status}" aria-hidden="true"></i>{label}' in scale
+        assert not any(sym in scale for sym in ("🟢", "🟡", "🔴"))
         star_li = re.search(r'<li class="cur">(.*?)</li>', scale, re.S).group(1)
-        assert row["badge"]["text"] in star_li
+        assert f'dot-{row["badge"]["status"]}' in star_li and row["badge"]["label"] in star_li
         article = re.search(rf'<article id="explain-{slug}">.*?</article>', html, re.S)
         assert article, f"{slug} 설명 없음"
         body = article.group(0)

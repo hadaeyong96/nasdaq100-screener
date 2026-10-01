@@ -24,6 +24,7 @@ from data.fills import FillsResult
 from data.prices import US_EASTERN, PriceFetchResult
 from engine import daily as engine_daily
 from store import db
+from tests._offline import block_engine_network
 
 
 def _flat_price_df(end_date: str, periods: int = 260, seed: int = 0) -> pd.DataFrame:
@@ -66,6 +67,7 @@ def _patch_io(monkeypatch, tmp_path, last_date: str, fixed_now_et: datetime, mod
         def now(cls, tz=None):
             return fixed_now_et if tz is not None else fixed_now_et.replace(tzinfo=None)
 
+    block_engine_network(monkeypatch)  # 시장 온도·환율 네트워크 차단
     monkeypatch.setattr(engine_daily, "datetime", _FrozenDateTime)
 
 

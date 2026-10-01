@@ -19,11 +19,10 @@ import pandas as pd
 
 from core import macro_status
 from notify import macro_explain
-from notify.briefing import PUBLIC_DISCLAIMER
+from notify.briefing import PUBLIC_DISCLAIMER, report_titles
 from core.sizing import format_krw
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
-FILLS_XLSX_PATH = Path(__file__).resolve().parents[1] / "data" / "fills.xlsx"
 
 _env = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(TEMPLATE_DIR)),
@@ -325,6 +324,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "one_share_warning_rows": one_share_warning_rows,
         "plan_limit_exceeded_rows": plan_limit_exceeded_rows,
         "cfg_js": cfg_js,
+        "titles": report_titles(cfg),
         "buy_count": buy_count,
         "sell_count": len(sell_rows),
         "held_count": summary.get("held_tickers_count", 0),
@@ -344,7 +344,6 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "data_status_rows": summary.get("data_status_rows", []),
         "pending_names": pending_names,
         "unfilled_names": unfilled_names,
-        "fills_path": str(FILLS_XLSX_PATH),
         "ichimoku_shift": cfg["indicators"]["ichimoku_shift"],
         "funding": funding,
         "strategy_limit_str": _won(strategy_limit_krw if funding else None),
@@ -427,6 +426,7 @@ def build_public_context(summary: dict, cfg: dict) -> dict:
 
     return {
         "as_of_str": as_of_str,
+        "titles": report_titles(cfg),
         "generated_str": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "buy_rows": [_public_buy_row_ctx(r) for r in new_entry_rows],
         "buy_count": len(new_entry_rows),
