@@ -227,3 +227,28 @@ def test_repo_hash_notes_covers_start_file_pair():
     start = json.loads(msp.START_PATH.read_text(encoding="utf-8"))
     notes = msp.HASH_NOTES_PATH.read_text(encoding="utf-8")
     assert msp.is_known_hash_change(start["rules_doc_hash"], "51ff52148b926add", notes)
+
+
+# ── 규칙 문서 해시 줄바꿈 통일 ──────────────────────────────────────────────
+
+
+def test_rules_doc_hash_same_for_lf_crlf_cr(tmp_path):
+    text = "# 규칙\n\n| 진입 | 시가 |\n끝\n"
+    lf, crlf, cr = tmp_path / "lf.md", tmp_path / "crlf.md", tmp_path / "cr.md"
+    lf.write_bytes(text.encode("utf-8"))
+    crlf.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+    cr.write_bytes(text.replace("\n", "\r").encode("utf-8"))
+    assert msp.rules_doc_hash(lf) == msp.rules_doc_hash(crlf) == msp.rules_doc_hash(cr)
+
+
+def test_rules_doc_hash_differs_when_content_differs(tmp_path):
+    a, b = tmp_path / "a.md", tmp_path / "b.md"
+    a.write_bytes(b"moat.rebalance_month\n")
+    b.write_bytes(b"moat_backtest.rebalance_month\n")
+    assert msp.rules_doc_hash(a) != msp.rules_doc_hash(b)
+
+
+def test_repo_rules_doc_hash_matches_start_file():
+    import json
+    start = json.loads(msp.START_PATH.read_text(encoding="utf-8"))
+    assert msp.rules_doc_hash() == start["rules_doc_hash"]

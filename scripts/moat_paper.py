@@ -79,10 +79,19 @@ def load_config() -> dict:
     return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 
-def rules_doc_hash() -> str:
+def rules_doc_hash(path: Path | None = None) -> str:
     """docs/design/moat_paper.md(잠긴 규칙 문서) 해시 — 시작 파일에 남겨 어떤 규칙 버전으로
-    만들었는지 추적한다 (core.moat.compute_config_hash와 같은 16자리 16진 방식)."""
-    return hashlib.sha256(RULES_DOC_PATH.read_bytes()).hexdigest()[:16]
+    만들었는지 추적한다 (core.moat.compute_config_hash와 같은 16자리 16진 방식).
+
+    줄바꿈(CRLF·CR)을 LF로 통일한 뒤 해시를 낸다 — git core.autocrlf 체크아웃 방식에 따라
+    내용이 같아도 해시가 달라지던 문제(2026-10-02, docs/paper/hash_notes.md) 때문이다.
+
+    입력: path(기본값 RULES_DOC_PATH)
+    출력: 16자리 16진 해시
+    """
+    data = (path or RULES_DOC_PATH).read_bytes()
+    normalized = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(normalized).hexdigest()[:16]
 
 
 def is_known_hash_change(old_hash: str | None, new_hash: str, notes_text: str) -> bool:
