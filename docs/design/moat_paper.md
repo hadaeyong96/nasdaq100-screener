@@ -14,7 +14,7 @@ H4(과거 검증, moat_plan.md 4장)는 "탈락 아님" 판정을 받았을 때�
 | 판단 기준일 | 2026-09-30. 이 날짜까지 filed된 공시만 등급·비중 계산에 쓴다(미래 데이터 금지) |
 | 진입 | 다음 거래일(2026-10-01) 시가 + 슬리피지 0.05%(`config.yaml backtest.costs.slippage_pct`). 실행 시점에 아직 이 가격이 없으면(당일 미확정 봉) 그 종목은 "진입 대기"로 저장하고, 다음 실행 때 값이 생기면 채운다 |
 | 유니버스 | 기준일(2026-09-30)의 나스닥100 구성종목(시점별 명단, `data/universe_history.py`) |
-| 교체 | 매년 4월 첫 거래일(`config.yaml moat.rebalance_month` = 4). 첫 교체는 2027-04. 그 사이 보유 종목·비중 변경 없음(지수에서 빠져도 다음 교체일까지 보유) |
+| 교체 | 매년 4월 첫 거래일(`config.yaml moat_backtest.rebalance_month` = 4). 첫 교체는 2027-04. 그 사이 보유 종목·비중 변경 없음(지수에서 빠져도 다음 교체일까지 보유) |
 | 등급 재계산 | 매월 실행 시 M1~M5·등급을 다시 계산해 **기록만** 한다. 보유 종목·비중은 바꾸지 않는다(교체일 전까지) |
 | 비용·세금 | H4와 동일 — 매수·매도 수수료 각 0.07%, 환전 스프레드 0.1%(최초 1회만, moat_backtest.py 모듈 docstring 참고), 양도세(연 250만 원 공제 후 22%), 배당 원천세 15%(`config.yaml backtest.costs`, `backtest.tax`) |
 | 업종 분류 | yfinance 현재 분류(H4와 같은 한계 — 과거 시점 분류와 다를 수 있음) |
@@ -23,7 +23,7 @@ H4(과거 검증, moat_plan.md 4장)는 "탈락 아님" 판정을 받았을 때�
 ## 2. P1 — 넓음 전부, 동일 비중
 
 - 편입: 기준일 등급이 "넓음"인 전 종목
-- 비중: 동일 비중, 업종 최대 30%(`config.yaml moat.sector_cap_pct`). 초과분은 비례 배분
+- 비중: 동일 비중, 업종 최대 30%(`config.yaml moat_backtest.sector_cap_pct`). 초과분은 비례 배분
 - 구현: `core/moat_backtest.allocate_equal_weight_with_sector_cap`을 그대로 재사용(수정 금지)
 
 ## 3. P2 — 새 가설 H4b: 넓음 전부, 시가총액 비중
@@ -55,8 +55,8 @@ H4(과거 검증, moat_plan.md 4장)는 "탈락 아님" 판정을 받았을 때�
 
 - QQQM 매수 후 보유 (대조군)
 - QQEW 매수 후 보유 (참고용 — 동일가중 나스닥100 ETF)
-- 무작위 포트폴리오 1,000개(`config.yaml moat.random_trials` = 1000, 시드
-  `moat.random_seed` = 20261001). P1과 같은 종목 수(기준일 "넓음" 종목 수)·같은 업종 제한(30%)·
+- 무작위 포트폴리오 1,000개(`config.yaml moat_backtest.random_trials` = 1000, 시드
+  `moat_backtest.random_seed` = 20261001). P1과 같은 종목 수(기준일 "넓음" 종목 수)·같은 업종 제한(30%)·
   동일 비중으로, 기준일 나스닥100 전체 유니버스에서 추출(H4와 같은 방식 —
   `core/moat_backtest.draw_random_portfolio` + `allocate_equal_weight_with_sector_cap`).
   재현을 위해 유니버스 명단·업종 매핑·시드·종목 수만 시작 파일에 저장하고, 평가 시점마다 같은
