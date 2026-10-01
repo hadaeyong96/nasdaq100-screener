@@ -43,6 +43,7 @@ import sys
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yaml
@@ -55,6 +56,7 @@ for _stream in (sys.stdout, sys.stderr):  # 윈도우 콘솔 cp949 UnicodeEncode
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
+from core import auto_plan  # noqa: E402
 from core import explain as expl  # noqa: E402
 from core import filters as filt  # noqa: E402
 from core import macro_status  # noqa: E402
@@ -74,6 +76,7 @@ from notify import briefing, report_html, telegram  # noqa: E402
 from store import db  # noqa: E402
 
 OUTPUT_DIR = ROOT / "outputs"
+KST = ZoneInfo("Asia/Seoul")  # 계획 자동 기록 등록일(실행일 KST)
 
 _BUY_KINDS = ("A1", "A2", "A3", "B")
 _SELL_KINDS = ("STOP", "A1_EXPIRE", "E3", "E1", "E2")
@@ -353,6 +356,75 @@ def compute_live_judgments(
             }
         )
     return rows
+
+
+def apply_auto_plan(
+    cfg: dict,
+    plan_df: pd.DataFrame,
+    today_events: list[dict],
+    states: dict,
+    fills_df: pd.DataFrame,
+    indicator_map: dict,
+    as_of,
+    run_date,
+    sheets_client,
+    write: bool,
+) -> tuple[pd.DataFrame, list[str], dict]:
+    """계획 탭 자동 기록 (docs/design/auto_plan.md) — live 전용, 호출부가 모드를 거른다.
+
+    오늘 진입 신호 중 계획에 없는 종목을 골라(core.auto_plan) 시트 계획 탭에 쓰고(write=True이고
+    sheets_client가 있을 때만), 결과와 무관하게 그 줄을 계획 DataFrame에 메모리로 합친다 —
+    시트 쓰기가 실패해도 오늘 보고서 수량은 계산된다. 실패는 예외 대신 경고 문구로 돌려준다.
+
+    입력: cfg, plan_df(읽은 계획), today_events, states(오늘 반영 후), fills_df(보유 0주 판정용),
+         indicator_map(만료 판정 거래일), as_of(기준일), run_date(실행일 KST), sheets_client,
+         write(False면 시트를 건드리지 않음 — dry-run·시트 아닌 입력)
+    출력: (합친 plan_df, 경고 목록, {"selected","written","skipped","expired"})
+    """
+    settings = auto_plan.auto_plan_settings(cfg)
+    info = {"selected": [], "written": [], "skipped": [], "expired": []}
+    if not settings["enabled"]:
+        return plan_df, [], info
+
+    signals = [
+        {
+            "ticker": e["ticker"],
+            "stage": e["kind"],
+            "stage_label": _STAGE_FULL_LABEL[e["kind"]],
+            "limit": sig.entry_limit_price(e["price"], cfg),
+            "stop": (states.get(e["ticker"]) or {}).get("stop"),
+            "score": e.get("score", 0),
+        }
+        for e in today_events
+        if e["kind"] in _BUY_KINDS
+    ]
+    existing = list(plan_df["ticker"]) if plan_df is not None and not plan_df.empty else []
+    new_rows = auto_plan.select_new_plan_rows(signals, existing, settings, run_date)
+
+    held: dict[str, float] = {}
+    if fills_df is not None and not fills_df.empty:
+        for r in fills_df.to_dict(orient="records"):
+            held[r["ticker"]] = held.get(r["ticker"], 0) + (r["qty"] if r["side"] == "buy" else -r["qty"])
+    plan_rows = plan_df.to_dict(orient="records") if plan_df is not None and not plan_df.empty else []
+    expiries = auto_plan.select_expiry_memos(
+        plan_rows, held, {t: df.index for t, df in indicator_map.items()}, as_of, run_date,
+        cfg["assumptions"]["a1_to_a2_expiry_days"], _STAGE_FULL_LABEL["A1"],
+    )
+    info["selected"] = [r["ticker"] for r in new_rows]
+
+    warnings: list[str] = []
+    rows_to_merge = new_rows
+    if write and sheets_client is not None and (new_rows or expiries):
+        try:
+            result = sheets.write_auto_plan(sheets_client, new_rows, expiries)
+            info["written"] = [r["ticker"] for r in result.written]
+            info["skipped"] = result.skipped
+            info["expired"] = result.expired
+            # 시트에 이미 있던 티커(계획 DataFrame에서 빠졌던 줄)는 메모리에도 합치지 않는다.
+            rows_to_merge = [r for r in new_rows if r["ticker"] not in set(result.already_present)]
+        except Exception as exc:
+            warnings.append(f"계획 자동 기록 실패: {exc}")
+    return auto_plan.merge_plan_rows(plan_df, rows_to_merge), warnings, info
 
 
 def load_config() -> dict:
@@ -1626,11 +1698,13 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
     # ── 계획·체결 입력 (docs/design/live_advisor.md 1·2번): live는 구글 시트를 먼저
     # 시도하고, 인증 정보가 없으면(로컬 개발) fills.xlsx로 조용히 폴백한다. paper는
     # 지금처럼 fills.xlsx만 쓴다(계획 개념 자체가 paper에는 없다).
+    plan_sheets_client = None  # 계획을 구글 시트에서 읽었을 때만 — 계획 자동 기록에 쓴다
     if mode == "live":
         try:
             sheets_result = sheets.read_sheets(client=sheets_client, cfg=cfg)
             fills_result = sheets_result.fills
             plan_df, plan_errors = sheets_result.plan_df, sheets_result.plan_errors
+            plan_sheets_client = sheets_result.client
         except sheets.SheetsConfigError:
             print("[daily] 구글 시트 인증 정보가 없어 로컬 fills.xlsx를 대신 씁니다.")
             fills_result = load_fills()
@@ -1771,6 +1845,23 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
 
     positions = states
 
+    # ── 계획 탭 자동 기록 (docs/design/auto_plan.md): 오늘 신호로 계획에 없는 종목을 시트에
+    # 쓰고 메모리 계획에 합친 뒤, 아래 판정·사이징이 그 계획으로 수량을 낸다. 시트에서 읽지
+    # 않았으면(로컬 폴백) 아무것도 안 한다. paper는 부르지 않는다.
+    auto_plan_info = None
+    if mode == "live" and plan_sheets_client is not None and auto_plan.auto_plan_settings(cfg)["enabled"]:
+        plan_df, auto_plan_warnings, auto_plan_info = apply_auto_plan(
+            cfg, plan_df, today_events, states, fills_df, indicator_map, actual_date,
+            datetime.now(KST).date(), plan_sheets_client, write=not dry_run,
+        )
+        run_warnings.extend(auto_plan_warnings)
+        for line in auto_plan_warnings:
+            print(f"[daily] {line}")
+        if auto_plan_info["selected"]:
+            print(f"[daily] 계획 자동 추가: 선택 {auto_plan_info['selected']}, 시트 기록 {auto_plan_info['written']}")
+        plan_by_ticker = _plan_budget_map(plan_df)
+        plan_ref_price_by_ticker = _plan_ref_price_map(plan_df)
+
     # ── 라이브 판정 (docs/design/live_advisor.md 3·7번): paper는 절대 부르지 않는다 —
     # states에 last_judgment를 남기지 않아야 한다(모듈 설명의 P5-1 0번 예외 참고).
     # 저장(db.save_position) 전에 states를 갱신해야 오늘 판정이 이번 실행에 저장된다.
@@ -1822,6 +1913,8 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         plan_ref_price_by_ticker=plan_ref_price_by_ticker,
     )
     summary["macro_rows"] = macro_rows
+    if auto_plan_info is not None:
+        summary["auto_plan"] = auto_plan_info
     # 계획·체결 입력 오류(헤더 불일치, 잘못된 줄 등) — 텔레그램 요약에 한 줄 경고로 띄운다.
     summary["input_errors"] = list(fills_errors) + list(plan_errors)
     summary["fred_missing"] = _fred_missing_codes(macro_rows, macro_warnings) if cfg.get("macro", {}).get("enabled") else []

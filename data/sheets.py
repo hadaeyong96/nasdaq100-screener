@@ -19,6 +19,9 @@ parse_fill_records·parse_plan_records를 그대로 쓴다.
 문자열 그대로(GitHub Actions Secret), 아니면 JSON 키 파일 경로로 취급한다
 (로컬은 .env에 경로). 읽을 시트 ID는 환경변수 GOOGLE_SHEETS_ID.
 인증 정보의 값은 어떤 경우에도 출력·로그하지 않는다 (CLAUDE.md 보안).
+
+쓰기: 계획 탭 자동 기록(write_auto_plan, docs/design/auto_plan.md)만 — 계획 탭의 입력 칸 5개
+(티커·계획금액·등록일·기준가·메모)만 셀 단위로 쓰고, 다른 탭 쓰기는 코드로 막는다.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
-from data.fills import FillsResult, fill_missing_costs, parse_fill_records, parse_plan_records
+from data.fills import FillsResult, _normalize_header, fill_missing_costs, parse_fill_records, parse_plan_records
 
 ROOT = Path(__file__).resolve().parents[1]
 # notify/telegram.py와 같은 패턴: 이 모듈만 단독으로 쓰는 스크립트(scripts/drive_sync.py
@@ -39,8 +42,10 @@ ROOT = Path(__file__).resolve().parents[1]
 # override=True: 이 프로세스에 같은 이름의 빈 환경변수가 이미 있어도 .env 값으로 덮는다.
 load_dotenv(ROOT / ".env", override=True)
 
+# 계획 탭 자동 기록(docs/design/auto_plan.md)으로 시트 쓰기 권한이 필요하다. 쓰기는
+# write_auto_plan → 계획 탭만 허용(_plan_worksheet·_assert_plan_tab이 코드로 막는다).
 _SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
 ]
 
@@ -62,12 +67,14 @@ class SheetsResult:
     plan_errors: 계획 탭의 건너뛴 줄 사유 ("계획 기록 오류: N번째 줄 - ...").
     fills: 체결 탭을 data.fills.parse_fill_records로 파싱한 FillsResult.
     read_at_kst: 두 탭을 읽은 시각(KST, tz-aware Timestamp).
+    client: 읽을 때 쓴 클라이언트(같은 실행에서 계획 자동 기록에 그대로 쓴다).
     """
 
     plan_df: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=_PLAN_COLUMNS))
     plan_errors: list[str] = field(default_factory=list)
     fills: FillsResult = field(default_factory=FillsResult)
     read_at_kst: pd.Timestamp | None = None
+    client: object = None
 
 
 def load_credentials_info() -> dict:
@@ -168,4 +175,177 @@ def read_sheets(client=None, cfg: dict | None = None, fx_provider=None) -> Sheet
         plan_errors=plan_errors,
         fills=fills_result,
         read_at_kst=read_at_kst,
+        client=client,
     )
+
+
+# ── 계획 탭 자동 기록 (docs/design/auto_plan.md) ────────────────────────────────
+
+# 자동 기록이 쓰는 입력 칸 5개(머리글 정규화 키 → 내부 이름). 이 밖의 열(환율, 1차~남은(주) 등
+# 시트 수식)은 절대 쓰지 않는다.
+_PLAN_WRITE_COLUMN_MAP = {
+    "티커": "ticker", "종목": "ticker", "계획금액": "budget_krw", "등록일": "reg_date",
+    "기준가": "ref_price", "메모": "memo",
+}
+PLAN_WRITE_FIELDS = ("ticker", "budget_krw", "reg_date", "ref_price", "memo")
+
+
+class SheetsWriteForbiddenError(RuntimeError):
+    """계획 탭이 아닌 탭에 쓰려 할 때."""
+
+
+class PlanHeaderError(RuntimeError):
+    """계획 탭 머리글에서 입력 칸 5개를 찾지 못했을 때."""
+
+
+@dataclass
+class AutoPlanWriteResult:
+    """write_auto_plan()의 결과. written: 실제로 쓴 줄({"ticker",...,"row"}),
+    skipped: 쓰지 않은 줄과 사유, already_present: 시트에 이미 있어 안 쓴 티커,
+    expired: 만료 메모를 덧붙인 티커."""
+
+    written: list[dict] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    already_present: list[str] = field(default_factory=list)
+    expired: list[str] = field(default_factory=list)
+
+
+def _plan_worksheet(spreadsheet, name: str = SHEET_PLAN):
+    """쓰기용 워크시트를 연다 — 계획 탭이 아니면 SheetsWriteForbiddenError."""
+    if name != SHEET_PLAN:
+        raise SheetsWriteForbiddenError(f"계획 탭 외 탭에는 쓸 수 없습니다: {name!r}")
+    ws = spreadsheet.worksheet(name)
+    _assert_plan_tab(ws)
+    return ws
+
+
+def _assert_plan_tab(ws) -> None:
+    title = getattr(ws, "title", None)
+    if title != SHEET_PLAN:
+        raise SheetsWriteForbiddenError(f"계획 탭 외 탭에는 쓸 수 없습니다: {title!r}")
+
+
+def _col_letter(col: int) -> str:
+    """1부터 시작하는 열 번호 → A1 표기 열 문자 (1→A, 27→AA)."""
+    letters = ""
+    while col > 0:
+        col, rem = divmod(col - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
+
+
+def find_plan_write_columns(header_row: list) -> dict[str, int]:
+    """계획 탭 머리글 줄에서 입력 칸 5개의 열 번호(1부터)를 찾는다 (열 순서와 무관).
+
+    입력: header_row(머리글 셀 값 목록 — "계획금액(원)"처럼 괄호 설명이 있어도 됨)
+    출력: {"ticker","budget_krw","reg_date","ref_price","memo": 열 번호}
+    예외: 하나라도 없으면 PlanHeaderError
+    """
+    cols: dict[str, int] = {}
+    for i, name in enumerate(header_row, start=1):
+        key = _PLAN_WRITE_COLUMN_MAP.get(_normalize_header(name))
+        if key and key not in cols:
+            cols[key] = i
+    missing = [f for f in PLAN_WRITE_FIELDS if f not in cols]
+    if missing:
+        raise PlanHeaderError(f"계획 탭 머리글에서 입력 칸을 찾지 못했습니다: {missing}")
+    return cols
+
+
+def _cell(values: list[list], row: int, col: int) -> str:
+    """get_all_values 결과에서 (행, 열)(1부터) 값을 문자열로 — 줄·칸이 없으면 빈 문자열."""
+    if row - 1 >= len(values):
+        return ""
+    line = values[row - 1]
+    return str(line[col - 1]).strip() if col - 1 < len(line) else ""
+
+
+def _sheet_value(field_name: str, value):
+    if field_name == "budget_krw":
+        return int(round(float(value)))
+    if field_name == "ref_price":
+        return round(float(value), 2)
+    return value
+
+
+def write_plan_rows(ws, rows: list[dict], max_rows: int = 1000) -> AutoPlanWriteResult:
+    """계획 탭에 새 줄을 쓴다 — 티커 칸이 빈 첫 줄의 입력 칸 5개만 셀 단위로 업데이트한다.
+
+    append_row는 쓰지 않는다(1000행까지 수식이 미리 채워져 있어 맨 아래에 붙어 버림). 입력 칸
+    5개가 모두 빈 줄만 쓴다(사용자 값이 남은 줄은 덮어쓰지 않음). 시트 원본에 이미 있는
+    티커는 다시 쓰지 않는다(계획금액 오류 등으로 계획 DataFrame에서 빠진 줄 포함).
+
+    입력: ws(계획 탭 워크시트 — title, get_all_values(), batch_update(data, value_input_option)),
+         rows(core.auto_plan.select_new_plan_rows 결과), max_rows(빈 줄을 찾을 마지막 행)
+    출력: AutoPlanWriteResult(written에 "row" 포함)
+    """
+    _assert_plan_tab(ws)
+    result = AutoPlanWriteResult()
+    if not rows:
+        return result
+    values = ws.get_all_values()
+    if not values:
+        raise PlanHeaderError("계획 탭이 비어 있습니다(머리글 없음)")
+    cols = find_plan_write_columns(values[0])
+    present = {_cell(values, r, cols["ticker"]).upper() for r in range(2, len(values) + 1)} - {""}
+    last_row = max(max_rows, len(values))
+
+    def _row_is_empty(r: int) -> bool:
+        return all(_cell(values, r, cols[f]) == "" for f in PLAN_WRITE_FIELDS)
+
+    updates = []
+    next_row = 2
+    for row in rows:
+        ticker = str(row["ticker"]).upper()
+        if ticker in present:
+            result.skipped.append(f"{ticker}: 계획 탭에 이미 있음")
+            result.already_present.append(ticker)
+            continue
+        while next_row <= last_row and not _row_is_empty(next_row):
+            next_row += 1
+        if next_row > last_row:
+            result.skipped.append(f"{ticker}: {last_row}행까지 빈 줄이 없음")
+            continue
+        for f in PLAN_WRITE_FIELDS:
+            updates.append({"range": f"{_col_letter(cols[f])}{next_row}", "values": [[_sheet_value(f, row[f])]]})
+        result.written.append({**row, "row": next_row})
+        present.add(ticker)
+        next_row += 1
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+    return result
+
+
+def append_expiry_memos(ws, expiries: list[dict]) -> list[str]:
+    """만료 메모를 덧붙인다 — 티커와 메모가 판정 때 값(old_memo)과 그대로 같은 줄의 메모 칸 하나만.
+
+    입력: ws(계획 탭), expiries(core.auto_plan.select_expiry_memos 결과)
+    출력: 실제로 업데이트한 티커 목록
+    """
+    _assert_plan_tab(ws)
+    if not expiries:
+        return []
+    values = ws.get_all_values()
+    cols = find_plan_write_columns(values[0])
+    updates, done = [], []
+    for e in expiries:
+        for r in range(2, len(values) + 1):
+            if _cell(values, r, cols["ticker"]).upper() == e["ticker"] and _cell(values, r, cols["memo"]) == e["old_memo"]:
+                updates.append({"range": f"{_col_letter(cols['memo'])}{r}", "values": [[e["new_memo"]]]})
+                done.append(e["ticker"])
+                break
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+    return done
+
+
+def write_auto_plan(client, rows: list[dict], expiries: list[dict]) -> AutoPlanWriteResult:
+    """계획 탭 자동 기록 진입점 — 새 줄 쓰기 + 만료 메모 덧붙이기.
+
+    입력: client(read_sheets가 쓴 gspread 클라이언트), rows, expiries
+    출력: AutoPlanWriteResult. 실패하면 예외를 그대로 낸다(호출부가 경고로 바꾼다).
+    """
+    ws = _plan_worksheet(client.open_by_key(_sheet_id()), SHEET_PLAN)
+    result = write_plan_rows(ws, rows)
+    result.expired = append_expiry_memos(ws, expiries)
+    return result

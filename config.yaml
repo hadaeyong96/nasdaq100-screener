@@ -130,6 +130,15 @@ replay:
 # engine/daily.py --mode 인자가 이 값보다 우선한다.
 mode: live
 
+# ── 계획 탭 자동 기록 (L3/B4, docs/design/auto_plan.md) ────────────────────
+# live 모드에서 오늘 진입 신호(A1·A2·A3·B) 중 계획 탭에 없는 종목을 계획 탭 빈 줄에 자동으로 쓴다.
+# enabled: false면 이 기능이 없던 때와 완전히 같은 동작. paper 모드는 쓰지 않는다.
+live:
+  auto_plan:
+    enabled: true
+    default_budget_krw: 3000000 # 자동 추가 줄의 계획금액(원)
+    max_new_per_day: 5 # 하루 최대 추가 종목 수(점수 높은 순)
+
 # ── 손절 예약 알림 (P3.5) ────────────────────────────────────────────────
 alerts:
   stop_near_pct: 3 # 종가가 손절가보다 이 비율(%) 이내로 위에 있으면 "손절 근접" 표시
