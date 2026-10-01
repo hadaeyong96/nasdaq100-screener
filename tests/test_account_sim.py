@@ -34,16 +34,28 @@ def _cfg():
 
 def _flat_steps(n_months: int, qqq_price=100.0, core_price=100.0, fx=1000.0) -> list[sim.MonthStep]:
     """가격·환율·배당·보수·이자 전부 변화 없는 합성 월별 시리즈(0% 성장 테스트용)."""
+    return _make_steps([qqq_price] * n_months, core_price=core_price, fx=fx)
+
+
+def _make_steps(qqq_prices: list[float], core_price=None, fx=1000.0) -> list[sim.MonthStep]:
+    """월별 종가 목록으로 합성 시리즈를 만든다 — 달력 연도 경계(is_year_start/end)를
+    실제로 넘어가며 올바르게 계산한다(여러 해짜리 ISA 재가입 테스트용).
+
+    core_price가 없으면 qqq_prices와 같은 값을 쓴다(해외계좌=QQQM이 QQQ와 같이 움직인다고 봄).
+    """
+    n = len(qqq_prices)
     steps = []
-    for i in range(n_months):
-        d = date(2000, 1 + i % 12, 1) if i < 12 else date(2001, 1 + (i - 12) % 12, 1)
+    for i, qp in enumerate(qqq_prices):
+        cp = qp if core_price is None else (core_price[i] if isinstance(core_price, list) else core_price)
+        year, month = 2000 + i // 12, i % 12 + 1
+        is_year_start = i % 12 == 0
+        is_year_end = (i % 12 == 11) or (i == n - 1)
         steps.append(
             sim.MonthStep(
-                month_index=i, contribution_date=d, qqq_price=qqq_price, core_price=core_price, fx=fx,
+                month_index=i, contribution_date=date(year, month, 1), qqq_price=qp, core_price=cp, fx=fx,
                 qqq_div_yield_since_prev=0.0, core_div_per_share_since_prev=0.0,
                 domestic_fee_factor_since_prev=1.0, reserve_factor_since_prev=1.0,
-                is_year_end=(i == n_months - 2), is_year_start=(i == 0),
-                calendar_year=d.year,
+                is_year_end=is_year_end, is_year_start=is_year_start, calendar_year=year,
             )
         )
     return steps
@@ -197,3 +209,78 @@ def test_split_equity_and_reserve_paused_goes_all_to_equity():
     equity, reserve = sim.split_equity_and_reserve(1_000_000, 20, skimming_active=False)
     assert equity == pytest.approx(1_000_000)
     assert reserve == 0.0
+
+
+# ── 불변식 테스트 (사용자 지시 2026-10-01, ISA 재가입 취득원가 버그 점검) ──────────
+
+
+def test_k2_flat_price_zero_cost_multi_cycle_pays_zero_tax_ever():
+    """회귀 테스트(핵심 버그): 가격이 전혀 안 오르고 비용도 0이면, ISA를 몇 번을
+    재가입하든(이 테스트는 2번 재가입 — 84개월) 세금이 단 한 번도 나오면 안 된다.
+    버그가 있으면(재가입 때 이전 원금을 다시 이익으로 잡으면) 2번째 재가입부터 세금이
+    생긴다 — 가격이 하나도 안 올랐는데도.
+    """
+    cfg = _cfg()
+    cfg["costs"] = {"commission_pct": 0.0, "fx_spread_pct": 0.0}
+    cfg["expense_ratio"] = {"domestic_etf_pct": 0.0}
+    steps = _flat_steps(85)  # 84개월 납입(재가입 2번: 월 36, 72) + 1개월 평가
+    result = sim.run_candidate("K2", steps, start_capital_krw=0, saving_krw=1_000_000, cfg=cfg)
+    assert result.total_tax_krw == pytest.approx(0.0, abs=1e-6)
+    assert result.final_posttax_ex_pension_krw == pytest.approx(84_000_000.0, rel=1e-9)
+
+
+def test_k2_reinvestment_overflow_goes_to_overseas_with_correct_cost_basis():
+    """ISA 해지 후 재예치 금액이 그 해 연 한도를 넘으면, 넘는 돈은 해외계좌로 가고
+    그 취득가는 "옮긴 금액"(해지 후 세후 금액 중 넘는 부분)이어야 한다 — 0이거나
+    원래 ISA 원가여서는 안 된다(사용자 지시 2026-10-01 진단 2번).
+
+    연 한도(2천만 원)보다 훨씬 큰 월 저축(1천만 원 × 12 = 1.2억/년)으로 ISA가 금방
+    한도를 넘게 만들어, 36개월째 재가입 시점에 반드시 해외계좌로 넘어가게 한다.
+    """
+    cfg = _cfg()
+    cfg["costs"] = {"commission_pct": 0.0, "fx_spread_pct": 0.0}
+    steps = _flat_steps(37, qqq_price=100.0, core_price=100.0, fx=1000.0)  # 36개월 납입 + 평가 1개월
+    result = sim.run_candidate("K2", steps, start_capital_krw=0, saving_krw=10_000_000, cfg=cfg)
+    # 월 저축이 연 한도를 훨씬 넘으므로 애초에 매달도 해외계좌로 넘침 + 재가입 때도 넘침.
+    # 옮긴 돈이 전부 취득가 0으로 잡혔다면(버그) 최종 양도세가 비정상적으로 커진다 —
+    # 가격이 안 올랐으므로(성장 없음) 올바른 구현이면 해외계좌 양도세도 0이어야 한다.
+    assert result.total_tax_krw == pytest.approx(0.0, abs=1.0)
+
+
+def test_zero_tax_rates_k0_and_k2_differ_only_by_fee_and_commission():
+    cfg = _cfg()
+    cfg["tax"]["overseas_account"]["capital_gains_rate_pct"] = 0.0
+    cfg["tax"]["overseas_account"]["dividend_withholding_pct"] = 0.0
+    cfg["tax"]["isa"]["rate_pct"] = 0.0
+    cfg["tax"]["reserve_interest_tax_pct"] = 0.0
+    prices = [100.0 * (1.01 ** i) for i in range(13)]  # 완만히 상승(재가입 없음, 12개월)
+    steps = _make_steps(prices)
+    k0 = sim.run_candidate("K0", steps, start_capital_krw=40_000_000, saving_krw=1_000_000, cfg=cfg)
+    k2 = sim.run_candidate("K2", steps, start_capital_krw=40_000_000, saving_krw=1_000_000, cfg=cfg)
+    assert k0.total_tax_krw == pytest.approx(0.0, abs=1.0)
+    assert k2.total_tax_krw == pytest.approx(0.0, abs=1.0)
+    # 세금이 전부 0이면 둘의 차이는 보수(0.10%대 0.15%, 무시할 수준)·수수료 차이뿐 —
+    # 12개월짜리 짧은 구간이라 그 차이는 전체 자산의 1% 안쪽이어야 한다.
+    diff_pct = abs(k0.final_posttax_ex_pension_krw - k2.final_posttax_ex_pension_krw) / k0.final_posttax_ex_pension_krw * 100
+    assert diff_pct < 1.0
+
+
+def test_total_tax_never_exceeds_22pct_of_pretax_profit():
+    prices = [100.0 * (1.02 ** i) for i in range(85)]  # 꾸준히 상승, 84개월 납입 + 평가(재가입 2번)
+    steps = _make_steps(prices)
+    cfg = _cfg()
+    result = sim.run_candidate("K2", steps, start_capital_krw=40_000_000, saving_krw=1_000_000, cfg=cfg)
+    total_contributed = 40_000_000 + 1_000_000 * 84
+    pretax_profit = result.final_posttax_ex_pension_krw + result.total_tax_krw - total_contributed
+    assert result.total_tax_krw <= max(pretax_profit, 0.0) * 0.22 + 1.0
+
+
+def test_k1_not_materially_worse_than_k0_when_harvesting_only_realizes_gains():
+    prices = [100.0 * (1.02 ** i) for i in range(25)]  # 24개월 납입(연말 수확 2번) + 평가
+    steps = _make_steps(prices)
+    cfg = _cfg()
+    k0 = sim.run_candidate("K0", steps, start_capital_krw=40_000_000, saving_krw=1_000_000, cfg=cfg)
+    k1 = sim.run_candidate("K1", steps, start_capital_krw=40_000_000, saving_krw=1_000_000, cfg=cfg, cost_basis="moving_average")
+    # 수확은 이익이 있을 때만 "팔고 바로 재매수"라 왕복 수수료 정도만 손해 — 포트폴리오
+    # 전체 대비 크지 않아야 한다(느슨하게 0.5%).
+    assert k1.final_posttax_ex_pension_krw >= k0.final_posttax_ex_pension_krw * 0.995

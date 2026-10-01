@@ -147,6 +147,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true", help="검증용 — 처음 3개 시작월만")
+    parser.add_argument("--note", default="", help="trials.db에 남길 추가 메모(예: 버그 수정 후 재실행 사유)")
     args = parser.parse_args()
 
     prereg = load_prereg()
@@ -298,7 +299,7 @@ def main() -> None:
             conn, run_at=datetime.now().isoformat(timespec="seconds"), label="P6-3 계좌 구조 실행",
             metrics={"windows": len(starts) - len(skipped), "skipped": skipped, "m_values": m_values},
             date_range_start=FULL_START.isoformat(), date_range_end=full_end.isoformat(),
-            notes=f"configs/p6_3_preregistration.yaml 그대로 실행, quick={args.quick}",
+            notes=f"configs/p6_3_preregistration.yaml 그대로 실행, quick={args.quick}" + (f" — {args.note}" if args.note else ""),
         )
     finally:
         conn.close()

@@ -244,14 +244,16 @@ def deployable_reserve_events(month_dates: list[date], events: list[DrawdownEven
 def hypothetical_posttax_ex_pension_krw(
     overseas_ledger, overseas_price_usd: float, overseas_reserve_usd: float, fx: float,
     overseas_realized_gain_this_year_krw: float,
-    isa_value_krw: float, isa_reserve_krw: float, isa_contributed_lifetime_krw: float,
+    isa_value_krw: float, isa_reserve_krw: float, isa_cost_basis_krw: float,
     cfg: dict,
 ) -> float:
     """지금 전부(해외계좌+ISA) 정리하면 남을 세후 금액(연금 제외) — "1억 원 도달" 측정용
     (순수 함수, 매달 마크투마켓).
 
     해외계좌: 미실현손익(현재 취득가 기준)에 그 해 이미 쓴 공제를 뺀 남은 공제로 양도세.
-    ISA: 지금 해지한다고 보고 순이익(평가액-누적납입액)에 일반형 비과세+9.9%.
+    ISA: 지금 해지한다고 보고 순이익(평가액-취득원가)에 일반형 비과세+9.9%. isa_cost_basis_krw는
+    "지금 계좌"의 취득원가 — 재가입 때 리셋하지 않고 재예치액을 이어받은 값이어야 한다
+    (호출부 run_candidate의 isa_cost_basis_krw, isa_contributed_lifetime_krw가 아니다).
     """
     tax_cfg = cfg["tax"]
     oa_cfg = tax_cfg["overseas_account"]
@@ -262,7 +264,7 @@ def hypothetical_posttax_ex_pension_krw(
     overseas_posttax = overseas_value_krw - tax_overseas
 
     isa_total = isa_value_krw + isa_reserve_krw
-    isa_net_profit = isa_total - isa_contributed_lifetime_krw
+    isa_net_profit = isa_total - isa_cost_basis_krw
     isa_tax = at.isa_exit_tax(isa_net_profit, tax_cfg["isa"]["general_type_exemption_krw"], tax_cfg["isa"]["rate_pct"])
     isa_posttax = isa_total - isa_tax
 
@@ -336,8 +338,9 @@ def run_candidate(
 
     isa_value_krw = 0.0
     isa_reserve_krw = 0.0
-    isa_contributed_this_year_krw = 0.0
-    isa_contributed_lifetime_krw = 0.0
+    isa_contributed_this_year_krw = 0.0  # 그 해 전체(계좌 재가입과 무관하게 이어짐) — 연 한도 확인용
+    isa_contributed_lifetime_krw = 0.0  # 지금 계좌(재가입하면 0으로 리셋)의 누적 납입 — 총 1억 원(계좌당) 한도 확인용
+    isa_cost_basis_krw = 0.0  # 지금 계좌의 "순이익" 계산용 취득원가 — 재가입 때 리셋하지 않고 재예치액으로 이어받음
     isa_cycle_open_month = 0
     isa_exit_tax_paid_total = 0.0
 
@@ -395,7 +398,9 @@ def run_candidate(
             annual_room = at.isa_annual_room(isa_contributed_this_year_krw, isa_cfg["annual_limit_krw"])
             lifetime_room = at.isa_lifetime_room(isa_contributed_lifetime_krw, isa_cfg["lifetime_limit_krw"])
             isa_amt, overseas_amt = allocate_isa_then_overseas_krw(refund, annual_room, lifetime_room)
-            isa_value_krw += net_of_commission(isa_amt, commission_pct)
+            isa_net = net_of_commission(isa_amt, commission_pct)
+            isa_value_krw += isa_net
+            isa_cost_basis_krw += isa_net
             isa_contributed_this_year_krw += isa_amt
             isa_contributed_lifetime_krw += isa_amt
             if isa_amt > 0:
@@ -416,7 +421,9 @@ def run_candidate(
             isa_amt, overseas_amt = allocate_isa_then_overseas_krw(saving_krw, annual_room, lifetime_room)
             active = skimming_active_by_month[i] if (uses_reserve and skimming_active_by_month) else True
             isa_equity, isa_reserve_add = split_equity_and_reserve(isa_amt, skim_pct, active) if uses_reserve else (isa_amt, 0.0)
-            isa_value_krw += net_of_commission(isa_equity, commission_pct)
+            isa_equity_net = net_of_commission(isa_equity, commission_pct)
+            isa_value_krw += isa_equity_net
+            isa_cost_basis_krw += isa_equity_net + isa_reserve_add  # 대기자금 적립분도 원금이라 취득원가에 포함
             isa_reserve_krw += isa_reserve_add
             isa_contributed_this_year_krw += isa_amt
             isa_contributed_lifetime_krw += isa_amt
@@ -441,7 +448,9 @@ def run_candidate(
             annual_room = at.isa_annual_room(isa_contributed_this_year_krw, isa_cfg["annual_limit_krw"])
             lifetime_room = at.isa_lifetime_room(isa_contributed_lifetime_krw, isa_cfg["lifetime_limit_krw"])
             isa_amt, overseas_amt = allocate_isa_then_overseas_krw(remaining, annual_room, lifetime_room)
-            isa_value_krw += net_of_commission(isa_amt, commission_pct)
+            isa_net = net_of_commission(isa_amt, commission_pct)
+            isa_value_krw += isa_net
+            isa_cost_basis_krw += isa_net
             isa_contributed_this_year_krw += isa_amt
             isa_contributed_lifetime_krw += isa_amt
             if isa_amt > 0:
@@ -484,23 +493,42 @@ def run_candidate(
                     proceeds_usd, gain_usd = overseas.sell(amount_usd, step.core_price, commission_pct)
                     overseas_realized_gain_by_year[year] += gain_usd * step.fx
                     proceeds_krw = proceeds_usd * step.fx
-                    isa_value_krw += net_of_commission(proceeds_krw, commission_pct)
+                    proceeds_net = net_of_commission(proceeds_krw, commission_pct)
+                    isa_value_krw += proceeds_net
+                    isa_cost_basis_krw += proceeds_net
                     isa_contributed_this_year_krw += proceeds_krw
                     isa_contributed_lifetime_krw += proceeds_krw
                     trade_count += 1
 
-        # 5) ISA 3년 재가입
+        # 5) ISA 3년 재가입 — 해지 세금(지금 계좌의 취득원가 기준) 뗀 뒤, 그 해 남은 연
+        # 한도(계좌가 바뀌어도 그 해 한도는 이어진다) 안에서만 새 ISA에 재예치하고, 넘는
+        # 돈은 해외계좌로 보낸다(그 날 가격이 취득가가 된다) — 계획서 4장 K2 "넘는 돈은
+        # 해외계좌로" 그대로. 새 계좌의 취득원가는 리셋하지 않고 재예치액으로 이어받는다
+        # (사용자 지시 2026-10-01 — 재가입 전 원금을 다음 주기에서 또 이익으로 잡던 버그 수정).
         if uses_isa_reopen and (i - isa_cycle_open_month) == reopen_cycle_months:
             total_isa = isa_value_krw + isa_reserve_krw
-            net_profit = total_isa - isa_contributed_lifetime_krw
+            net_profit = total_isa - isa_cost_basis_krw
             tax = at.isa_exit_tax(net_profit, isa_cfg["general_type_exemption_krw"], isa_cfg["rate_pct"])
             isa_exit_tax_paid_total += tax
-            isa_value_krw = total_isa - tax
+            after_tax = total_isa - tax
+            trade_count += 1  # 해지(매도)
+
+            annual_room = at.isa_annual_room(isa_contributed_this_year_krw, isa_cfg["annual_limit_krw"])
+            reinvest_amt = min(after_tax, annual_room, isa_cfg["lifetime_limit_krw"])
+            overflow_amt = after_tax - reinvest_amt
+
+            isa_value_krw = reinvest_amt
+            isa_cost_basis_krw = reinvest_amt
             isa_reserve_krw = 0.0
-            isa_contributed_this_year_krw = 0.0
-            isa_contributed_lifetime_krw = 0.0
+            isa_contributed_this_year_krw += reinvest_amt  # 그 해 한도는 계좌가 바뀌어도 이어짐
+            isa_contributed_lifetime_krw = reinvest_amt  # 새 계좌 자체의 누적 납입(총 1억 원 한도용)
             isa_cycle_open_month = i
-            trade_count += 2  # 해지(매도) + 재가입(매수)
+            if reinvest_amt > 0:
+                trade_count += 1  # 재가입(매수)
+            if overflow_amt > 0:
+                overflow_usd = (overflow_amt / step.fx) * (1 - fx_spread_pct / 100)
+                overseas.buy(net_of_commission(overflow_usd, commission_pct), step.core_price, commission_pct)
+                trade_count += 1
 
         # 6) K3: 그 해(year) 마지막 달이면 세액공제 계산, 다음 해 5월에 환급 예약
         if candidate == "K3" and step.is_year_end and pension_credit_rate_pct is not None:
@@ -515,7 +543,7 @@ def run_candidate(
         hv = hypothetical_posttax_ex_pension_krw(
             overseas, step.core_price, overseas_reserve_usd, step.fx,
             overseas_realized_gain_by_year[year],
-            isa_value_krw, isa_reserve_krw, isa_contributed_lifetime_krw,
+            isa_value_krw, isa_reserve_krw, isa_cost_basis_krw,
             cfg,
         )
         if months_to_100m is None and hv >= 100_000_000:
@@ -557,7 +585,7 @@ def run_candidate(
     isa_posttax_krw = 0.0
     if uses_isa:
         total_isa = isa_value_krw + isa_reserve_krw
-        net_profit = total_isa - isa_contributed_lifetime_krw
+        net_profit = total_isa - isa_cost_basis_krw
         final_isa_tax = at.isa_exit_tax(net_profit, isa_cfg["general_type_exemption_krw"], isa_cfg["rate_pct"])
         isa_exit_tax_paid_total += final_isa_tax
         isa_posttax_krw = total_isa - final_isa_tax

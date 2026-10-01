@@ -44,6 +44,17 @@ def test_isa_exit_tax_loss_is_zero():
     assert at.isa_exit_tax(-1_000_000, 2_000_000, 9.9) == 0.0
 
 
+@pytest.mark.parametrize("profit,exemption,rate", [
+    (-5_000_000, 2_000_000, 9.9), (0, 2_000_000, 9.9), (2_000_000, 2_000_000, 9.9),
+    (10_000_000, 2_000_000, 9.9), (10_000_000, 4_000_000, 9.9), (100_000_000, 2_000_000, 9.9),
+])
+def test_isa_exit_tax_never_exceeds_rate_times_positive_profit(profit, exemption, rate):
+    # 사용자 지시 2026-10-01 불변식 2번: 비과세 한도를 빼기 전(더 느슨한 상한)으로도
+    # 세액이 "세율 × 양(+)의 순이익"을 넘을 수 없다 — isa_exit_tax 공식 자체의 성질.
+    tax = at.isa_exit_tax(profit, exemption, rate)
+    assert tax <= max(profit, 0.0) * rate / 100 + 1e-9
+
+
 # ── 연금 세액공제: 600만 원 한도 경계 (3개) ──────────────────────────────────
 
 
