@@ -23,7 +23,6 @@ from notify.briefing import PUBLIC_DISCLAIMER, report_titles
 from core.sizing import format_krw
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
-FILLS_XLSX_PATH = Path(__file__).resolve().parents[1] / "data" / "fills.xlsx"
 
 _env = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(TEMPLATE_DIR)),
@@ -345,7 +344,6 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "data_status_rows": summary.get("data_status_rows", []),
         "pending_names": pending_names,
         "unfilled_names": unfilled_names,
-        "fills_path": str(FILLS_XLSX_PATH),
         "ichimoku_shift": cfg["indicators"]["ichimoku_shift"],
         "funding": funding,
         "strategy_limit_str": _won(strategy_limit_krw if funding else None),

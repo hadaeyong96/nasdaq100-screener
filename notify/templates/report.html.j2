@@ -748,8 +748,8 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <div class="todo" style="margin-top:16px">
 {% if unfilled_names %}<b>미체결 (기록 없음)</b>: {{ unfilled_names }}<br>{% endif %}
 {% if pending_names %}<b>주문 후 체결 기록 필요</b>: {{ pending_names }}<br>{% endif %}
-오늘 주문할 종목은 체결 후 아래 파일에 한 줄씩 기록하세요.<br>
-<code style="font-size:12px">{{ fills_path }}</code> · 형식: 날짜, 종목, 차수, 매수매도, 체결가, 수량 (예: {{ as_of_str }}, PEP, 1차, 매수, 131.80, 34)</div>
+오늘 주문할 종목은 체결 후 구글 시트 '체결' 탭에 한 줄씩 기록하세요.<br>
+형식: 날짜, 종목, 매수매도, 수량, 체결가, 차수, 메모 (예: {{ as_of_str }}, PEP, 매수, 34, 131.80, 1차)</div>
 
 {% if macro_rows %}
 <section class="mexp" id="macro-explain" aria-label="시장 온도 지표 설명">

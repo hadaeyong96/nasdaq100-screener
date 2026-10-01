@@ -229,3 +229,10 @@ def test_private_guide_points_fills_to_google_sheet(tmp_path, cfg):
 def test_public_report_has_no_private_sheet_notes(tmp_path, cfg):
     html = _public_html(tmp_path, cfg)
     assert "구글 시트" not in html
+
+
+def test_private_fills_notice_points_to_google_sheet_fills_tab(tmp_path, cfg):
+    html = _private_html(tmp_path, cfg)
+    assert "오늘 주문할 종목은 체결 후 구글 시트 '체결' 탭에 한 줄씩 기록하세요." in html
+    assert "형식: 날짜, 종목, 매수매도, 수량, 체결가, 차수, 메모" in html  # data/sheets.py 체결 탭 헤더 순서
+    assert "fills.xlsx" not in html

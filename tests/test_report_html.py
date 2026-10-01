@@ -271,7 +271,7 @@ def test_bottom_hold_table_is_removed_but_fills_notice_remains(tmp_path, cfg):
     path = report_html.render_report(_empty_summary(), cfg, tmp_path)
     html = path.read_text(encoding="utf-8")
     assert "내 보유 종목" not in html
-    assert "체결 후 아래 파일에 한 줄씩 기록하세요" in html
+    assert "체결 후 구글 시트 '체결' 탭에 한 줄씩 기록하세요" in html
     assert html.count('id="hold"') == 1  # "보유 현황" 탭 하나만 남는다
 
 
