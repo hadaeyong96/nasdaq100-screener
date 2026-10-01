@@ -9,6 +9,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+import engine.backtest as bt
 from scripts import moat_h4_backtest as h4
 
 COSTS_CFG = {"slippage_pct": 0.05, "commission_buy_pct": 0.07, "commission_sell_pct": 0.07}
@@ -135,6 +136,76 @@ def test_build_group_periods_sector_cap_triggers_when_redistribution_possible():
 
     periods, triggered = h4.build_group_periods(tickers_by_year, stock_returns_by_year, sectors_by_year, execution_dates, final_mark_date, fx_by_date, 30)
     assert triggered[h4.YEARS[0]] is True
+
+
+def test_ticker_valuation_series_no_delisting_returns_raw_close():
+    days_index = pd.DatetimeIndex([pd.Timestamp(d) for d in ["2019-04-02", "2019-06-01", "2020-04-01"]])
+    df = _df(["2019-04-02", "2019-06-01", "2020-04-01"], open=[100.0, 90.0, 150.0], close=[99.0, 91.0, 148.0])
+    s = h4._ticker_valuation_series("AAA", pd.Timestamp("2019-04-02"), pd.Timestamp("2020-04-01"), {"AAA": df}, df, days_index)
+    assert list(s.values) == pytest.approx([99.0, 91.0, 148.0])
+
+
+def test_ticker_valuation_series_missing_ticker_returns_none():
+    days_index = pd.DatetimeIndex([pd.Timestamp("2019-04-02")])
+    assert h4._ticker_valuation_series("ZZZ", pd.Timestamp("2019-04-02"), pd.Timestamp("2020-04-01"), {}, pd.DataFrame(), days_index) is None
+
+
+def test_ticker_valuation_series_delisted_falls_back_to_qqqm_scaled():
+    days_index = pd.DatetimeIndex([pd.Timestamp(d) for d in ["2019-04-02", "2019-09-03", "2019-09-04", "2020-04-01"]])
+    stock_df = _df(["2019-04-02", "2019-09-03"], open=[100.0, 60.0], close=[100.0, 60.0])
+    cash_df = _df(
+        ["2019-04-02", "2019-09-03", "2019-09-04", "2020-04-01"],
+        open=[300.0, 310.0, 305.0, 330.0], close=[299.0, 309.0, 304.0, 329.0],
+    )
+    s = h4._ticker_valuation_series("AAA", pd.Timestamp("2019-04-02"), pd.Timestamp("2020-04-01"), {"AAA": stock_df}, cash_df, days_index)
+    assert s is not None
+    assert s[pd.Timestamp("2019-04-02")] == pytest.approx(100.0)
+    assert s[pd.Timestamp("2019-09-03")] == pytest.approx(60.0)
+    scale = 60.0 / 305.0  # 상장폐지 가격 / QQQM 편입 시가(2019-09-04)
+    assert s[pd.Timestamp("2019-09-04")] == pytest.approx(304.0 * scale)
+    assert s[pd.Timestamp("2020-04-01")] == pytest.approx(329.0 * scale)
+
+
+def _full_years_execution_dates() -> dict:
+    return {
+        2015: pd.Timestamp("2015-04-02"), 2016: pd.Timestamp("2016-04-04"), 2017: pd.Timestamp("2017-04-04"),
+        2018: pd.Timestamp("2018-04-03"), 2019: pd.Timestamp("2019-04-02"), 2020: pd.Timestamp("2020-04-02"),
+        2021: pd.Timestamp("2021-04-05"),
+    }
+
+
+def test_group_daily_equity_rows_catches_intraperiod_drawdown_and_chains_across_years():
+    execution_dates = _full_years_execution_dates()
+    final_mark_date = pd.Timestamp("2021-12-31")
+    all_dates = sorted(set(execution_dates.values()) | {final_mark_date, pd.Timestamp("2015-04-03")})
+    days_index = pd.DatetimeIndex(all_dates)
+
+    # 종목 A: 2015-04-02=100 -> 다음날 반토막(드로우다운) -> 이후 매 교체일마다 10%씩 상승
+    closes = {
+        pd.Timestamp("2015-04-02"): 100.0, pd.Timestamp("2015-04-03"): 50.0,
+        pd.Timestamp("2016-04-04"): 110.0, pd.Timestamp("2017-04-04"): 121.0,
+        pd.Timestamp("2018-04-03"): 133.1, pd.Timestamp("2019-04-02"): 146.41,
+        pd.Timestamp("2020-04-02"): 161.051, pd.Timestamp("2021-04-05"): 177.1561,
+        pd.Timestamp("2021-12-31"): 194.87171,
+    }
+    df = pd.DataFrame({"open": closes, "close": closes})
+    price_map = {"A": df}
+    cash_df = df.copy()  # 상장폐지 경로는 안 타므로 값은 무관(API 요구용)
+    tickers_by_year = {y: ["A"] for y in h4.YEARS}
+    stock_returns_by_year = {y: {"A": (1.0, 0.0)} for y in h4.YEARS}
+    sectors_by_year = {y: {"A": "Tech"} for y in h4.YEARS}
+    fx_by_date = {d.date().isoformat(): 1000.0 for d in all_dates}
+
+    rows = h4.group_daily_equity_rows(
+        tickers_by_year, stock_returns_by_year, sectors_by_year, execution_dates, final_mark_date, fx_by_date, 100, price_map, cash_df, days_index,
+    )
+    by_date = {r["date"]: r["total_krw"] for r in rows}
+    assert by_date["2015-04-02"] == pytest.approx(1000.0)
+    assert by_date["2015-04-03"] == pytest.approx(500.0)  # 드로우다운이 그대로 포착됨
+    assert by_date["2021-12-31"] == pytest.approx(1000.0 * 194.87171 / 100.0, rel=1e-6)  # 7개 기간 복리 누적
+
+    metrics = bt.compute_equity_metrics(rows)
+    assert metrics["mdd_pct"] == pytest.approx(-50.0, abs=0.1)
 
 
 def test_qqqm_daily_shape_rows_relative_to_window_start():

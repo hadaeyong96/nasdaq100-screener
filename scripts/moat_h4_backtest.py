@@ -14,9 +14,12 @@ report.json으로 결과만 남긴다. 결과가 마음에 안 들어도 여기 
 1. 세금은 "다음 해 5월 납부"(engine/backtest.py의 실제 현금 타이밍)가 아니라 매 교체일에
    그 자리에서 뗀다 — 기간별 세후 CAGR 계산 목적엔 충분하지만 정확한 현금 흐름 시점과는
    다르다.
-2. 넓음·좁음이상·없음·무작위 포트폴리오의 MDD는 "연 1회 교체 시점"만 평가한 값이다(일별
-   가격을 추적하지 않는다) — 실제 낙폭보다 작게 나올 수 있다. QQQM 대조군만 일별 종가로
-   MDD를 계산해 더 정확하다(비교 시 이 비대칭을 감안해야 한다).
+2. 넓음·좁음이상·없음 포트폴리오의 "mdd_pct"는 연 1회 교체 시점만 평가한 값이다(사용자
+   지시 2026-10-01로 "daily_mdd_pct" 필드를 추가해 일별 종가 기준 MDD도 함께 보고한다 —
+   진입 비중을 교체일에 고정하고 기간 중엔 재배분 없이 자연스럽게 흘러가게 둔 값, 세전·
+   배당 미반영. 연복리·백분위 같은 판정 값은 이 보강과 무관하게 그대로다). 무작위
+   포트폴리오 1,000회는 전수 일별 MDD까지 계산하지 않는다(판정에 쓰는 백분위는 수익
+   배수만 필요하고, 1,000회×일별 계산은 과한 비용).
 3. 인수·상장폐지로 종목 데이터가 중간에 끝나면 마지막 종가로 처분한 뒤 다음 거래일
    QQQM 매수로 잔여 기간을 대체한다(슬리피지는 처분 시에만, QQQM 편입엔 매수수수료만).
 4. Tiingo 대체 캐시 종목은 배당 데이터가 없어 배당수익률을 0으로 본다(F2에서 이미
@@ -240,6 +243,103 @@ def build_qqqm_control_period(
     )
 
 
+def _ticker_valuation_series(
+    ticker: str, entry_date: pd.Timestamp, exit_date: pd.Timestamp, price_map: dict, cash_df: pd.DataFrame, days_index: pd.DatetimeIndex,
+) -> pd.Series | None:
+    """[entry_date, exit_date] 구간의 종가 일별 시계열(일별 MDD용, 세전·배당 미반영
+    — 상대적 낙폭 모양만 본다). 상장폐지·인수로 데이터가 중간에 끝나면 stock_leg_return과
+    같은 규칙(처분가 고정 비율로 QQQM 종가를 이어 붙임)을 일별로 적용한다.
+    """
+    df = price_map.get(ticker)
+    if df is None:
+        return None
+    window_idx = days_index[(days_index >= entry_date) & (days_index <= exit_date)]
+    if len(window_idx) == 0:
+        return None
+    s = df["close"].reindex(window_idx).ffill()
+    last_avail = df.index.max()
+    if last_avail >= exit_date:
+        return s
+    before = s.loc[s.index <= last_avail].dropna()
+    if before.empty:
+        return None
+    stock_price_at_delist = float(before.iloc[-1])
+    qqqm_candidates = cash_df.index[cash_df.index > last_avail]
+    if len(qqqm_candidates) == 0:
+        return s.ffill()  # QQQM으로 못 넘어가면 마지막 값 그대로 유지(근사)
+    qqqm_entry_date = qqqm_candidates[0]
+    qqqm_entry_price = _price_at(cash_df, qqqm_entry_date, "open")
+    if not qqqm_entry_price:
+        return s.ffill()
+    qqqm_close = cash_df["close"].reindex(window_idx).ffill()
+    scale = stock_price_at_delist / qqqm_entry_price
+    combined = s.copy()
+    after_mask = window_idx > last_avail
+    combined.loc[after_mask] = qqqm_close.loc[after_mask] * scale
+    return combined.ffill()
+
+
+def group_daily_equity_rows(
+    tickers_by_year: dict,
+    stock_returns_by_year: dict,
+    sectors_by_year: dict,
+    execution_dates: dict,
+    final_mark_date: pd.Timestamp,
+    fx_by_date: dict,
+    sector_cap_pct: float,
+    price_map: dict,
+    cash_df: pd.DataFrame,
+    days_index: pd.DatetimeIndex,
+) -> list[dict]:
+    """한 그룹(넓음/좁음이상/없음)의 2015~2021 전체를 일별로 이어 붙인 상대값 곡선
+    (세전·배당 미반영, MDD 계산 전용 — 사용자 지시 2026-10-01: "교체일이 아니라
+    일별 가격으로 다시 계산"). 연복리·백분위(판정에 쓰는 값)는 그대로 둔다 — 이
+    함수는 보고서의 MDD 필드만 다시 채우는 데 쓴다.
+
+    진입 비중은 교체일에 고정하고, 기간 중에는 각 종목의 실제 가격 변동에 따라
+    자연히 비중이 흘러가게 둔다(재배분하지 않음 — 실제 보유 포지션과 같은 모양).
+    """
+    rows: list[dict] = []
+    level = 1.0
+    for i, y in enumerate(YEARS):
+        entry_date = execution_dates[y]
+        is_final = y == YEARS[-1]
+        exit_date = execution_dates[YEARS[i + 1]] if not is_final else final_mark_date
+        returns = stock_returns_by_year[y]
+        tickers = [t for t in tickers_by_year[y] if t in returns]
+        weights = mbt.allocate_equal_weight_with_sector_cap(tickers, sectors_by_year[y], sector_cap_pct)
+
+        period_days = days_index[(days_index >= entry_date) & (days_index <= exit_date)]
+        series_by_ticker: dict[str, pd.Series] = {}
+        entry_prices: dict[str, float] = {}
+        for t in weights:
+            s = _ticker_valuation_series(t, entry_date, exit_date, price_map, cash_df, days_index)
+            ep = _price_at(price_map.get(t), entry_date, "open")
+            if s is None or not ep:
+                continue
+            series_by_ticker[t] = s
+            entry_prices[t] = ep
+        total_w = sum(weights[t] for t in series_by_ticker)
+        if total_w <= 0 or not len(period_days):
+            continue
+
+        period_last_rel = 1.0
+        for d in period_days:
+            rel = 0.0
+            for t, s in series_by_ticker.items():
+                price = s.get(d)
+                if price is None or pd.isna(price):
+                    continue
+                rel += (weights[t] / total_w) * (price / entry_prices[t])
+            fx = fx_by_date.get(d.date().isoformat())
+            if fx is None:
+                continue
+            rows.append({"date": d.date().isoformat(), "total_krw": level * rel * fx})
+            period_last_rel = rel
+        level = level * period_last_rel
+    return rows
+
+
 def qqqm_daily_shape_rows(cash_df: pd.DataFrame, entry_date: pd.Timestamp, exit_date: pd.Timestamp, fx_by_date: dict) -> list[dict]:
     """QQQM의 MDD를 일별 종가(세전, 배당 미반영)로 계산하기 위한 상대값 시계열.
 
@@ -376,6 +476,8 @@ def main() -> None:
     }
     group_results: dict[str, dict] = {}
     sector_cap_triggered_wide: dict[int, bool] = {}
+    days_index = pd.DatetimeIndex(trading_days)
+    formal_boundary_iso = execution_dates[FORMAL_START_YEAR].date().isoformat()
     for name, tickers_by_year in groups.items():
         periods, triggered = build_group_periods(
             tickers_by_year, stock_returns_by_year, sectors_by_year, execution_dates, final_mark_date, data.fx_by_date, sector_cap_pct,
@@ -385,14 +487,30 @@ def main() -> None:
         rows = mbt.chain_periods_with_tax(periods, starting_capital_usd, tax_cfg)
         reference_rows = rows[0:5]
         formal_rows = rows[4:8]
+
+        # 일별 가격 기준 MDD 재계산 (사용자 지시 2026-10-01) — 연복리·백분위(판정 값)는 안 바꾼다.
+        daily_rows = group_daily_equity_rows(
+            tickers_by_year, stock_returns_by_year, sectors_by_year, execution_dates, final_mark_date,
+            data.fx_by_date, sector_cap_pct, price_map, data.cash_etf_df, days_index,
+        )
+        daily_reference_rows = [r for r in daily_rows if r["date"] <= formal_boundary_iso]
+        daily_formal_rows = [r for r in daily_rows if r["date"] >= formal_boundary_iso]
+        reference_metrics = bt.compute_equity_metrics(reference_rows)
+        formal_metrics = bt.compute_equity_metrics(formal_rows)
+        reference_metrics["daily_mdd_pct"] = bt.compute_equity_metrics(daily_reference_rows).get("mdd_pct") if daily_reference_rows else None
+        formal_metrics["daily_mdd_pct"] = bt.compute_equity_metrics(daily_formal_rows).get("mdd_pct") if daily_formal_rows else None
+
         group_results[name] = {
             "equity_rows": rows,
-            "reference_metrics": bt.compute_equity_metrics(reference_rows),
-            "formal_metrics": bt.compute_equity_metrics(formal_rows),
+            "reference_metrics": reference_metrics,
+            "formal_metrics": formal_metrics,
             "formal_total_return_factor": formal_rows[-1]["total_krw"] / formal_rows[0]["total_krw"] if formal_rows[0]["total_krw"] else None,
             "reference_total_return_factor": reference_rows[-1]["total_krw"] / reference_rows[0]["total_krw"] if reference_rows[0]["total_krw"] else None,
         }
-        log(f"{name}: 참고구간 세후CAGR {group_results[name]['reference_metrics'].get('cagr_pct')}% / 정식구간 세후CAGR {group_results[name]['formal_metrics'].get('cagr_pct')}%")
+        log(
+            f"{name}: 참고구간 세후CAGR {reference_metrics.get('cagr_pct')}% (교체일MDD {reference_metrics.get('mdd_pct')}% / 일별MDD {reference_metrics.get('daily_mdd_pct')}%)"
+            f" / 정식구간 세후CAGR {formal_metrics.get('cagr_pct')}% (교체일MDD {formal_metrics.get('mdd_pct')}% / 일별MDD {formal_metrics.get('daily_mdd_pct')}%)"
+        )
 
     # ── QQQM 대조군 A (참고/정식 구간 각각 새로 매수) ───────────────────────
     qqqm_ref_period = build_qqqm_control_period(2015, execution_dates[FORMAL_START_YEAR], execution_dates, data.fx_by_date, costs_cfg, div_wh_rate, data.cash_etf_df, data.cash_etf_dividends)
