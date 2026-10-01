@@ -186,3 +186,22 @@ def test_macro_scale_and_header_use_css_dots(tmp_path, cfg, render):
 def test_telegram_macro_lines_keep_emoji(cfg):
     text = briefing.build_public_briefing_text(_summary(cfg), cfg)
     assert "🟡주의" in text
+
+
+# ── 시장 온도 그래프: 공개용 = 개인용 ─────────────────────────────────────
+
+
+def test_public_macro_chart_matches_private(tmp_path, cfg):
+    """공개용 시장 온도 그래프(스파크라인·설명 링크·CSS)가 개인용과 같은지."""
+    pub = _public_html(tmp_path, cfg)
+    priv = _private_html(tmp_path, cfg)
+    chart = lambda html: re.search(r'<a class="mchart".*?</a>', html, re.S).group(0)
+    assert chart(pub) == chart(priv)
+    assert "<small>1년 그래프 · 설명 보기 ↓</small>" in chart(pub)
+    assert '<span class="q">ⓘ</span>' in pub and '<a href="#macro-explain">지표 설명 ↓</a>' in pub
+    css = lambda html: {
+        line for line in html.split("<style>", 1)[1].split("</style>", 1)[0].splitlines()
+        if re.match(r"\.(spark|mchart|mbody|mgrid|mt|mn|mv|mhead)\b", line)
+    }
+    assert css(pub) - {".mt{scroll-margin-top:16px}"} <= css(priv)
+    assert ".wrap{max-width:1560px" in pub  # 칸 폭이 같아야 그래프 크기도 같다

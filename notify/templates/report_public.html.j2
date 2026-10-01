@@ -23,7 +23,7 @@ html,body{margin:0;background:var(--paper);color:var(--ink)}
 body{font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
   font-size:14px;line-height:1.5;font-variant-numeric:tabular-nums;
   padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
-.wrap{max-width:900px;margin:0 auto;padding:24px 16px 50px}
+.wrap{max-width:1560px;margin:0 auto;padding:24px 16px 50px}
 header{border-bottom:3px solid var(--ink);padding-bottom:12px;margin-bottom:16px}
 h1{font-size:22px;font-weight:800;margin:0;letter-spacing:-0.02em}
 h1 .suffix{font-weight:400;color:var(--sub);font-size:14px}
@@ -35,9 +35,11 @@ h2.sec{font-size:16px;font-weight:800;margin:20px 0 8px}
 .macro{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;margin-bottom:12px}
 .mhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;font-size:12px;color:var(--sub);margin-bottom:8px}
 .mhead>b{font-size:15px;color:var(--ink)}
+.mhead a{margin-left:auto;color:var(--info);font-weight:700;cursor:pointer}
 .mgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .mt{border:1px solid var(--grid);border-radius:8px;padding:8px 10px;min-width:0}
-.mn{display:block;font-size:12px;color:var(--sub);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mn{display:block;font-size:12px;color:var(--sub);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:none}
+.mn .q{color:var(--info);font-weight:700}
 .mn small{display:block;font-weight:400;color:var(--mute);font-size:11px}
 .mv{display:flex;align-items:baseline;gap:3px;margin:2px 0}
 .mv b{font-size:22px;font-weight:800;letter-spacing:-0.02em;color:var(--ink)}
@@ -50,6 +52,8 @@ h2.sec{font-size:16px;font-weight:800;margin:20px 0 8px}
 .mf{display:flex;flex-direction:column;gap:2px}
 .mr{font-size:11px;color:var(--mute);line-height:1.35}
 .mbody{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:8px;align-items:center}
+.mchart{display:block;color:inherit;text-decoration:none;min-width:0}
+.mchart small{display:block;font-size:10px;color:var(--info);text-align:right}
 .mscale{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--sub)}
 .mscale li{display:grid;grid-template-columns:auto 1fr auto;gap:4px;align-items:baseline;border-radius:5px;padding:1px 4px}
 .mscale li b{font-weight:700;white-space:nowrap}
@@ -60,7 +64,7 @@ h2.sec{font-size:16px;font-weight:800;margin:20px 0 8px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;vertical-align:middle;margin:0 3px 1px 0;flex:none}
 .dot-ok{background:var(--buy)}.dot-warn{background:var(--warn)}.dot-bad{background:var(--sell)}
 @media (max-width:1100px){.mgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:640px){.mgrid{grid-template-columns:minmax(0,1fr)}.mbody{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:640px){.mgrid{grid-template-columns:minmax(0,1fr)}.mhead a{margin-left:0}.mbody{grid-template-columns:minmax(0,1fr)}}
 
 /* 오늘의 추천 표 */
 .sheet{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:8px}
@@ -127,11 +131,11 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 
 {% if macro_rows %}
 <section class="macro" aria-label="시장 온도">
-  <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 {{ macro_as_of_str }} · <i class="dot dot-ok" aria-hidden="true"></i>안정 · <i class="dot dot-warn" aria-hidden="true"></i>주의 · <i class="dot dot-bad" aria-hidden="true"></i>위험, ★ = 오늘 위치 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span></div>
+  <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 {{ macro_as_of_str }} · <i class="dot dot-ok" aria-hidden="true"></i>안정 · <i class="dot dot-warn" aria-hidden="true"></i>주의 · <i class="dot dot-bad" aria-hidden="true"></i>위험, ★ = 오늘 위치 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span><a href="#macro-explain">지표 설명 ↓</a></div>
   <div class="mgrid">
   {% for m in macro_rows %}
     <div class="mt" id="macro-{{ m.slug }}" title="{{ m.name }}{% if m.code %} · {{ m.code }}{% endif %}{% if m.range_str != '-' %} · 1년 {{ m.range_str }}{% endif %}">
-      <a class="mn" href="#explain-{{ m.slug }}">{{ m.name }}<small>{{ m.code }}</small></a>
+      <a class="mn" href="#explain-{{ m.slug }}">{{ m.name }} <span class="q">ⓘ</span><small>{{ m.code }}</small></a>
       <div class="mv"><b>{{ m.value_str }}</b>{% if m.unit %}<span class="u">{{ m.unit }}</span>{% endif %}{% if m.change_str %}<span class="mc">1주 {{ m.change_str }}</span>{% endif %}</div>
       <div class="mbody">
         <a class="mchart" href="#explain-{{ m.slug }}" aria-label="{{ m.name }} 설명 보기">
@@ -143,7 +147,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
           <circle cx="{{ last[0] }}" cy="{{ last[1] }}" r="2.5"/>
         </svg>
         {% endif %}
-        </a>
+        <small>1년 그래프 · 설명 보기 ↓</small></a>
         <ol class="mscale" aria-label="{{ m.name }} 판정 기준">
           {% for sc in m.scale %}<li class="{{ 'cur' if sc.current else '' }}"><b><i class="dot dot-{{ sc.status }}" aria-hidden="true"></i>{{ sc.label }}</b><span class="rg">{{ sc.range }}</span><span class="star">{{ '★' if sc.current else '' }}</span></li>{% endfor %}
         </ol>
