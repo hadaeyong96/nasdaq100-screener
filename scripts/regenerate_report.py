@@ -122,7 +122,7 @@ def regenerate(cfg: dict, mode: str, date_str: str | None = None) -> dict:
         plan_ref_price_by_ticker=plan_ref_price_by_ticker,
     )
 
-    _write_outputs(summary)
+    _write_outputs(summary, cfg)
     report_path = report_html.render_report(summary, cfg, OUTPUT_DIR)
     summary["report_path"] = report_path
 

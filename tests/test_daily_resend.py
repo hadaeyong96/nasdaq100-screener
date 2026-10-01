@@ -29,7 +29,7 @@ def test_resend_last_with_paper_mode_arg_still_uses_live_db_and_files(tmp_path, 
 
     calls: dict = {}
 
-    def _fake_resend_last(report_path, text_path, as_of_str, force_no_send=False):
+    def _fake_resend_last(report_path, text_path, as_of_str, force_no_send=False, cfg=None):
         calls["report_path"] = report_path
         calls["text_path"] = text_path
         calls["as_of_str"] = as_of_str
@@ -57,7 +57,7 @@ def test_resend_last_with_live_mode_arg_is_unaffected(tmp_path, monkeypatch):
     monkeypatch.setattr(
         telegram,
         "resend_last",
-        lambda report_path, text_path, as_of_str, force_no_send=False: calls.update(as_of_str=as_of_str) or True,
+        lambda report_path, text_path, as_of_str, force_no_send=False, cfg=None: calls.update(as_of_str=as_of_str) or True,
     )
 
     daily._resend_last({}, "live", force_no_send=False)

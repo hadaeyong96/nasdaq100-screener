@@ -1846,7 +1846,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         )
     conn.close()
 
-    _write_outputs(summary)
+    _write_outputs(summary, cfg)
     report_path = report_html.render_report(summary, cfg, OUTPUT_DIR)
     summary["report_path"] = report_path
     if mode == "live":
@@ -1883,7 +1883,8 @@ def _write_funnel(funnel: dict, as_of, mode: str) -> None:
     )
 
 
-def _write_outputs(summary: dict) -> None:
+def _write_outputs(summary: dict, cfg: dict | None = None) -> None:
+    """summary -> outputs/signals_{모드}_YYYY-MM-DD(.md, _buy/_sell/_blocked.csv). 제목은 cfg report.short_title."""
     OUTPUT_DIR.mkdir(exist_ok=True)
     as_of = summary["as_of"]
     as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
@@ -1896,7 +1897,7 @@ def _write_outputs(summary: dict) -> None:
         OUTPUT_DIR / f"signals_{mode}_{as_of_str}_blocked.csv", index=False, encoding="utf-8-sig"
     )
 
-    lines = [f"# 나스닥100 신호 — 기준일 {as_of_str} ({summary['mode_label']})", ""]
+    lines = [f"# {briefing.report_titles(cfg)['short_title']} 신호 — 기준일 {as_of_str} ({summary['mode_label']})", ""]
     lines.append(f"보유 종목 수: {summary['held_tickers_count']} / 동시 보유 한도: {summary['max_concurrent']}")
     lines.append("")
     lines.append("## 매수 신호")
@@ -1940,7 +1941,7 @@ def _resend_last(cfg: dict, mode: str, force_no_send: bool) -> None:
     report_path = OUTPUT_DIR / f"report_live_{last_date}.html"
     text_path = OUTPUT_DIR / f"telegram_live_{last_date}.txt"
     print(f"[daily] --resend: 기준일 {last_date} 재발송")
-    ok = telegram.resend_last(report_path, text_path, last_date, force_no_send=force_no_send)
+    ok = telegram.resend_last(report_path, text_path, last_date, force_no_send=force_no_send, cfg=cfg)
     print(f"[daily] 재발송 {'성공' if ok else '실패'}")
 
 
