@@ -1,0 +1,89 @@
+# P6-3(로드맵 C2) 사전 등록 — docs/design/p6_3_plan.md를 그대로 수치화한 파일.
+#
+# 코드는 세법·비용·규칙 수치를 전부 여기서 읽는다(하드코딩 금지). 어떤 시뮬레이션도
+# 돌리기 전에 커밋한다. 결과를 본 뒤에는 이 파일을 수정하지 않는다 — 판정을 바꾸려고
+# 기준·구간·설정을 사후에 건드리지 않는다. 바꿔야 하면 새 버전으로 다시 사전 등록한다.
+
+registered_at: "2026-10-01"
+head_commit_at_registration: "de7fa66e2ffe39e4266a99b4ebd1801a2fe21e7f"
+
+# ── 시뮬레이션 공통 (계획서 3장) ────────────────────────────────────────────
+simulation:
+  start_capital_krw: 40000000
+  monthly_saving_krw: {base: 1000000, compare: [500000, 1500000]}
+  horizon_years: 10
+  window_start_months: {from: "1999-03", to: "2011-12"}  # 약 154개 구간
+  contribution_day: first_trading_day
+  seal_end: "2021-12-31"  # 이 날짜를 넘는 데이터 요청은 코드에서 막는다
+
+# ── 비용 (계획서 3장) ───────────────────────────────────────────────────────
+costs:
+  commission_pct: 0.07
+  fx_spread_pct: 0.1  # 해외계좌 매수 시에만
+
+# ── 보수 (계획서 3장) ───────────────────────────────────────────────────────
+expense_ratio:
+  domestic_etf_pct: 0.10  # 국내 상장 나스닥100 ETF(ISA·연금) 연 보수 — QQQ 원화 환산 수익에서 차감
+  qqqm_pct_reference_only: 0.15  # 참고용 — 실제 QQQM 시세(core_df)에 이미 반영, 추가 차감 없음
+
+# ── 세법 (계획서 2장) ───────────────────────────────────────────────────────
+tax:
+  overseas_account:
+    capital_gains_deduction_krw: 2500000
+    capital_gains_rate_pct: 22
+    dividend_withholding_pct: 15
+  isa:
+    general_type_exemption_krw: 2000000       # 일반형(주 결과)
+    underprivileged_type_exemption_krw: 4000000  # 서민형(보고용 병행 계산)
+    rate_pct: 9.9
+    annual_limit_krw: 20000000
+    lifetime_limit_krw: 100000000
+    mandatory_years: 3
+    reopen_cycle_years: 3  # K2·K2b·K4: 이 주기로 해지 후 재가입
+  pension:
+    deduction_cap_krw: 6000000
+    credit_rate_pct: [16.5, 13.2]  # 둘 다 계산, 별도 결과 행
+    refund_paid_month_offset: 5    # 공제받은 다음 해 5월 환급
+    withdrawal_tax_pct: {pension: 5.5, lump_sum: 16.5}  # (a) 연금수령 (b) 중도인출
+    fixed_monthly_contribution_krw: 500000  # K3 전용 — 세액공제 한도(600만/년)와 정확히 일치
+  domestic_wrapper_dividend_haircut_pct: 15  # [가정] ISA·연금 내 국내 상장 해외ETF 배당
+  reserve_interest_tax_pct: 15.4  # 해외계좌 내 대기자금(K4) 이자소득세, 즉시 과세
+
+# ── K4 대기 자금 (계획서 4장) ────────────────────────────────────────────────
+reserve:
+  skim_pct_of_monthly_allocation: 20  # 그 달 각 계좌로 가는 몫의 20%
+  drawdown_trigger_pct: -20           # QQQ 종가, 구간 시작 이후 직전 고점 대비
+  reference_series: qqq_close
+
+# ── 후보 (계획서 4장) ────────────────────────────────────────────────────────
+candidates: [K0, K1, K2, K2b, K3, K4]
+
+# ── 취득가 방식 (계획서 3장) ─────────────────────────────────────────────────
+cost_basis:
+  default: moving_average
+  dual_compute_candidates: [K1, K2b]  # 이동평균(주)·선입선출(보고용) 둘 다
+  dual_compute_note: >
+    그 외 후보(K0·K2·K3·K4)는 창 안에서 해외계좌 부분 매도가 없어(전량매도 1회뿐)
+    두 방식의 최종 실현손익 합계가 수학적으로 같다 — 이동평균만 계산한다.
+
+# ── 측정 (계획서 5장) ────────────────────────────────────────────────────────
+metrics:
+  - posttax_assets_ex_pension_krw      # 연금 제외 세후 자산(판정 주 지표)
+  - posttax_assets_incl_pension_krw    # 연금 포함(K3 전용, a·b)
+  - months_to_100m_krw                 # 1억원 도달 개월 수(세후·연금 제외)
+  - total_tax_krw
+  - total_tax_credit_krw               # K3 전용
+  - trade_count
+window_summary_stats: [median, p10, p90]
+highlight_window_start_month: "1999-03"  # 닷컴 붕괴를 바로 맞는 구간, 별도 표시
+
+# ── 판정 규칙 (계획서 6장, 구조 선택 — 합격/탈락 아님) ────────────────────────
+verdict:
+  primary_metric: posttax_assets_ex_pension_krw
+  recommend_rule: "중앙값 최대 구조를 추천, 단 그 구조의 하위10%가 K0의 하위10%보다 낮으면 추천 보류"
+  k3_reported_separately: true
+  difference_threshold_pct: 3  # 10년 세후 자산 중앙값 차이가 이 미만이면 "차이 없음"
+  tiebreak: "관리가 쉬운 쪽(계좌 수·매매 횟수가 적은 쪽)"
+  seal_forbidden_after: "2021-12-31"
+
+no_parameter_changes_beyond_scope: true
