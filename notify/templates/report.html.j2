@@ -82,6 +82,7 @@ td.calc{color:var(--info);font-weight:700}
 .panel{display:none;padding-top:12px}.panel.on{display:block}
 .sub{display:none}.sub.on{display:block}
 .desc{color:var(--sub);font-size:13px;margin:0 0 10px}
+.plan-note{color:var(--mute);font-size:12px;margin:0 0 6px}
 .risk-line{font-weight:700;color:var(--ink)}
 
 /* 시트 표 */
@@ -390,6 +391,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <button data-sub="{{ tab.key }}" aria-selected="{{ 'true' if loop.first else 'false' }}" class="{{ 'has' if tab.count else 'empty' }}">{{ tab.title }} ({{ tab.count }})</button>
   {% endfor %}
   </div>
+  <p class="plan-note">수량·투입금액은 구글 시트 '계획' 탭의 계획금액으로 계산합니다. 계획이 없는 종목은 비워 둡니다.</p>
 
   {% for tab in buy_tabs %}
   <div class="sub{{ ' on' if loop.first else '' }}" id="{{ tab.key }}"><div class="sheet"><table>
@@ -655,7 +657,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <div><b>손절부터 확인</b>매도·손절 탭에 "손절"이 있으면 가장 먼저 처리해요. 손실을 작게 끝내는 게 모든 규칙보다 우선이에요.</div>
     <div><b>매도 신호 처리</b>E1·E2·E3 신호가 난 종목은 표에 적힌 범위(1차분·2차분·전량)만큼 팔아요.</div>
     <div><b>신규 매수 주문</b>신규 매수 탭의 지정가·수량 그대로 주문하고, 체결되면 손절 예약 주문을 바로 걸어요.</div>
-    <div><b>체결 기록</b>fills.xlsx에 체결 내역을 적어요. 내일 보고서가 이걸 보고 보유 현황을 계산해요.</div>
+    <div><b>체결 기록</b>구글 시트 '체결' 탭에 체결 내역을 적어요. 내일 보고서가 이걸 보고 보유 현황을 계산해요.</div>
   </div>
 
   <h2>이 프로그램이 쓰는 지표 4가지</h2>

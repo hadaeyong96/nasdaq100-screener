@@ -205,3 +205,27 @@ def test_public_macro_chart_matches_private(tmp_path, cfg):
     }
     assert css(pub) - {".mt{scroll-margin-top:16px}"} <= css(priv)
     assert ".wrap{max-width:1560px" in pub  # 칸 폭이 같아야 그래프 크기도 같다
+
+
+# ── 개인용 안내 문구 (구글 시트) ──────────────────────────────────────────
+
+
+def test_private_buy_panel_has_plan_sheet_note_above_table(tmp_path, cfg):
+    html = _private_html(tmp_path, cfg)
+    panel = html.split('<section class="panel on" id="buy">', 1)[1]
+    note = "수량·투입금액은 구글 시트 &#39;계획&#39; 탭의 계획금액으로 계산합니다. 계획이 없는 종목은 비워 둡니다."
+    note_raw = note.replace("&#39;", "'")
+    assert note in panel or note_raw in panel
+    idx = panel.find(note) if note in panel else panel.find(note_raw)
+    assert idx < panel.find('<div class="sheet">')  # 표 바로 위
+
+
+def test_private_guide_points_fills_to_google_sheet(tmp_path, cfg):
+    html = _private_html(tmp_path, cfg)
+    assert "<b>체결 기록</b>구글 시트 '체결' 탭에 체결 내역을 적어요." in html
+    assert "fills.xlsx에 체결 내역을 적어요" not in html
+
+
+def test_public_report_has_no_private_sheet_notes(tmp_path, cfg):
+    html = _public_html(tmp_path, cfg)
+    assert "구글 시트" not in html
