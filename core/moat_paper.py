@@ -201,21 +201,73 @@ def aggregate_shares_by_cik(ticker_shares: dict[str, float | None], ticker_cik: 
     """같은 회사의 복수 주식 종류(예: GOOGL·GOOG) 유통주식수를 합산한다 (순수 함수,
     moat_paper.md P2 "모든 종류를 합산하고, 회사는 한 번만 셈").
 
+    같은 CIK의 티커들은 같은 companyfacts를 읽으므로 대개 "회사 전체" 주식 수를 똑같이 받아
+    온다 — 그런 값을 티커 수만큼 더하면 두 배가 된다(2026-10-02 GOOG 이중 계산 버그). 그래서
+    CIK마다 **서로 다른 값만** 한 번씩 더한다(같은 값은 한 번만 셈).
+
     입력: ticker_shares({티커: 유통주식수 또는 None}), ticker_cik({티커: CIK 또는 None})
     출력: {티커: 그 티커가 속한 회사(CIK)의 전체 유통주식수 합}. CIK를 모르는 티커는 자기
          값 그대로(합산 대상에서 빠짐).
     """
-    totals_by_cik: dict[int, float] = {}
+    distinct_by_cik: dict[int, set[float]] = {}
     for t, shares in ticker_shares.items():
         cik = ticker_cik.get(t)
         if cik is None or shares is None:
             continue
-        totals_by_cik[cik] = totals_by_cik.get(cik, 0.0) + shares
+        distinct_by_cik.setdefault(cik, set()).add(float(shares))
+    totals_by_cik = {cik: sum(vals) for cik, vals in distinct_by_cik.items()}
     out: dict[str, float | None] = {}
     for t, shares in ticker_shares.items():
         cik = ticker_cik.get(t)
         out[t] = totals_by_cik.get(cik) if (cik is not None and cik in totals_by_cik) else shares
     return out
+
+
+# ── 시작 파일 보호(2026-10-02 사용자 지시) ──────────────────────────────────────────
+
+# 시작 파일에서 바뀌어도 되는 최상위 칸 — 진입 확정 때 처음 채워지는 값들.
+START_FILE_MUTABLE_KEYS = ("p1_weights", "p2_weights", "p2_market_caps", "entered_at", "shares_outstanding_corrections")
+
+
+def find_protected_changes(before: dict, after: dict) -> list[str]:
+    """시작 파일을 다시 쓰기 전·후를 비교해, 바뀌면 안 되는 칸이 바뀐 경로 목록을 돌려준다
+    (순수 함수).
+
+    바뀌어도 되는 칸:
+    - entries에서 before가 "진입 대기"였던 티커
+    - START_FILE_MUTABLE_KEYS(P1·P2 확정 비중, p2_market_caps, 진입 확정 시각, 주식 수 보정 기록)
+      — 단 before에 이미 값(None 아님)이 있었으면 그대로여야 한다
+    - status: "진입 대기" → "체결 완료" 전환만
+    그 밖의 칸은 before에 있던 값이 after에도 그대로 있어야 하고, 새 최상위 칸도 추가 금지.
+
+    입력: before(쓰기 전 시작 파일 dict), after(쓴 뒤 다시 읽은 dict)
+    출력: 위반 경로 문자열 목록(빈 목록이면 통과)
+    """
+    problems: list[str] = []
+    for key in sorted(set(before) | set(after)):
+        if key not in after:
+            problems.append(f"{key}: 삭제됨")
+            continue
+        if key not in before:
+            if key not in START_FILE_MUTABLE_KEYS:
+                problems.append(f"{key}: 허용되지 않은 새 칸")
+            continue
+        b, a = before[key], after[key]
+        if key == "entries":
+            for t in sorted(set(b) | set(a)):
+                if t not in b or t not in a:
+                    problems.append(f"entries.{t}: 티커 추가·삭제")
+                elif b[t].get("status") != "진입 대기" and b[t] != a[t]:
+                    problems.append(f"entries.{t}: 이미 체결된 값이 바뀜")
+        elif key == "status":
+            if b != a and not (b == "진입 대기" and a == "체결 완료"):
+                problems.append(f"status: {b} → {a}")
+        elif key in START_FILE_MUTABLE_KEYS:
+            if b is not None and b != a:
+                problems.append(f"{key}: 이미 있던 값이 바뀜")
+        elif b != a:
+            problems.append(f"{key}: 바뀜")
+    return problems
 
 
 # ── 평가(마크 투 마켓, 세전 — 교체 전까지는 매도가 없어 세금이 없다) ───────────────────────

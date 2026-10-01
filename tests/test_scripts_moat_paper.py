@@ -118,3 +118,112 @@ def test_render_evaluated_report_smoke():
     text = msp.render_evaluated_report(start, "2026-11", {"A": "넓음", "B": "좁음"}, 1.05, 1.03, 1.02, 1.01, [1.0, 1.1, 0.9], 60.0)
     assert "P1" in text and "P2" in text
     assert "B" in text  # 등급이 바뀐 종목 목록에 포함
+
+
+# ── 시작 파일 보호 쓰기(write_start_file_guarded) ────────────────────────────
+
+
+def _write_json(path, obj):
+    import json
+    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def test_write_start_file_guarded_fills_blanks(tmp_path):
+    path = tmp_path / "start.json"
+    start = _ready_start()
+    start["entries"]["B"] = {"status": "진입 대기"}
+    _write_json(path, start)
+    new = _ready_start()
+    msp.finalize_if_ready(new, _cfg())
+    changed = msp.write_start_file_guarded(path, new)
+    assert "entries.B" in changed and "p1_weights" in changed and "status" in changed
+    assert "entries.A" not in changed
+
+
+def test_write_start_file_guarded_rolls_back_on_protected_change(tmp_path):
+    path = tmp_path / "start.json"
+    _write_json(path, _ready_start())
+    original = path.read_bytes()
+    bad = _ready_start()
+    bad["entries"]["A"] = {"status": "체결", "entry_price": 123.0}  # 이미 체결된 값 변경
+    with pytest.raises(msp.StartFileProtectedError):
+        msp.write_start_file_guarded(path, bad)
+    assert path.read_bytes() == original  # 되돌려짐
+
+
+def test_write_start_file_guarded_refuses_when_finalized(tmp_path):
+    path = tmp_path / "start.json"
+    start = _ready_start()
+    msp.finalize_if_ready(start, _cfg())
+    _write_json(path, start)
+    original = path.read_bytes()
+    with pytest.raises(msp.StartFileProtectedError):
+        msp.write_start_file_guarded(path, start)
+    assert path.read_bytes() == original
+
+
+def test_main_does_not_write_finalized_start_file(tmp_path, monkeypatch):
+    # 체결 완료 상태면 main()은 시작 파일을 읽기만 한다.
+    path = tmp_path / "start.json"
+    start = _ready_start()
+    msp.finalize_if_ready(start, _cfg())
+    start["rules_doc_hash"] = msp.rules_doc_hash()
+    _write_json(path, start)
+    original = path.read_bytes()
+    monkeypatch.setattr(msp, "START_PATH", path)
+    monkeypatch.setattr(msp, "PAPER_DIR", tmp_path)
+    monkeypatch.setattr(msp, "LOG_PATH", tmp_path / "log.txt")
+    monkeypatch.setattr(msp, "load_config", lambda: {"moat": {}})
+    monkeypatch.setattr(msp, "get_locked_hash", lambda: "x")
+    monkeypatch.setattr(msp.moat, "check_lock", lambda cfg, h: None)
+    monkeypatch.setattr(msp.edgar, "get_user_agent", lambda: "ua")
+    monkeypatch.setattr(msp, "write_monthly_report_and_record", lambda *a, **k: None)
+
+    def boom(*a, **k):
+        raise AssertionError("체결 완료 상태에서 시작 파일을 쓰면 안 된다")
+
+    monkeypatch.setattr(msp, "write_start_file_guarded", boom)
+    monkeypatch.setattr(msp, "try_fill_pending", boom)
+    msp.main()
+    assert path.read_bytes() == original
+
+
+# ── 공유 CIK 유통주식수 보정 ────────────────────────────────────────────────
+
+
+def test_effective_shares_prefers_correction():
+    start = {"shares_outstanding": {"G": {"value": 200.0}}, "shares_outstanding_corrections": {"G": {"old": 200.0, "value": 100.0}}}
+    assert msp.effective_shares(start, "G") == 100.0
+    assert msp.effective_shares({"shares_outstanding": {"G": {"value": 200.0}}}, "G") == 200.0
+
+
+def test_build_shares_corrections_fixes_double_count(monkeypatch):
+    start = {
+        "cik": {"GOOG": 1, "GOOGL": 1, "AAPL": 2},
+        "shares_outstanding": {"GOOG": {"value": 200.0}, "GOOGL": {"value": 200.0}, "AAPL": {"value": 50.0}},
+    }
+    fetched = []
+    monkeypatch.setattr(msp.edgar, "fetch_company_facts", lambda cik, user_agent: fetched.append(cik) or {})
+    monkeypatch.setattr(msp, "raw_shares_for_ticker", lambda t, facts: (100.0, "diluted_shares_fallback"))
+    out = msp.build_shares_corrections(start, "ua")
+    assert fetched == [1]  # 티커가 하나뿐인 CIK는 다시 조회하지 않음
+    assert out["GOOG"]["old"] == 200.0 and out["GOOG"]["value"] == 100.0
+    assert set(out) == {"GOOG", "GOOGL"}
+
+
+# ── 규칙 문서 해시 알려진 변경 ──────────────────────────────────────────────
+
+
+def test_is_known_hash_change():
+    notes = "| 2026-10-02 | `aaaa` → `bbbb` | 줄바꿈 | 없음 |"
+    assert msp.is_known_hash_change("aaaa", "bbbb", notes)
+    assert not msp.is_known_hash_change("bbbb", "aaaa", notes)  # 순서 반대
+    assert not msp.is_known_hash_change("aaaa", "cccc", notes)
+    assert not msp.is_known_hash_change(None, "bbbb", notes)
+
+
+def test_repo_hash_notes_covers_start_file_pair():
+    import json
+    start = json.loads(msp.START_PATH.read_text(encoding="utf-8"))
+    notes = msp.HASH_NOTES_PATH.read_text(encoding="utf-8")
+    assert msp.is_known_hash_change(start["rules_doc_hash"], "51ff52148b926add", notes)

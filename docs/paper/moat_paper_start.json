@@ -968,317 +968,644 @@
   },
   "entries": {
     "AAPL": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 330.1700134277344,
+      "entry_price": 330.33509843444824
     },
     "ABNB": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 161.14999389648438,
+      "entry_price": 161.2305688934326
     },
     "ADBE": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 245.3699951171875,
+      "entry_price": 245.4926801147461
     },
     "ADI": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 396.9100036621094,
+      "entry_price": 397.1084586639404
     },
     "ADP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 263.4800109863281,
+      "entry_price": 263.6117509918213
     },
     "ADSK": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 214.08999633789062,
+      "entry_price": 214.19704133605956
     },
     "AEP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 118.23999786376953,
+      "entry_price": 118.29911786270141
     },
     "ALAB": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 360.5899963378906,
+      "entry_price": 360.77029133605953
     },
     "ALNY": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 248.2100067138672,
+      "entry_price": 248.33411171722412
     },
     "AMAT": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 517.0,
+      "entry_price": 517.2585
     },
     "AMD": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 611.0050048828125,
+      "entry_price": 611.3105073852539
     },
     "AMGN": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 421.7200012207031,
+      "entry_price": 421.9308612213135
     },
     "AMZN": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 251.5,
+      "entry_price": 251.62574999999998
     },
     "APP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 291.0,
+      "entry_price": 291.14549999999997
     },
     "ARM": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 293.6199951171875,
+      "entry_price": 293.7668051147461
     },
     "ASML": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 1798.77197265625,
+      "entry_price": 1799.671358642578
     },
     "AVGO": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 351.94000244140625,
+      "entry_price": 352.1159724426269
     },
     "AXON": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 426.6600036621094,
+      "entry_price": 426.8733336639404
     },
     "BKNG": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 163.47000122070312,
+      "entry_price": 163.55173622131346
     },
     "BKR": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 54.551998138427734,
+      "entry_price": 54.579274137496945
     },
     "CCEP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 101.13999938964844,
+      "entry_price": 101.19056938934325
     },
     "CDNS": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 339.3599853515625,
+      "entry_price": 339.52966534423825
     },
     "CEG": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 260.6000061035156,
+      "entry_price": 260.73030610656735
     },
     "CMCSA": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 21.959999084472656,
+      "entry_price": 21.970979084014893
     },
     "COST": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 911.25,
+      "entry_price": 911.7056249999999
     },
     "CPRT": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 27.520000457763672,
+      "entry_price": 27.533760457992553
     },
     "CRWD": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 263.2300109863281,
+      "entry_price": 263.36162599182126
     },
     "CRWV": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 87.54000091552734,
+      "entry_price": 87.5837709159851
     },
     "CSCO": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 108.04000091552734,
+      "entry_price": 108.0940209159851
     },
     "CSX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 46.21500015258789,
+      "entry_price": 46.23810765266418
     },
     "CTAS": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 195.5,
+      "entry_price": 195.59775
     },
     "DASH": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 183.69000244140625,
+      "entry_price": 183.78184744262694
     },
     "DDOG": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 278.75,
+      "entry_price": 278.889375
     },
     "DXCM": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 86.45999908447266,
+      "entry_price": 86.50322908401489
     },
     "EXC": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 40.279998779296875,
+      "entry_price": 40.300138778686524
     },
     "FANG": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 183.2100067138672,
+      "entry_price": 183.30161171722412
     },
     "FAST": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 49.470001220703125,
+      "entry_price": 49.494736221313474
     },
     "FER": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 52.75230026245117,
+      "entry_price": 52.77867641258239
     },
     "FTNT": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 179.14999389648438,
+      "entry_price": 179.23956889343262
     },
     "GEHC": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 65.37000274658203,
+      "entry_price": 65.40268774795531
     },
     "GILD": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 148.9199981689453,
+      "entry_price": 148.99445816802978
     },
     "GOOG": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 347.7550048828125,
+      "entry_price": 347.92888238525387
     },
     "GOOGL": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 350.7850036621094,
+      "entry_price": 350.9603961639404
     },
     "HON": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 210.94000244140625,
+      "entry_price": 211.04547244262693
     },
     "HONA": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 155.1699981689453,
+      "entry_price": 155.24758316802976
     },
     "IDXX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 521.5800170898438,
+      "entry_price": 521.8408070983886
     },
     "INTC": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 118.45999908447266,
+      "entry_price": 118.51922908401488
     },
     "INTU": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 284.75,
+      "entry_price": 284.89237499999996
     },
     "ISRG": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 409.04998779296875,
+      "entry_price": 409.25451278686523
     },
     "KDP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 30.579999923706055,
+      "entry_price": 30.595289923667906
     },
     "KLAC": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 196.85499572753906,
+      "entry_price": 196.95342322540282
     },
     "LIN": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 472.0,
+      "entry_price": 472.236
     },
     "LITE": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 978.4249877929688,
+      "entry_price": 978.9142002868651
     },
     "LRCX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 331.9800109863281,
+      "entry_price": 332.14600099182127
     },
     "MAR": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 357.7900085449219,
+      "entry_price": 357.9689035491943
     },
     "MCHP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 78.0,
+      "entry_price": 78.039
     },
     "MDLZ": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 58.0,
+      "entry_price": 58.028999999999996
     },
     "MELI": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 1729.1700439453125,
+      "entry_price": 1730.034628967285
     },
     "META": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 728.5250244140625,
+      "entry_price": 728.8892869262695
     },
     "MNST": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 41.599998474121094,
+      "entry_price": 41.62079847335815
     },
     "MPWR": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 1347.6500244140625,
+      "entry_price": 1348.3238494262694
     },
     "MRVL": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 265.4599914550781,
+      "entry_price": 265.59272145080564
     },
     "MSFT": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 519.8800048828125,
+      "entry_price": 520.1399448852538
     },
     "MSTR": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 153.77000427246094,
+      "entry_price": 153.84688927459715
     },
     "MU": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 1054.3399658203125,
+      "entry_price": 1054.8671358032227
     },
     "NBIS": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 236.07000732421875,
+      "entry_price": 236.18804232788085
     },
     "NFLX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 69.34400177001953,
+      "entry_price": 69.37867377090454
     },
     "NVDA": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 229.9499969482422,
+      "entry_price": 230.0649719467163
     },
     "NXPI": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 238.64500427246094,
+      "entry_price": 238.76432677459715
     },
     "ODFL": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 172.83999633789062,
+      "entry_price": 172.92641633605956
     },
     "ORLY": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 85.6500015258789,
+      "entry_price": 85.69282652664184
     },
     "PANW": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 396.7900085449219,
+      "entry_price": 396.9884035491943
     },
     "PAYX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 99.59200286865234,
+      "entry_price": 99.64179887008666
     },
     "PCAR": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 109.66999816894531,
+      "entry_price": 109.72483316802978
     },
     "PDD": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 78.30000305175781,
+      "entry_price": 78.33915305328368
     },
     "PEP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 126.94000244140625,
+      "entry_price": 127.00347244262694
     },
     "PLTR": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 190.17999267578125,
+      "entry_price": 190.27508267211914
     },
     "PYPL": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 53.06999969482422,
+      "entry_price": 53.096534694671625
     },
     "QCOM": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 185.10000610351562,
+      "entry_price": 185.19255610656737
     },
     "QQEW": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 163.24000549316406,
+      "entry_price": 163.32162549591064
     },
     "QQQM": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 305.6449890136719,
+      "entry_price": 305.7978115081787
     },
     "REGN": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 765.97998046875,
+      "entry_price": 766.3629704589844
     },
     "RKLB": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 72.0999984741211,
+      "entry_price": 72.13604847335814
     },
     "ROP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 353.010009765625,
+      "entry_price": 353.1865147705078
     },
     "ROST": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 234.36000061035156,
+      "entry_price": 234.47718061065672
     },
     "SBUX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 94.04000091552734,
+      "entry_price": 94.08702091598511
     },
     "SHOP": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 150.8000030517578,
+      "entry_price": 150.8754030532837
     },
     "SNDK": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 1736.18798828125,
+      "entry_price": 1737.0560822753905
     },
     "SNPS": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 467.8479919433594,
+      "entry_price": 468.08191593933105
     },
     "SPCX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 150.45199584960938,
+      "entry_price": 150.52722184753418
     },
     "STX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 910.0,
+      "entry_price": 910.4549999999999
     },
     "TER": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 402.8999938964844,
+      "entry_price": 403.1014438934326
     },
     "TMUS": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 163.3800048828125,
+      "entry_price": 163.4616948852539
     },
     "TRI": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 99.80999755859375,
+      "entry_price": 99.85990255737305
     },
     "TSLA": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 356.80999755859375,
+      "entry_price": 356.98840255737304
     },
     "TTWO": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 207.5,
+      "entry_price": 207.60375
     },
     "TXN": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 281.5150146484375,
+      "entry_price": 281.6557721557617
     },
     "VRTX": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 522.3900146484375,
+      "entry_price": 522.6512096557617
     },
     "WBD": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 30.950000762939453,
+      "entry_price": 30.96547576332092
     },
     "WDAY": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 195.3000030517578,
+      "entry_price": 195.39765305328368
     },
     "WDC": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 451.7950134277344,
+      "entry_price": 452.02091093444824
     },
     "WMT": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 104.3949966430664,
+      "entry_price": 104.44719414138794
     },
     "XEL": {
-      "status": "진입 대기"
+      "status": "체결",
+      "entry_open": 70.44999694824219,
+      "entry_price": 70.48522194671631
     }
   },
-  "p1_weights": null,
-  "p2_weights": null,
-  "p2_market_caps": null,
-  "status": "진입 대기"
+  "p1_weights": {
+    "AAPL": 0.014285714285714282,
+    "ADBE": 0.014285714285714282,
+    "ADI": 0.014285714285714282,
+    "ADP": 0.014285714285714282,
+    "ADSK": 0.014285714285714282,
+    "AMAT": 0.014285714285714282,
+    "AMD": 0.014285714285714282,
+    "ASML": 0.014285714285714282,
+    "COST": 0.05,
+    "CSCO": 0.014285714285714282,
+    "CTAS": 0.05,
+    "FAST": 0.05,
+    "FTNT": 0.014285714285714282,
+    "GOOG": 0.05,
+    "HON": 0.05,
+    "IDXX": 0.05,
+    "ISRG": 0.05,
+    "KDP": 0.05,
+    "KLAC": 0.014285714285714282,
+    "LRCX": 0.014285714285714282,
+    "MELI": 0.05,
+    "MNST": 0.05,
+    "MPWR": 0.014285714285714282,
+    "MSFT": 0.014285714285714282,
+    "NXPI": 0.014285714285714282,
+    "ORLY": 0.05,
+    "PANW": 0.014285714285714282,
+    "PAYX": 0.014285714285714282,
+    "PEP": 0.05,
+    "QCOM": 0.014285714285714282,
+    "ROP": 0.014285714285714282,
+    "ROST": 0.05,
+    "SNPS": 0.014285714285714282,
+    "TER": 0.014285714285714282,
+    "WMT": 0.05
+  },
+  "p2_weights": {
+    "AAPL": 0.04411904149518152,
+    "ADBE": 0.004399141164497334,
+    "ADI": 0.008859681633889489,
+    "ADP": 0.0048216881216998405,
+    "ADSK": 0.002061181677877203,
+    "AMAT": 0.018900113637352688,
+    "AMD": 0.04411904149518152,
+    "ASML": 0.031936060362155724,
+    "COST": 0.10000000079393434,
+    "CSCO": 0.01962182794353929,
+    "CTAS": 0.03925814921514458,
+    "FAST": 0.0284860810451774,
+    "FTNT": 0.006055039919563759,
+    "GOOG": 0.10000000079393434,
+    "HON": 0.033548647990841736,
+    "IDXX": 0.020619687624861993,
+    "ISRG": 0.07251569816699217,
+    "KDP": 0.014528402916448024,
+    "KLAC": 0.011847999251328355,
+    "LRCX": 0.019136137395015712,
+    "MELI": 0.04399033573732858,
+    "MNST": 0.014226137950482654,
+    "MPWR": 0.003050790609953706,
+    "MSFT": 0.044119041495181505,
+    "NXPI": 0.002775476765008114,
+    "ORLY": 0.03476913265438203,
+    "PANW": 0.01495159910671402,
+    "PAYX": 0.0016331431538743344,
+    "PEP": 0.0604887256578983,
+    "QCOM": 0.008953015669655721,
+    "ROP": 0.0016082766705641672,
+    "ROST": 0.037568998658639635,
+    "SNPS": 0.004130065539900076,
+    "TER": 0.0029016368918658494,
+    "WMT": 0.10000000079393434
+  },
+  "p2_market_caps": {
+    "AAPL": 4820969886870.056,
+    "ADBE": 95545751100.65918,
+    "ADI": 192425044927.92554,
+    "ADP": 104723125704.37338,
+    "ADSK": 44767181639.23645,
+    "AMAT": 410495022970.0155,
+    "AMD": 997949146218.7837,
+    "ASML": 693625132815.4,
+    "COST": 404322120175.07245,
+    "CSCO": 426170067913.15027,
+    "CTAS": 78272265750.08775,
+    "FAST": 56795089690.2324,
+    "FTNT": 131510518854.94562,
+    "GOOG": 4282656613280.09,
+    "HON": 66888754146.420906,
+    "IDXX": 41111201157.55177,
+    "ISRG": 144580631319.98965,
+    "KDP": 41634867168.286316,
+    "KLAC": 257328861515.98752,
+    "LRCX": 415621266107.0868,
+    "MELI": 87707223037.89792,
+    "MNST": 40768649334.16039,
+    "MPWR": 66260678932.355156,
+    "MSFT": 3862322822431.685,
+    "NXPI": 60281087207.491135,
+    "ORLY": 69322136815.71078,
+    "PANW": 324736514103.2409,
+    "PAYX": 35470534692.344315,
+    "PEP": 173345967373.62717,
+    "QCOM": 194452183911.89572,
+    "ROP": 34930454995.81713,
+    "ROST": 74904464570.10599,
+    "SNPS": 89701648423.86734,
+    "TER": 63021182064.38217,
+    "WMT": 828657533902.2338
+  },
+  "status": "체결 완료",
+  "shares_outstanding_corrections": {
+    "GOOG": {
+      "old": 24618000000.0,
+      "value": 12309000000.0,
+      "reason": "2026-10-02 GOOG 이중 계산 버그 수정: 같은 CIK의 티커들이 회사 전체 주식 수를 각각 받아 와 aggregate_shares_by_cik가 두 배로 합산했다. 시작 파일의 shares_outstanding은 덮어쓰지 않고 보정값을 여기 따로 기록하며, P2 시가총액은 보정값으로 계산한다."
+    },
+    "GOOGL": {
+      "old": 24618000000.0,
+      "value": 12309000000.0,
+      "reason": "2026-10-02 GOOG 이중 계산 버그 수정: 같은 CIK의 티커들이 회사 전체 주식 수를 각각 받아 와 aggregate_shares_by_cik가 두 배로 합산했다. 시작 파일의 shares_outstanding은 덮어쓰지 않고 보정값을 여기 따로 기록하며, P2 시가총액은 보정값으로 계산한다."
+    }
+  },
+  "entered_at": "2026-10-02T07:24:13"
 }

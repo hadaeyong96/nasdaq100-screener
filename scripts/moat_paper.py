@@ -55,6 +55,7 @@ from store import moat_paper as store_mp  # noqa: E402
 PAPER_DIR = ROOT / "docs" / "paper"
 START_PATH = PAPER_DIR / "moat_paper_start.json"
 RULES_DOC_PATH = ROOT / "docs" / "design" / "moat_paper.md"
+HASH_NOTES_PATH = PAPER_DIR / "hash_notes.md"
 OUT_DIR = ROOT / "outputs"
 LOG_PATH = ROOT / "outputs" / "moat" / "paper_report.log"
 
@@ -84,6 +85,76 @@ def rules_doc_hash() -> str:
     return hashlib.sha256(RULES_DOC_PATH.read_bytes()).hexdigest()[:16]
 
 
+def is_known_hash_change(old_hash: str | None, new_hash: str, notes_text: str) -> bool:
+    """hash_notes.md에 "이전 해시 → 현재 해시" 쌍으로 적힌 알려진 변경인지 확인한다.
+
+    입력: old_hash(시작 파일의 rules_doc_hash), new_hash(지금 문서 해시), notes_text(hash_notes.md 내용)
+    출력: 한 줄에 old_hash, →, new_hash가 이 순서로 적혀 있으면 True
+    """
+    if not old_hash:
+        return False
+    for line in notes_text.splitlines():
+        if old_hash in line and new_hash in line and "→" in line:
+            if line.index(old_hash) < line.index("→") < line.index(new_hash):
+                return True
+    return False
+
+
+def check_rules_doc_hash(start: dict) -> None:
+    """시작 파일의 규칙 문서 해시와 지금 해시를 비교해 로그를 남긴다 — hash_notes.md에 적힌
+    쌍이면 한 줄 안내만, 아니면 경고."""
+    current_hash = rules_doc_hash()
+    old_hash = start.get("rules_doc_hash")
+    if old_hash == current_hash:
+        return
+    notes = HASH_NOTES_PATH.read_text(encoding="utf-8") if HASH_NOTES_PATH.exists() else ""
+    if is_known_hash_change(old_hash, current_hash, notes):
+        log(f"규칙 문서 해시 {old_hash} → {current_hash}: 알려진 변경(사유: hash_notes.md)")
+    else:
+        log(f"⚠️ moat_paper.md 해시가 시작 파일과 다릅니다(시작 {old_hash}, 현재 {current_hash}) — 규칙 문서가 잠금 뒤 바뀐 것으로 보입니다.")
+
+
+class StartFileProtectedError(RuntimeError):
+    """체결 완료된 시작 파일을 다시 쓰려 하거나, 쓰기 뒤 원래 값이 바뀌었을 때 낸다."""
+
+
+def changed_paths(before: dict, after: dict) -> list[str]:
+    """보고용: 바뀐 최상위 칸 목록(entries는 티커 단위)."""
+    out = []
+    for key in sorted(set(before) | set(after)):
+        b, a = before.get(key), after.get(key)
+        if key == "entries" and isinstance(b, dict) and isinstance(a, dict):
+            out += [f"entries.{t}" for t in sorted(set(b) | set(a)) if b.get(t) != a.get(t)]
+        elif b != a:
+            out.append(key)
+    return out
+
+
+def write_start_file_guarded(path: Path, new_start: dict) -> list[str]:
+    """시작 파일의 빈 칸만 채워 다시 쓴다 (2026-10-02 사용자 지시 안전장치).
+
+    1. 디스크의 기존 파일이 이미 "체결 완료"면 쓰지 않고 StartFileProtectedError — 확정 뒤에는
+       읽기만 한다.
+    2. 쓰기 전 원본 바이트를 보관하고, 쓴 뒤 다시 읽어 core.moat_paper.find_protected_changes로
+       비교한다. 위반이 하나라도 있으면 원본 바이트로 되돌리고 StartFileProtectedError.
+
+    입력: path(시작 파일), new_start(새로 쓸 dict)
+    출력: 바뀐 칸 경로 목록(보고용)
+    """
+    original_bytes = path.read_bytes()
+    before = json.loads(original_bytes.decode("utf-8"))
+    if before.get("status") == "체결 완료":
+        raise StartFileProtectedError("시작 파일이 이미 체결 완료 상태 — 다시 쓰지 않는다")
+
+    path.write_text(json.dumps(new_start, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    after = json.loads(path.read_text(encoding="utf-8"))
+    problems = mpaper.find_protected_changes(before, after)
+    if problems:
+        path.write_bytes(original_bytes)
+        raise StartFileProtectedError(f"원래 값이 있던 칸이 바뀌어 쓰기를 되돌렸습니다: {problems}")
+    return changed_paths(before, after)
+
+
 def fetch_shares_outstanding_yfinance(ticker: str) -> float | None:
     """yfinance 현재 유통주식수(우선순위 3번, moat_paper.md P2 — dei·분기 희석주식수가
     둘 다 없을 때만 쓴다). 실패하면 None (네트워크)."""
@@ -95,6 +166,53 @@ def fetch_shares_outstanding_yfinance(ticker: str) -> float | None:
         return float(val) if val else None
     except Exception:
         return None
+
+
+def raw_shares_for_ticker(ticker: str, facts: dict) -> tuple[float | None, str | None]:
+    """우선순위(dei → 분기 희석주식수 → yfinance)대로 티커 하나의 유통주식수와 출처를 구한다."""
+    dei_val = mpaper.latest_cover_page_shares(facts, JUDGMENT_DATE)
+    diluted_val = None if dei_val else mpaper.latest_quarterly_diluted_shares(facts, JUDGMENT_DATE)
+    yf_val = fetch_shares_outstanding_yfinance(ticker) if (dei_val is None and diluted_val is None) else None
+    return mpaper.shares_outstanding_from_candidates(dei_val, diluted_val, yf_val)
+
+
+SHARES_FIX_REASON = (
+    "2026-10-02 GOOG 이중 계산 버그 수정: 같은 CIK의 티커들이 회사 전체 주식 수를 각각 받아 와 "
+    "aggregate_shares_by_cik가 두 배로 합산했다. 시작 파일의 shares_outstanding은 덮어쓰지 않고 "
+    "보정값을 여기 따로 기록하며, P2 시가총액은 보정값으로 계산한다."
+)
+
+
+def build_shares_corrections(start: dict, user_agent: str) -> dict[str, dict]:
+    """같은 CIK에 티커가 여럿인 회사만 고친 aggregate_shares_by_cik로 다시 계산해, 시작 파일에
+    기록된 값과 다르면 보정 기록을 만든다 (EDGAR 네트워크, 기준일 2026-09-30 고정이라 결정적).
+
+    출력: {티커: {"old": 기록값, "value": 보정값, "reason": ...}} — 다른 게 없으면 빈 dict
+    """
+    by_cik: dict[int, list[str]] = {}
+    for t, cik in start["cik"].items():
+        if cik is not None:
+            by_cik.setdefault(cik, []).append(t)
+    corrections: dict[str, dict] = {}
+    for cik, tickers in by_cik.items():
+        if len(tickers) < 2:
+            continue
+        facts = edgar.fetch_company_facts(cik, user_agent=user_agent)
+        raw = {t: raw_shares_for_ticker(t, facts)[0] for t in tickers}
+        fixed = mpaper.aggregate_shares_by_cik(raw, {t: cik for t in tickers})
+        for t in tickers:
+            old = start["shares_outstanding"].get(t, {}).get("value")
+            if fixed[t] != old:
+                corrections[t] = {"old": old, "value": fixed[t], "reason": SHARES_FIX_REASON}
+    return corrections
+
+
+def effective_shares(start: dict, ticker: str) -> float | None:
+    """P2 시가총액에 쓸 유통주식수 — 보정 기록이 있으면 그 값, 없으면 시작 파일 값."""
+    fix = (start.get("shares_outstanding_corrections") or {}).get(ticker)
+    if fix is not None:
+        return fix["value"]
+    return start["shares_outstanding"].get(ticker, {}).get("value")
 
 
 # ── 1. 유니버스·등급·유통주식수 (기준일, 2026-09-30) ────────────────────────────
@@ -130,10 +248,7 @@ def build_universe_and_grades(cfg: dict, user_agent: str) -> dict:
         profile = moat.analyze_company(facts, ticker, cfg, JUDGMENT_DATE)
         rows.append({"ticker": ticker, "cik": cik, "grade": profile.grade, "sector": sector})
 
-        dei_val = mpaper.latest_cover_page_shares(facts, JUDGMENT_DATE)
-        diluted_val = None if dei_val else mpaper.latest_quarterly_diluted_shares(facts, JUDGMENT_DATE)
-        yf_val = fetch_shares_outstanding_yfinance(ticker) if (dei_val is None and diluted_val is None) else None
-        shares, source = mpaper.shares_outstanding_from_candidates(dei_val, diluted_val, yf_val)
+        shares, source = raw_shares_for_ticker(ticker, facts)
         raw_shares[ticker] = shares
         shares_source[ticker] = source
 
@@ -206,7 +321,7 @@ def finalize_if_ready(start: dict, cfg: dict) -> None:
 
     market_caps = {}
     for t in wide:
-        shares = start["shares_outstanding"].get(t, {}).get("value")
+        shares = effective_shares(start, t)
         market_caps[t] = (shares * entry_prices[t]) if shares else 0.0
     p2_weights = mpaper.market_cap_weights_with_caps(wide, market_caps, sectors, sector_cap, P2_STOCK_CAP_PCT)
 
@@ -249,7 +364,13 @@ def build_skeleton(cfg: dict, user_agent: str) -> dict:
     return start
 
 
-def try_fill_pending(start: dict, cfg: dict) -> dict:
+def try_fill_pending(start: dict, cfg: dict, user_agent: str | None = None) -> dict:
+    if user_agent is not None and "shares_outstanding_corrections" not in start and start.get("p2_weights") is None:
+        corrections = build_shares_corrections(start, user_agent)
+        if corrections:
+            start["shares_outstanding_corrections"] = corrections
+            for t, c in corrections.items():
+                log(f"유통주식수 보정 {t}: {c['old']:,.0f} → {c['value']:,.0f}")
     pending = [t for t, e in start["entries"].items() if e.get("status") == "진입 대기"]
     if not pending:
         finalize_if_ready(start, cfg)
@@ -409,13 +530,12 @@ def main() -> None:
 
     if START_PATH.exists():
         start = json.loads(START_PATH.read_text(encoding="utf-8"))
-        current_hash = rules_doc_hash()
-        if start.get("rules_doc_hash") != current_hash:
-            log(f"⚠️ moat_paper.md 해시가 시작 파일과 다릅니다(시작 {start.get('rules_doc_hash')}, 현재 {current_hash}) — 규칙 문서가 잠금 뒤 바뀐 것으로 보입니다.")
+        check_rules_doc_hash(start)
         if start.get("status") != "체결 완료":
-            start = try_fill_pending(start, cfg)
-            START_PATH.write_text(json.dumps(start, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-            log(f"시작 파일 갱신(진입 대기 칸만 채움): status={start['status']}")
+            start = try_fill_pending(start, cfg, user_agent)
+            changed = write_start_file_guarded(START_PATH, start)
+            log(f"시작 파일 갱신(진입 대기 칸만 채움): status={start['status']}, 바뀐 칸 {len(changed)}개")
+            log(f"  바뀐 칸: {changed}")
         else:
             log("시작 파일이 이미 체결 완료 상태 — 보유 종목·비중은 그대로 둔다(덮어쓰지 않음)")
     else:

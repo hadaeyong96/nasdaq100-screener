@@ -132,6 +132,16 @@ def test_aggregate_shares_by_cik_sums_multi_class():
     assert out["AAPL"] == pytest.approx(2000.0)
 
 
+def test_aggregate_shares_by_cik_same_value_counted_once():
+    # 회귀(2026-10-02 GOOG 이중 계산): 같은 CIK 두 티커가 회사 전체 주식 수를 똑같이 받아 오면
+    # 합계가 두 배가 되면 안 된다.
+    ticker_shares = {"GOOGL": 12_309_000_000.0, "GOOG": 12_309_000_000.0}
+    ticker_cik = {"GOOGL": 1652044, "GOOG": 1652044}
+    out = mp.aggregate_shares_by_cik(ticker_shares, ticker_cik)
+    assert out["GOOGL"] == pytest.approx(12_309_000_000.0)
+    assert out["GOOG"] == pytest.approx(12_309_000_000.0)
+
+
 def test_aggregate_shares_by_cik_unknown_cik_keeps_own_value():
     ticker_shares = {"X": 10.0}
     ticker_cik = {"X": None}
@@ -195,3 +205,51 @@ def test_mark_to_market_factor_basic():
 def test_mark_to_market_factor_none_when_entry_missing():
     weights = {"A": 0.5, "B": 0.5}
     assert mp.mark_to_market_factor(weights, {"A": 100.0}, {"A": 110.0}) is None
+
+
+# ── find_protected_changes: 시작 파일 보호 ────────────────────────────────────────
+
+
+def _pending_start():
+    return {
+        "created_at": "2026-10-01T21:35:17",
+        "shares_outstanding": {"A": {"value": 10.0, "source": "dei_cover_page"}},
+        "entries": {"A": {"status": "체결", "entry_price": 1.0}, "B": {"status": "진입 대기"}},
+        "p1_weights": None, "p2_weights": None, "p2_market_caps": None,
+        "status": "진입 대기",
+    }
+
+
+def test_find_protected_changes_allows_filling_blanks():
+    before = _pending_start()
+    after = _pending_start()
+    after["entries"]["B"] = {"status": "체결", "entry_price": 2.0}
+    after["p1_weights"] = {"A": 0.5, "B": 0.5}
+    after["p2_weights"] = {"A": 0.4, "B": 0.6}
+    after["p2_market_caps"] = {"A": 10.0, "B": 20.0}
+    after["entered_at"] = "2026-10-02T10:00:00"
+    after["shares_outstanding_corrections"] = {"A": {"old": 20.0, "value": 10.0}}
+    after["status"] = "체결 완료"
+    assert mp.find_protected_changes(before, after) == []
+
+
+def test_find_protected_changes_flags_filled_entry_and_other_fields():
+    before = _pending_start()
+    after = _pending_start()
+    after["entries"]["A"] = {"status": "체결", "entry_price": 1.5}
+    after["shares_outstanding"]["A"]["value"] = 20.0
+    after["created_at"] = "x"
+    after["new_key"] = 1
+    problems = mp.find_protected_changes(before, after)
+    assert any(p.startswith("entries.A") for p in problems)
+    assert any(p.startswith("shares_outstanding") for p in problems)
+    assert any(p.startswith("created_at") for p in problems)
+    assert any(p.startswith("new_key") for p in problems)
+
+
+def test_find_protected_changes_flags_overwriting_existing_weights():
+    before = _pending_start()
+    before["p1_weights"] = {"A": 1.0}
+    after = _pending_start()
+    after["p1_weights"] = {"A": 0.5, "B": 0.5}
+    assert any(p.startswith("p1_weights") for p in mp.find_protected_changes(before, after))
