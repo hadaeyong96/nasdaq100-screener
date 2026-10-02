@@ -20,6 +20,9 @@ parse_fill_records·parse_plan_records를 그대로 쓴다.
 (로컬은 .env에 경로). 읽을 시트 ID는 환경변수 GOOGLE_SHEETS_ID.
 인증 정보의 값은 어떤 경우에도 출력·로그하지 않는다 (CLAUDE.md 보안).
 
+"투자현황" 탭(총 투자금·종목당 계획금액)은 계획 탭 자동 기록 v2(docs/design/auto_plan.md)가
+read_portfolio로 읽기만 한다.
+
 쓰기: 계획 탭 자동 기록(write_auto_plan, docs/design/auto_plan.md)만 — 계획 탭의 입력 칸 5개
 (티커·계획금액·등록일·기준가·메모)만 셀 단위로 쓰고, 다른 탭 쓰기는 코드로 막는다.
 """
@@ -51,6 +54,7 @@ _SCOPES = [
 
 SHEET_PLAN = "계획"
 SHEET_FILLS = "체결"
+SHEET_PORTFOLIO = "투자현황"
 
 _PLAN_COLUMNS = ["ticker", "budget_krw", "ref_price", "memo"]
 
@@ -179,6 +183,63 @@ def read_sheets(client=None, cfg: dict | None = None, fx_provider=None) -> Sheet
     )
 
 
+# ── 투자현황 탭 읽기 (docs/design/auto_plan.md v2 규칙 A) ─────────────────────────
+
+# A열 항목 이름(정규화 키) → 내부 이름. B열 값을 읽는다.
+_PORTFOLIO_LABEL_MAP = {"총투자금": "total_krw", "종목당계획금액": "per_ticker_budget_krw"}
+PORTFOLIO_BUDGET_MISSING_WARNING = "투자현황 탭에 종목당 계획금액이 없어 기본 수량을 계산하지 않았습니다"
+
+
+def _parse_krw_cell(raw) -> float | None:
+    """"3,000,000"·"₩3,000,000"·3000000 → 3000000.0. 비었거나 숫자가 아니면 None."""
+    text = str(raw if raw is not None else "").replace(",", "").replace("₩", "").replace("원", "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_portfolio_values(values: list[list]) -> dict:
+    """투자현황 탭 get_all_values 결과에서 A열 항목 이름으로 행을 찾아 B열 값을 읽는다(행 순서 무관).
+
+    입력: values(행 목록 — 각 행은 셀 값 목록)
+    출력: {"total_krw": float|None, "per_ticker_budget_krw": float|None}
+         (항목 이름은 괄호 설명·공백 무시, 같은 항목이 여럿이면 첫 행)
+    """
+    out: dict = {"total_krw": None, "per_ticker_budget_krw": None}
+    seen: set[str] = set()
+    for line in values or []:
+        if not line:
+            continue
+        key = _PORTFOLIO_LABEL_MAP.get(_normalize_header(line[0]))
+        if key is None or key in seen:
+            continue
+        seen.add(key)
+        out[key] = _parse_krw_cell(line[1] if len(line) > 1 else "")
+    return out
+
+
+def read_portfolio(client) -> tuple[dict, list[str]]:
+    """투자현황 탭을 읽는다(읽기만). 탭이 없거나 읽지 못해도 멈추지 않고 None 값 + 경고를 돌려준다.
+
+    입력: client(read_sheets가 쓴 gspread 클라이언트)
+    출력: ({"total_krw","per_ticker_budget_krw"}, 경고 목록) — 종목당 계획금액이 없으면
+         PORTFOLIO_BUDGET_MISSING_WARNING 한 줄
+    """
+    try:
+        values = client.open_by_key(_sheet_id()).worksheet(SHEET_PORTFOLIO).get_all_values()
+        portfolio = parse_portfolio_values(values)
+    except Exception as exc:  # 탭 없음(WorksheetNotFound) 등 — 사유는 콘솔에만, 보고서는 경고 한 줄
+        print(f"[sheets] 투자현황 탭을 읽지 못했습니다: {type(exc).__name__}: {exc}")
+        portfolio = {"total_krw": None, "per_ticker_budget_krw": None}
+    if portfolio["per_ticker_budget_krw"] is not None and portfolio["per_ticker_budget_krw"] <= 0:
+        portfolio["per_ticker_budget_krw"] = None
+    warnings = [] if portfolio["per_ticker_budget_krw"] is not None else [PORTFOLIO_BUDGET_MISSING_WARNING]
+    return portfolio, warnings
+
+
 # ── 계획 탭 자동 기록 (docs/design/auto_plan.md) ────────────────────────────────
 
 # 자동 기록이 쓰는 입력 칸 5개(머리글 정규화 키 → 내부 이름). 이 밖의 열(환율, 1차~남은(주) 등
@@ -201,13 +262,11 @@ class PlanHeaderError(RuntimeError):
 @dataclass
 class AutoPlanWriteResult:
     """write_auto_plan()의 결과. written: 실제로 쓴 줄({"ticker",...,"row"}),
-    skipped: 쓰지 않은 줄과 사유, already_present: 시트에 이미 있어 안 쓴 티커,
-    expired: 만료 메모를 덧붙인 티커."""
+    skipped: 쓰지 않은 줄과 사유, already_present: 시트에 이미 있어 안 쓴 티커."""
 
     written: list[dict] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     already_present: list[str] = field(default_factory=list)
-    expired: list[str] = field(default_factory=list)
 
 
 def _plan_worksheet(spreadsheet, name: str = SHEET_PLAN):
@@ -276,7 +335,7 @@ def write_plan_rows(ws, rows: list[dict], max_rows: int = 1000) -> AutoPlanWrite
     티커는 다시 쓰지 않는다(계획금액 오류 등으로 계획 DataFrame에서 빠진 줄 포함).
 
     입력: ws(계획 탭 워크시트 — title, get_all_values(), batch_update(data, value_input_option)),
-         rows(core.auto_plan.select_new_plan_rows 결과), max_rows(빈 줄을 찾을 마지막 행)
+         rows(core.auto_plan.select_first_buy_plan_rows 결과), max_rows(빈 줄을 찾을 마지막 행)
     출력: AutoPlanWriteResult(written에 "row" 포함)
     """
     _assert_plan_tab(ws)
@@ -316,36 +375,11 @@ def write_plan_rows(ws, rows: list[dict], max_rows: int = 1000) -> AutoPlanWrite
     return result
 
 
-def append_expiry_memos(ws, expiries: list[dict]) -> list[str]:
-    """만료 메모를 덧붙인다 — 티커와 메모가 판정 때 값(old_memo)과 그대로 같은 줄의 메모 칸 하나만.
+def write_auto_plan(client, rows: list[dict]) -> AutoPlanWriteResult:
+    """계획 탭 자동 기록 진입점 — 첫 매수 종목의 새 계획 줄 쓰기.
 
-    입력: ws(계획 탭), expiries(core.auto_plan.select_expiry_memos 결과)
-    출력: 실제로 업데이트한 티커 목록
-    """
-    _assert_plan_tab(ws)
-    if not expiries:
-        return []
-    values = ws.get_all_values()
-    cols = find_plan_write_columns(values[0])
-    updates, done = [], []
-    for e in expiries:
-        for r in range(2, len(values) + 1):
-            if _cell(values, r, cols["ticker"]).upper() == e["ticker"] and _cell(values, r, cols["memo"]) == e["old_memo"]:
-                updates.append({"range": f"{_col_letter(cols['memo'])}{r}", "values": [[e["new_memo"]]]})
-                done.append(e["ticker"])
-                break
-    if updates:
-        ws.batch_update(updates, value_input_option="USER_ENTERED")
-    return done
-
-
-def write_auto_plan(client, rows: list[dict], expiries: list[dict]) -> AutoPlanWriteResult:
-    """계획 탭 자동 기록 진입점 — 새 줄 쓰기 + 만료 메모 덧붙이기.
-
-    입력: client(read_sheets가 쓴 gspread 클라이언트), rows, expiries
+    입력: client(read_sheets가 쓴 gspread 클라이언트), rows(core.auto_plan.select_first_buy_plan_rows 결과)
     출력: AutoPlanWriteResult. 실패하면 예외를 그대로 낸다(호출부가 경고로 바꾼다).
     """
     ws = _plan_worksheet(client.open_by_key(_sheet_id()), SHEET_PLAN)
-    result = write_plan_rows(ws, rows)
-    result.expired = append_expiry_memos(ws, expiries)
-    return result
+    return write_plan_rows(ws, rows)

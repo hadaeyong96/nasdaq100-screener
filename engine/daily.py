@@ -359,67 +359,41 @@ def compute_live_judgments(
 
 
 def apply_auto_plan(
-    cfg: dict,
     plan_df: pd.DataFrame,
-    today_events: list[dict],
-    states: dict,
     fills_df: pd.DataFrame,
-    indicator_map: dict,
-    as_of,
-    run_date,
+    budget_krw: float | None,
     sheets_client,
     write: bool,
 ) -> tuple[pd.DataFrame, list[str], dict]:
-    """계획 탭 자동 기록 (docs/design/auto_plan.md) — live 전용, 호출부가 모드를 거른다.
+    """계획 탭 자동 기록 v2 규칙 D (docs/design/auto_plan.md) — live 전용, 호출부가 모드를 거른다.
 
-    오늘 진입 신호 중 계획에 없는 종목을 골라(core.auto_plan) 시트 계획 탭에 쓰고(write=True이고
+    첫 매수 후 계획 탭에 없는 종목(보유 > 0)을 골라(core.auto_plan) 시트 계획 탭에 쓰고(write=True이고
     sheets_client가 있을 때만), 결과와 무관하게 그 줄을 계획 DataFrame에 메모리로 합친다 —
-    시트 쓰기가 실패해도 오늘 보고서 수량은 계산된다. 실패는 예외 대신 경고 문구로 돌려준다.
+    시트 쓰기가 실패해도 오늘 판정·수량은 그 계획으로 계산된다. 실패는 예외 대신 경고 문구로 돌려준다.
 
-    입력: cfg, plan_df(읽은 계획), today_events, states(오늘 반영 후), fills_df(보유 0주 판정용),
-         indicator_map(만료 판정 거래일), as_of(기준일), run_date(실행일 KST), sheets_client,
-         write(False면 시트를 건드리지 않음 — dry-run·시트 아닌 입력)
-    출력: (합친 plan_df, 경고 목록, {"selected","written","skipped","expired"})
+    입력: plan_df(읽은 계획), fills_df(대기자금 줄을 뺀 체결 기록), budget_krw(투자현황 "종목당 계획금액",
+         없으면 None — 쓰지 않고 경고), sheets_client, write(False면 시트를 건드리지 않음 — dry-run)
+    출력: (합친 plan_df, 경고 목록, {"selected","written","skipped"})
     """
-    settings = auto_plan.auto_plan_settings(cfg)
-    info = {"selected": [], "written": [], "skipped": [], "expired": []}
-    if not settings["enabled"]:
-        return plan_df, [], info
-
-    signals = [
-        {
-            "ticker": e["ticker"],
-            "stage": e["kind"],
-            "stage_label": _STAGE_FULL_LABEL[e["kind"]],
-            "limit": sig.entry_limit_price(e["price"], cfg),
-            "stop": (states.get(e["ticker"]) or {}).get("stop"),
-            "score": e.get("score", 0),
-        }
-        for e in today_events
-        if e["kind"] in _BUY_KINDS
-    ]
+    info = {"selected": [], "written": [], "skipped": []}
     existing = list(plan_df["ticker"]) if plan_df is not None and not plan_df.empty else []
-    new_rows = auto_plan.select_new_plan_rows(signals, existing, settings, run_date)
+    if budget_krw is None:
+        pending = auto_plan.select_first_buy_plan_rows(fills_df, existing, 0)
+        if not pending:
+            return plan_df, [], info
+        tickers = ", ".join(r["ticker"] for r in pending)
+        return plan_df, [f"계획 자동 기록 생략: 투자현황 탭에 종목당 계획금액이 없어 계획 줄을 쓰지 않았습니다 ({tickers})"], info
 
-    held: dict[str, float] = {}
-    if fills_df is not None and not fills_df.empty:
-        for r in fills_df.to_dict(orient="records"):
-            held[r["ticker"]] = held.get(r["ticker"], 0) + (r["qty"] if r["side"] == "buy" else -r["qty"])
-    plan_rows = plan_df.to_dict(orient="records") if plan_df is not None and not plan_df.empty else []
-    expiries = auto_plan.select_expiry_memos(
-        plan_rows, held, {t: df.index for t, df in indicator_map.items()}, as_of, run_date,
-        cfg["assumptions"]["a1_to_a2_expiry_days"], _STAGE_FULL_LABEL["A1"],
-    )
+    new_rows = auto_plan.select_first_buy_plan_rows(fills_df, existing, budget_krw)
     info["selected"] = [r["ticker"] for r in new_rows]
 
     warnings: list[str] = []
     rows_to_merge = new_rows
-    if write and sheets_client is not None and (new_rows or expiries):
+    if write and sheets_client is not None and new_rows:
         try:
-            result = sheets.write_auto_plan(sheets_client, new_rows, expiries)
+            result = sheets.write_auto_plan(sheets_client, new_rows)
             info["written"] = [r["ticker"] for r in result.written]
             info["skipped"] = result.skipped
-            info["expired"] = result.expired
             # 시트에 이미 있던 티커(계획 DataFrame에서 빠졌던 줄)는 메모리에도 합치지 않는다.
             rows_to_merge = [r for r in new_rows if r["ticker"] not in set(result.already_present)]
         except Exception as exc:
@@ -1172,6 +1146,8 @@ def build_report_summary(
     plan_by_ticker: dict[str, float] | None = None,
     live_judgment_rows: list[dict] | None = None,
     plan_ref_price_by_ticker: dict[str, float] | None = None,
+    default_budget_krw: float | None = None,
+    remaining_cash_krw: float | None = None,
 ) -> dict:
     """오늘 이벤트·현재 상태·시세로 보고서·텔레그램용 summary dict를 만든다 (DB에 쓰지 않는다).
 
@@ -1190,7 +1166,10 @@ def build_report_summary(
          (live 전용 — {ticker: 계획금액(원)}, docs/design/live_advisor.md 2번),
          live_judgment_rows(live 전용 — compute_live_judgments 결과),
          plan_ref_price_by_ticker(live 전용 — {ticker: 계획 시트 "기준가($)"}, 있으면
-         core.sizing.plan_tranche_qty가 기준가 기반 고정 총 주수 방식을 쓴다)
+         core.sizing.plan_tranche_qty가 기준가 기반 고정 총 주수 방식을 쓴다),
+         default_budget_krw(live 전용 — 투자현황 "종목당 계획금액", 계획 없는 추천 줄의 기본 금액.
+         None이면 계획 없는 줄은 수량 0, docs/design/auto_plan.md v2 규칙 B),
+         remaining_cash_krw(live 전용 — 총 투자금 − 투자 원금. None이면 남은 현금 경고 생략, 규칙 C)
 
     mode == "live"이면 계좌 총액 기반 자금 계획(core.sizing.size_buy_signals)을 전혀
     쓰지 않고 종목별 계획금액만으로 수량을 정한다(docs/design/live_advisor.md 0번) —
@@ -1240,6 +1219,15 @@ def build_report_summary(
                     r["note"] = " · ".join(p for p in (r["note"], "계획 한도 초과") if p)
                 elif sized_row["qty"] == 0:
                     r["note"] = " · ".join(p for p in (r["note"], "계획금액으로 1주 미만") if p)
+            elif not has_plan and default_budget_krw and r["stop"] is not None and fx_rate:
+                # 계획 없는 추천: 투자현황 "종목당 계획금액"으로 수량만 보여준다(시트에 안 씀, 규칙 B).
+                # 기준가 없는 방식(오늘 지정가) — 판정 표(plan_by_ticker)에는 넣지 않는다.
+                sized_row = sizing.plan_tranche_qty(default_budget_krw, r["stage"], r["limit"], fx_rate)
+                r["qty"] = sized_row["qty"]
+                r["amount_krw"] = round(sized_row["tranche_krw"]) if sized_row["qty"] else 0
+                r["default_budget"] = True
+                notes = ["기본 금액"] + ([] if sized_row["qty"] else ["기본 금액으로 1주 미만"])
+                r["note"] = " · ".join(p for p in (r["note"], *notes) if p)
             else:
                 r["qty"] = 0
                 r["amount_krw"] = 0
@@ -1249,6 +1237,16 @@ def build_report_summary(
             r["risk_capped"] = False
             r["limited"] = False
             r["explain"] = expl.explain_buy(r["stage"], r, cfg) if r["stop"] is not None else None
+        if remaining_cash_krw is not None and all_buy_rows:
+            # 남은 현금 경고 (docs/design/auto_plan.md v2 규칙 C)
+            cash = auto_plan.cash_shortfall([r["amount_krw"] for r in all_buy_rows], remaining_cash_krw)
+            for r, over in zip(all_buy_rows, cash["row_exceeds"]):
+                if over:
+                    r["note"] = " · ".join(p for p in (r["note"], "현금 부족") if p)
+            if cash["total_exceeds"]:
+                run_warnings.append(
+                    f"현금 부족: 오늘 추천 투입금액 합계 {cash['total_krw']:,.0f}원이 남은 현금 {remaining_cash_krw:,.0f}원보다 큽니다"
+                )
         funding_plan = None
         buy_risk_sum_krw = 0
     else:
@@ -1845,20 +1843,32 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
 
     positions = states
 
-    # ── 계획 탭 자동 기록 (docs/design/auto_plan.md): 오늘 신호로 계획에 없는 종목을 시트에
-    # 쓰고 메모리 계획에 합친 뒤, 아래 판정·사이징이 그 계획으로 수량을 낸다. 시트에서 읽지
-    # 않았으면(로컬 폴백) 아무것도 안 한다. paper는 부르지 않는다.
+    # ── 계획 탭 자동 기록 v2 (docs/design/auto_plan.md): 투자현황 탭을 읽고, 첫 매수 후 계획에
+    # 없는 종목의 계획 줄을 시트에 쓴 뒤 메모리 계획에 합친다 → 아래 판정·사이징이 그 계획을 쓴다.
+    # 계획 없는 추천은 "종목당 계획금액"으로 수량만 낸다(시트에 안 씀). 시트에서 읽지 않았으면
+    # (로컬 폴백) 아무것도 안 한다. paper는 부르지 않는다.
     auto_plan_info = None
+    default_budget_krw = None
+    remaining_cash_krw = None
     if mode == "live" and plan_sheets_client is not None and auto_plan.auto_plan_settings(cfg)["enabled"]:
-        plan_df, auto_plan_warnings, auto_plan_info = apply_auto_plan(
-            cfg, plan_df, today_events, states, fills_df, indicator_map, actual_date,
-            datetime.now(KST).date(), plan_sheets_client, write=not dry_run,
+        portfolio, portfolio_warnings = sheets.read_portfolio(plan_sheets_client)
+        default_budget_krw = portfolio["per_ticker_budget_krw"]
+        auto_plan_warnings = list(portfolio_warnings)
+        plan_df, write_warnings, auto_plan_info = apply_auto_plan(
+            plan_df, fills_df, default_budget_krw, plan_sheets_client, write=not dry_run,
         )
+        auto_plan_warnings += write_warnings
+        if portfolio["total_krw"] is not None:
+            principal_krw, missing_fx = auto_plan.invested_principal_krw(fills_df)
+            remaining_cash_krw = portfolio["total_krw"] - principal_krw
+            if missing_fx:
+                auto_plan_warnings.append(f"투자 원금 계산: 환율이 없는 체결 {missing_fx}건을 뺐습니다")
+            print(f"[daily] 남은 현금 {remaining_cash_krw:,.0f}원 (총 투자금 − 투자 원금 {principal_krw:,.0f}원)")
         run_warnings.extend(auto_plan_warnings)
         for line in auto_plan_warnings:
             print(f"[daily] {line}")
         if auto_plan_info["selected"]:
-            print(f"[daily] 계획 자동 추가: 선택 {auto_plan_info['selected']}, 시트 기록 {auto_plan_info['written']}")
+            print(f"[daily] 계획 자동 추가(첫 매수): 선택 {auto_plan_info['selected']}, 시트 기록 {auto_plan_info['written']}")
         plan_by_ticker = _plan_budget_map(plan_df)
         plan_ref_price_by_ticker = _plan_ref_price_map(plan_df)
 
@@ -1911,6 +1921,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         fx_result, replay_needed=replay_needed,
         plan_by_ticker=plan_by_ticker, live_judgment_rows=live_judgment_rows,
         plan_ref_price_by_ticker=plan_ref_price_by_ticker,
+        default_budget_krw=default_budget_krw, remaining_cash_krw=remaining_cash_krw,
     )
     summary["macro_rows"] = macro_rows
     if auto_plan_info is not None:
