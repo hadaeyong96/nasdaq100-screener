@@ -740,7 +740,8 @@ class SheetSetup:
         self._batch(column_op_requests(ids[TAB_FILLS], ops), "체결 열 이동·삽입")
         fills_after = apply_column_ops(before_fills, ops) if before_fills else [[]]
         self._values(TAB_FILLS, changed_ranges(fills_after, {"A1:M1": [FILLS_HEADERS]}), "체결 머리글")
-        g2 = f'=ARRAYFORMULA(IF(B2:B="","",IFERROR(VLOOKUP(B2:B,{TAB_LIST}!A:B,2,FALSE),"?")))'
+        # 탭 이름은 따옴표로 — 시트가 저장할 때 '목록'으로 바꿔 두므로 같은 글자여야 다시 쓰지 않는다
+        g2 = f'=ARRAYFORMULA(IF(B2:B="","",IFERROR(VLOOKUP(B2:B,{q(TAB_LIST)}!A:B,2,FALSE),"?")))'
         self._values(TAB_FILLS, changed_ranges(fills_after, {"G2": [[g2]]}), "체결 G2 종목명 수식")
 
         # 3) 목록
