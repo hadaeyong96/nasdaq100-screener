@@ -95,6 +95,15 @@ class FakeSpreadsheet:
             elif kind == "deleteDeveloperMetadata":
                 mid = spec["dataFilter"]["developerMetadataLookup"]["metadataId"]
                 self.dev_meta = [m for m in self.dev_meta if m["metadataId"] != mid]
+            elif kind == "deleteConditionalFormatRule":
+                del self.cf[spec["sheetId"]][spec["index"]]
+            elif kind == "updateCells" and "rows" not in spec and "userEnteredValue" in spec["fields"]:
+                rng = spec["range"]
+                ws = self._ws_by_id(rng["sheetId"])
+                r_end = rng.get("endRowIndex", len(ws.grid))
+                for r in range(rng["startRowIndex"], min(r_end, len(ws.grid))):
+                    for c in range(rng["startColumnIndex"], min(rng["endColumnIndex"], len(ws.grid[r]))):
+                        ws.grid[r][c] = ""
             elif kind == "updateSpreadsheetProperties":
                 self.time_zone = spec["properties"]["timeZone"]
             elif kind == "updateDimensionProperties" and spec["properties"].get("hiddenByUser"):
@@ -428,3 +437,79 @@ def test_name_kr_csv_has_no_blank_names():
     kr = pd.read_csv(ss.ROOT / "data" / "name_kr.csv", dtype=str).fillna("")
     assert (kr["name_kr"].str.strip() == "").sum() == 0
     assert dict(zip(kr["ticker"], kr["name_kr"]))["ODFL"] == "올드 도미니언 프레이트 라인"
+
+
+# ── v3.2: 투자현황 2열 + 보유현황 ────────────────────────────────────────────
+
+
+def _old_portfolio_layout():
+    """v3.1 배치: 3열 코어·위성 표, 업종 표(C열 비중), 종목별 현황(A40~, K·L 보조 열)."""
+    g = [["항목", "값"], ["총 투자금(원)", "77,000,000"], ["종목당 계획금액(원)", "6,000,000"], [""],
+         ["[자산 요약]"], ["환율(원/$)", "=GOOGLEFINANCE(\"CURRENCY:USDKRW\")"]]
+    g += [[""]] * 6
+    g += [["[코어·위성]", "평가금액(원)", "비중"], ["코어 (대기자금 QQQM)", "=x", "=y"]]
+    g += [[""]] * 25
+    g += [["[종목별 현황]"], ["종목", "종목명", "업종", "보유주", "평균단가($)", "현재가($)", "손익률", "투자 원금(원)",
+                           "평가금액(원)", "비중", "코어(보조)", "업종(보조)"], ["=IFERROR(SORT(...))", "=b", "=c"]]
+    return g
+
+
+def test_portfolio_two_columns_only(tmp_path):
+    sh = _sheet()
+    _run(sh, tmp_path=tmp_path)
+    g = sh.tabs["투자현황"].get_all_values()
+    assert all(not str(v).strip() for row in g for v in row[2:])  # C열 이후 비어 있음
+    labels = [row[0] for row in g]
+    for label in ["[자산]", "환율(원/$)", "투자 중 원금(원)", "평가금액(원)", "남은 현금(원)", "투자 비중", "전체 손익률",
+                  "[코어·위성]", "코어(QQQM) 평가금액(원)", "코어 비중", "위성 평가금액(원)", "위성 비중",
+                  "[세금 (근사값, 실제는 증권사 기준)]", "올해 실현손익(원)", "250만 원 공제 남은 금액(원)", "예상 양도세(원)",
+                  "[업종별 비중 (위성 대비)]"]:
+        assert label in labels, label
+    assert g[1][0] == "총 투자금(원)" and g[2][0] == "종목당 계획금액(원)"
+    sector = g[ss.P_SECTOR_FIRST - 1][0]
+    assert "QUERY(" in sector and "'위성'" in sector and "desc" in sector and "$B$16" in sector
+
+
+def test_portfolio_old_layout_reset_keeps_b2_b3_and_program_reads_them(tmp_path):
+    from data import sheets
+
+    p_old = _old_portfolio_layout()
+    sh = _sheet(extra_tabs={"투자현황": p_old})
+    pid = sh.tabs["투자현황"].id
+    sh.cf[pid] = [{"ranges": [{"sheetId": pid}], "booleanRule": {"condition": {"values": [{"userEnteredValue": "=AND(ISNUMBER($C23),$C23>0.3)"}]}}}]
+    result, _ = _run(sh, tmp_path=tmp_path)
+    assert any("예전 배치 지우기" in c for c in result["changes"])
+    g = sh.tabs["투자현황"].get_all_values()
+    assert g[1][1] == "77,000,000" and g[2][1] == "6,000,000"  # 입력값 보존
+    assert all(not str(v).strip() for row in g for v in row[2:])
+    assert "종목" not in [row[0] for row in g[3:]]  # 예전 종목별 현황 머리글 없음
+    assert "=AND(ISNUMBER($C23),$C23>0.3)" not in [r["booleanRule"]["condition"]["values"][0]["userEnteredValue"] for r in sh.cf[pid]]
+    assert sheets.parse_portfolio_values(g) == {"total_krw": 77_000_000.0, "per_ticker_budget_krw": 6_000_000.0}
+    second, _ = _run(sh, tmp_path=tmp_path)
+    assert second["changes"] == []
+
+
+def test_holdings_tab_columns_and_protection(tmp_path):
+    sh = _sheet()
+    _run(sh, tmp_path=tmp_path)
+    g = sh.tabs["보유현황"].get_all_values()
+    assert g[0][:11] == ["종목", "종목명", "업종", "구분", "보유주", "평균단가($)", "현재가($)", "손익률", "투자 원금(원)",
+                         "평가금액(원)", "비중"]
+    assert g[1][0].startswith("=IFERROR(SORT(UNIQUE(FILTER(UPPER('체결'!$B$2")
+    assert '"코어","위성"' in g[1][3] and '"대기자금"' in g[1][3] and '"ETF"' in g[1][3]
+    assert any(p["description"] == ss.PROTECT_PREFIX + "보유현황 전체" and p["warningOnly"] for p in sh.protected)
+    assert ss.H_FX_COL - 1 in sh.hidden_cols[sh.tabs["보유현황"].id]
+
+
+def test_tab_order_v32(tmp_path):
+    sh = _sheet()
+    _run(sh, tmp_path=tmp_path)
+    assert [w.title for w in sh.worksheets()] == ["투자현황", "보유현황", "매매일지", "체결", "계획", "관심", "목록"]
+    assert sh.props["목록"]["hidden"] is True
+
+
+def test_portfolio_formulas_reference_holdings_not_hidden_columns():
+    vals, _ = ss.portfolio_values("1", "1")
+    formulas = " ".join(v for rng in vals.values() for row in rng for v in row)
+    assert "'보유현황'!$J$" in formulas and "'보유현황'!$I$" in formulas
+    assert all(re.fullmatch(r"[AB]\d+(:[AB]\d+)?", k) for k in vals)  # A·B 열만 쓴다

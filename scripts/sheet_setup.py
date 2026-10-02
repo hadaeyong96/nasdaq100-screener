@@ -37,13 +37,15 @@ OUTPUT_DIR = ROOT / "outputs"
 
 # ── 탭 이름 ─────────────────────────────────────────────────────────────────
 TAB_PORTFOLIO = "투자현황"
+TAB_HOLDINGS = "보유현황"
 TAB_JOURNAL = "매매일지"
 TAB_FILLS = "체결"
 TAB_PLAN = "계획"
 TAB_WATCH = "관심"
 TAB_LIST = "목록"
-TAB_ORDER = [TAB_PORTFOLIO, TAB_JOURNAL, TAB_FILLS, TAB_PLAN, TAB_WATCH, TAB_LIST]
-NEW_TABS = {TAB_PORTFOLIO: (200, 14), TAB_JOURNAL: (410, 70), TAB_WATCH: (60, 8), TAB_LIST: (300, 3)}
+TAB_ORDER = [TAB_PORTFOLIO, TAB_HOLDINGS, TAB_JOURNAL, TAB_FILLS, TAB_PLAN, TAB_WATCH, TAB_LIST]
+NEW_TABS = {TAB_PORTFOLIO: (200, 14), TAB_HOLDINGS: (220, 14), TAB_JOURNAL: (410, 70), TAB_WATCH: (60, 8),
+            TAB_LIST: (300, 3)}
 
 FORMAT_HASH_KEY = "sheet_setup_format_hash"
 TIME_ZONE = "Asia/Seoul"  # TODAY()(보유일수·올해 실현손익)를 한국 날짜로
@@ -86,9 +88,18 @@ J_HIDE_FROM = 23  # W열부터 숨김
 # ── 투자현황 탭 ──────────────────────────────────────────────────────────────
 P_DEFAULT_TOTAL = 40_000_000
 P_DEFAULT_BUDGET = 5_000_000
-P_SECTOR_FIRST, P_SECTOR_LAST = 23, 38
-P_HOLD_HEADER = 41
-P_HOLD_FIRST, P_HOLD_LAST = 42, 141
+# 투자현황은 A·B 두 열만 쓴다(항목 | 값). 줄 번호는 PORTFOLIO_LAYOUT에서 정해진다.
+P_SECTOR_HEADER = 24  # [업종별 비중 (위성 대비)]
+P_SECTOR_FIRST = 25  # 업종 | 비중 펼침 시작 — 이 아래는 펼침 영역이라 비워 둔다
+P_SECTOR_LAST = 60
+P_CLEAR_COLS = 26  # 재배치 때 지우는 열 수(A~Z)
+
+# ── 보유현황 탭 ──────────────────────────────────────────────────────────────
+HOLDINGS_HEADERS = [
+    "종목", "종목명", "업종", "구분", "보유주", "평균단가($)", "현재가($)", "손익률", "투자 원금(원)", "평가금액(원)", "비중",
+]
+H_FIRST, H_LAST = 2, 201  # 체결 B열 고유 티커 200개까지
+H_FX_COL = 13  # M열(숨김) — 현재 환율
 
 WATCH_ROWS = (2, 51)
 
@@ -332,81 +343,72 @@ def journal_values() -> dict[str, list[list[str]]]:
     return out
 
 
-# ── 4. 투자현황 수식 ─────────────────────────────────────────────────────────
+# ── 4. 투자현황·보유현황 수식 ──────────────────────────────────────────────────
+
+_H = q(TAB_HOLDINGS)
+
+
+def _h(c: str) -> str:
+    """보유현황 열 범위(데이터 줄)."""
+    return f"{_H}!${c}${H_FIRST}:${c}${H_LAST}"
+
+
+def portfolio_layout() -> list[tuple[int, str, str, str]]:
+    """투자현황 줄 배치 (행, A열 항목, B열 값·수식, 형식 종류 "krw"|"fx"|"pct"|"section"|"").
+
+    A2·A3(총 투자금·종목당 계획금액)은 프로그램(data/sheets.read_portfolio)이 A열 이름으로 찾는 칸이라
+    여기 넣지 않고 portfolio_values가 따로 다룬다(B2·B3 기존 값 보존).
+    """
+    J = q(TAB_JOURNAL)
+    year_pnl = (
+        f'=SUMIFS({J}!$R${J_FIRST}:$R${J_LAST},{J}!$O${J_FIRST}:$O${J_LAST},">="&DATE(YEAR(TODAY()),1,1),'
+        f'{J}!$O${J_FIRST}:$O${J_LAST},"<="&DATE(YEAR(TODAY()),12,31))'
+    )
+    return [
+        (5, "[자산]", "", "section"),
+        (6, "환율(원/$)", '=GOOGLEFINANCE("CURRENCY:USDKRW")', "fx"),
+        (7, "투자 중 원금(원)", f"=SUM({_h('I')})", "krw"),
+        (8, "평가금액(원)", f"=SUM({_h('J')})", "krw"),
+        (9, "남은 현금(원)", "=B2-B7", "krw"),
+        (10, "투자 비중", '=IFERROR(B7/B2,"")', "pct"),
+        (11, "전체 손익률", '=IFERROR((B8-B7)/B2,"")', "pct"),
+        (13, "[코어·위성]", "", "section"),
+        (14, "코어(QQQM) 평가금액(원)", f'=SUMIFS({_h("J")},{_h("D")},"코어")', "krw"),
+        (15, "코어 비중", '=IFERROR(B14/B8,"")', "pct"),
+        (16, "위성 평가금액(원)", "=B8-B14", "krw"),
+        (17, "위성 비중", '=IFERROR(B16/B8,"")', "pct"),
+        (19, "[세금 (근사값, 실제는 증권사 기준)]", "", "section"),
+        (20, "올해 실현손익(원)", year_pnl, "krw"),
+        (21, "250만 원 공제 남은 금액(원)", "=MAX(0,2500000-B20)", "krw"),
+        (22, "예상 양도세(원)", "=MAX(0,B20-2500000)*22%", "krw"),
+        (P_SECTOR_HEADER, "[업종별 비중 (위성 대비)]", "", "section"),
+    ]
+
+
+def sector_formula() -> str:
+    """업종 | 비중(위성 평가금액 대비) 2열을 비중 큰 순서로 펼친다. 코어(QQQM·ETF)와 보유 0주는 뺀다."""
+    query = (
+        f"QUERY({_H}!$C${H_FIRST}:$J${H_LAST},"
+        "\"select C, sum(J) where D = '위성' and E > 0 group by C order by sum(J) desc label sum(J) ''\",0)"
+    )
+    return f'=IFERROR(LET(q,{query},HSTACK(INDEX(q,0,1),INDEX(q,0,2)/$B$16)),"")'
 
 
 def portfolio_values(b2_current: str, b3_current: str) -> tuple[dict[str, list[list[str]]], list[str]]:
-    """투자현황 탭 값·수식. B2·B3은 비었을 때만 기본값을 넣는다(값이 있으면 그 칸은 결과에서 뺀다).
+    """투자현황 탭 값·수식(A·B 두 열). B2·B3은 비었을 때만 기본값을 넣는다(값이 있으면 그 칸은 결과에서 뺀다).
 
     입력: 지금 B2·B3 값(문자열)
     출력: ({A1 범위: 값}, 메모 목록)
     """
     notes = []
-    fills = f"{_F}!$B$2:$B${FILL_LAST}"
-    J = q(TAB_JOURNAL)
-    hold = lambda c: f"${c}${P_HOLD_FIRST}:${c}${P_HOLD_LAST}"  # noqa: E731
     out: dict[str, list[list[str]]] = {
         "A1:B1": [["항목", "값"]],
         "A2": [["총 투자금(원)"]],
         "A3": [["종목당 계획금액(원)"]],
-        "A5": [["[자산 요약]"]],
-        "A6:B11": [
-            ["환율(원/$)", '=GOOGLEFINANCE("CURRENCY:USDKRW")'],
-            ["투자 중 원금(원)", f"=SUM({hold('H')})"],
-            ["평가금액(원)", f"=SUM({hold('I')})"],
-            ["남은 현금(원)", "=B2-B7"],
-            ["투자 비중", '=IFERROR(B7/B2,"")'],
-            ["전체 손익률", '=IFERROR((B8-B7)/B2,"")'],
-        ],
-        "A13:C15": [
-            ["[코어·위성]", "평가금액(원)", "비중"],
-            ["코어 (대기자금 QQQM)", f"=SUMIFS({hold('I')},{hold('K')},TRUE)", '=IFERROR(B14/B8,"")'],
-            ["위성 (나머지 종목)", "=B8-B14", '=IFERROR(B15/B8,"")'],
-        ],
-        "A17:B20": [
-            ["[세금 (근사값, 실제는 증권사 기준)]", ""],
-            ["올해 실현손익(원)", (
-                f'=SUMIFS({J}!$R${J_FIRST}:$R${J_LAST},{J}!$O${J_FIRST}:$O${J_LAST},">="&DATE(YEAR(TODAY()),1,1),'
-                f'{J}!$O${J_FIRST}:$O${J_LAST},"<="&DATE(YEAR(TODAY()),12,31))'
-            )],
-            ["250만 원 공제 남은 금액(원)", "=MAX(0,2500000-B18)"],
-            ["예상 양도세(원)", "=MAX(0,B18-2500000)*22%"],
-        ],
-        f"A22:C22": [["[업종별 비중] 업종", "평가금액(원)", "위성 대비 비중"]],
-        f"A{P_SECTOR_FIRST}": [[
-            f'=IFERROR(SORT(UNIQUE(FILTER({hold("L")},{hold("L")}<>"",{hold("K")}=FALSE,{hold("D")}>0))),"")'
-        ]],
-        f"B{P_SECTOR_FIRST}:C{P_SECTOR_LAST}": [
-            [f'=IF(A{r}="","",SUMIFS({hold("I")},{hold("L")},A{r},{hold("K")},FALSE))', f'=IF(A{r}="","",IFERROR(B{r}/$B$15,""))']
-            for r in range(P_SECTOR_FIRST, P_SECTOR_LAST + 1)
-        ],
-        f"A{P_HOLD_HEADER - 1}": [["[종목별 현황]"]],
-        f"A{P_HOLD_HEADER}:L{P_HOLD_HEADER}": [[
-            "종목", "종목명", "업종", "보유주", "평균단가($)", "현재가($)", "손익률", "투자 원금(원)", "평가금액(원)", "비중",
-            "코어(보조)", "업종(보조)",
-        ]],
-        f"A{P_HOLD_FIRST}": [[f'=IFERROR(SORT(UNIQUE(FILTER(UPPER({fills}),{fills}<>""))),"")']],
     }
-    L = q(TAB_LIST)
-    fb, fc, fd, fe, ff, fl = (f"{_F}!${c}$2:${c}${FILL_LAST}" for c in "BCDEFL")
-    fx_arr = f'IF({fl}="",$B$6,{fl})'
-    rows = []
-    for r in range(P_HOLD_FIRST, P_HOLD_LAST + 1):
-        a = f"$A{r}"
-        rows.append([
-            f'=IF({a}="","",IFERROR(VLOOKUP({a},{L}!$A:$B,2,FALSE),""))',
-            f'=IF({a}="","",IFERROR(VLOOKUP({a},{L}!$A:$C,3,FALSE),""))',
-            f'=IF({a}="","",SUMIFS({fd},{fb},{a},{fc},"매수")-SUMIFS({fd},{fb},{a},{fc},"매도"))',
-            f'=IF({a}="","",IFERROR(SUMPRODUCT(({fb}={a})*({fc}="매수"),{fd},{fe})/SUMIFS({fd},{fb},{a},{fc},"매수"),""))',
-            f'=IF({a}="","",IFERROR(GOOGLEFINANCE({a},"price"),""))',
-            f'=IF(OR({a}="",E{r}="",F{r}=""),"",F{r}/E{r}-1)',
-            f'=IF({a}="","",SUMPRODUCT(({fb}={a})*({fc}="매수"),{fd},{fe},{fx_arr})-SUMPRODUCT(({fb}={a})*({fc}="매도"),{fd},{fe},{fx_arr}))',
-            f'=IF({a}="","",D{r}*N(F{r})*$B$6)',
-            f'=IF({a}="","",IFERROR(I{r}/$B$8,""))',
-            f'=IF({a}="","",COUNTIFS({fb},{a},{ff},"대기자금")>0)',
-            f'=IF({a}="","",IF(C{r}="","(미분류)",C{r}))',
-        ])
-    out[f"B{P_HOLD_FIRST}:L{P_HOLD_LAST}"] = rows
+    for row, label, value, _ in portfolio_layout():
+        out[f"A{row}:B{row}"] = [[label, value]]
+    out[f"A{P_SECTOR_FIRST}"] = [[sector_formula()]]
     if not str(b2_current).strip():
         out["B2"] = [[str(P_DEFAULT_TOTAL)]]
         notes.append(f"투자현황 B2 비어 있음 → {P_DEFAULT_TOTAL:,}")
@@ -418,6 +420,41 @@ def portfolio_values(b2_current: str, b3_current: str) -> tuple[dict[str, list[l
     else:
         notes.append(f"투자현황 B3 기존 값 유지 ({b3_current})")
     return out, notes
+
+
+def portfolio_needs_reset(grid: list[list]) -> bool:
+    """예전 배치(C열 이후에 값이 있음 — v3.1의 3열 표·종목별 현황)면 True. 새 배치는 A·B만 쓴다."""
+    return any(str(v).strip() for row in grid for v in row[2:])
+
+
+def holdings_values() -> dict[str, list[list[str]]]:
+    """보유현황 탭: 체결 B열 고유 티커마다 한 줄. M열(숨김)은 현재 환율."""
+    L = q(TAB_LIST)
+    fb, fc, fd, fe, ff, fl = (f"{_F}!${c}$2:${c}${FILL_LAST}" for c in "BCDEFL")
+    fx = f"${col_letter(H_FX_COL)}$2"
+    fx_arr = f'IF({fl}="",{fx},{fl})'
+    rows = []
+    for r in range(H_FIRST, H_LAST + 1):
+        a = f"$A{r}"
+        rows.append([
+            f'=IF({a}="","",IFERROR(VLOOKUP({a},{L}!$A:$B,2,FALSE),""))',
+            f'=IF({a}="","",IFERROR(IF(VLOOKUP({a},{L}!$A:$C,3,FALSE)="","(미분류)",VLOOKUP({a},{L}!$A:$C,3,FALSE)),"(미분류)"))',
+            f'=IF({a}="","",IF(OR(COUNTIFS({fb},{a},{ff},"대기자금")>0,C{r}="ETF"),"코어","위성"))',
+            f'=IF({a}="","",SUMIFS({fd},{fb},{a},{fc},"매수")-SUMIFS({fd},{fb},{a},{fc},"매도"))',
+            f'=IF({a}="","",IFERROR(SUMPRODUCT(({fb}={a})*({fc}="매수"),{fd},{fe})/SUMIFS({fd},{fb},{a},{fc},"매수"),""))',
+            f'=IF({a}="","",IFERROR(GOOGLEFINANCE({a},"price"),""))',
+            f'=IF(OR({a}="",F{r}="",G{r}=""),"",G{r}/F{r}-1)',
+            f'=IF({a}="","",SUMPRODUCT(({fb}={a})*({fc}="매수"),{fd},{fe},{fx_arr})-SUMPRODUCT(({fb}={a})*({fc}="매도"),{fd},{fe},{fx_arr}))',
+            f'=IF({a}="","",E{r}*N(G{r})*{fx})',
+            f'=IF({a}="","",IFERROR(J{r}/SUM($J${H_FIRST}:$J${H_LAST}),""))',
+        ])
+    fxc = col_letter(H_FX_COL)
+    return {
+        "A1:K1": [HOLDINGS_HEADERS],
+        f"A{H_FIRST}": [[f'=IFERROR(SORT(UNIQUE(FILTER(UPPER({fb}),{fb}<>""))),"")']],
+        f"B{H_FIRST}:K{H_LAST}": rows,
+        f"{fxc}1:{fxc}2": [["환율(보조)"], ['=GOOGLEFINANCE("CURRENCY:USDKRW")']],
+    }
 
 
 # ── 5. 관심 탭 ───────────────────────────────────────────────────────────────
@@ -553,28 +590,38 @@ def format_requests(ids: dict[str, int], fill_rows: int = 1000) -> list[dict]:
         _note(j, J_HEADER_ROW, 12, "같은 티커·같은 차수, 매수일 이후 첫 매도 줄과 짝짓는다"),
         _hide_cols(j, J_HIDE_FROM, J_HELPER_START + len(_HELPERS) - 1),
     ]
-    # 투자현황
+    # 투자현황 — A·B 두 열만. 형식은 portfolio_layout의 종류대로
+    kinds = {"krw": _number("#,##0"), "fx": _number("#,##0.00"), "pct": _number("0.0%", "PERCENT")}
     reqs += [
         _freeze(p),
+        _repeat(p, 1, 1, 1, 2, {"textFormat": {"bold": True}, "backgroundColor": COLOR_AUTO},
+                "userEnteredFormat.textFormat.bold,userEnteredFormat.backgroundColor"),
         _repeat(p, 2, 3, 2, 2, {"backgroundColor": COLOR_INPUT}, "userEnteredFormat.backgroundColor"),
-        _repeat(p, 2, 3, 2, 2, _number("#,##0"), "userEnteredFormat.numberFormat"),
-        _repeat(p, 6, 6, 2, 2, _number("#,##0.00"), "userEnteredFormat.numberFormat"),
-        _repeat(p, 7, 9, 2, 2, _number("#,##0"), "userEnteredFormat.numberFormat"),
-        _repeat(p, 10, 11, 2, 2, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat"),
-        _repeat(p, 14, 15, 2, 2, _number("#,##0"), "userEnteredFormat.numberFormat"),
-        _repeat(p, 14, 15, 3, 3, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat"),
-        _repeat(p, 18, 20, 2, 2, _number("#,##0"), "userEnteredFormat.numberFormat"),
-        _repeat(p, P_SECTOR_FIRST, P_SECTOR_LAST, 2, 2, _number("#,##0"), "userEnteredFormat.numberFormat"),
-        _repeat(p, P_SECTOR_FIRST, P_SECTOR_LAST, 3, 3, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat"),
-        *[_repeat(p, P_HOLD_FIRST, P_HOLD_LAST, col, col, _number('"$"0.00'), "userEnteredFormat.numberFormat") for col in (5, 6)],
-        _repeat(p, P_HOLD_FIRST, P_HOLD_LAST, 7, 7, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat"),
-        _repeat(p, P_HOLD_FIRST, P_HOLD_LAST, 8, 9, _number("#,##0"), "userEnteredFormat.numberFormat"),
-        _repeat(p, P_HOLD_FIRST, P_HOLD_LAST, 10, 10, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat"),
-        *[_repeat(p, r, r, 1, 3, {"textFormat": {"bold": True}}, "userEnteredFormat.textFormat.bold")
-          for r in (1, 5, 13, 17, 22, P_HOLD_HEADER - 1, P_HOLD_HEADER)],
-        _note(p, 17, 1, "근사값, 실제는 증권사 기준"),
+        _repeat(p, 2, 3, 2, 2, kinds["krw"], "userEnteredFormat.numberFormat"),
+        _repeat(p, 1, 200, 2, 2, {"horizontalAlignment": "RIGHT"}, "userEnteredFormat.horizontalAlignment"),
+        _repeat(p, P_SECTOR_FIRST, P_SECTOR_LAST, 2, 2, kinds["pct"], "userEnteredFormat.numberFormat"),
         _note(p, 2, 1, "프로그램(계획 자동 기록 v2)이 A열 이름으로 이 칸을 읽는다 — 이름 바꾸지 말 것"),
-        _hide_cols(p, 11, 12), _width(p, 1, 1, 220),
+        _width(p, 1, 1, 260), _width(p, 2, 2, 140),
+        {"updateDimensionProperties": {"range": {"sheetId": p, "dimension": "COLUMNS", "startIndex": 2, "endIndex": P_CLEAR_COLS},
+                                       "properties": {"hiddenByUser": False}, "fields": "hiddenByUser"}},
+    ]
+    for row, _, _, kind in portfolio_layout():
+        if kind == "section":
+            reqs.append(_repeat(p, row, row, 1, 2, {"textFormat": {"bold": True}, "backgroundColor": COLOR_AUTO},
+                                "userEnteredFormat.textFormat.bold,userEnteredFormat.backgroundColor"))
+        elif kind:
+            reqs.append(_repeat(p, row, row, 2, 2, kinds[kind], "userEnteredFormat.numberFormat"))
+    # 보유현황
+    h = ids[TAB_HOLDINGS]
+    reqs += [
+        _freeze(h),
+        _repeat(h, 1, 1, 1, len(HOLDINGS_HEADERS), {"textFormat": {"bold": True}, "backgroundColor": COLOR_AUTO},
+                "userEnteredFormat.textFormat.bold,userEnteredFormat.backgroundColor"),
+        *[_repeat(h, H_FIRST, H_LAST, col, col, _number('"$"0.00'), "userEnteredFormat.numberFormat") for col in (6, 7)],
+        *[_repeat(h, H_FIRST, H_LAST, col, col, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat") for col in (8, 11)],
+        _repeat(h, H_FIRST, H_LAST, 9, 10, _number("#,##0"), "userEnteredFormat.numberFormat"),
+        _note(h, 1, 4, "코어 = 체결 차수 \"대기자금\"이 있거나 목록 업종이 ETF인 종목(QQQM). 나머지는 위성"),
+        _hide_cols(h, H_FX_COL, H_FX_COL), _width(h, 2, 2, 200),
     ]
     # 관심·계획
     reqs += [
@@ -593,13 +640,14 @@ def format_requests(ids: dict[str, int], fill_rows: int = 1000) -> list[dict]:
 
 
 def conditional_rules(ids: dict[str, int]) -> list[tuple[int, str, dict]]:
-    """(sheetId, 식별용 수식, addConditionalFormatRule 요청). 같은 수식 규칙이 있으면 건너뛴다."""
-    f, p = ids[TAB_FILLS], ids[TAB_PORTFOLIO]
+    """(sheetId, 식별용 수식, addConditionalFormatRule 요청). 같은 수식 규칙이 있으면 건너뛰고,
+    이 스크립트가 관리하는 탭(MANAGED_CF_TABS)에서 목록에 없는 규칙(예전 배치의 규칙)은 지운다."""
+    f, p, h = ids[TAB_FILLS], ids[TAB_PORTFOLIO], ids[TAB_HOLDINGS]
     rules = [
         (f, '=AND($C2="매도",$F2="")', _grid(f, 2, 1000, 6, 6), {"backgroundColor": COLOR_RED}),
-        (p, f"=AND(ISNUMBER($C{P_SECTOR_FIRST}),$C{P_SECTOR_FIRST}>0.3)", _grid(p, P_SECTOR_FIRST, P_SECTOR_LAST, 3, 3),
+        (p, f"=AND(ISNUMBER($B{P_SECTOR_FIRST}),$B{P_SECTOR_FIRST}>0.3)", _grid(p, P_SECTOR_FIRST, P_SECTOR_LAST, 2, 2),
          {"textFormat": {"foregroundColor": COLOR_RED_TEXT, "bold": True}}),
-        (p, f'=AND($A{P_HOLD_FIRST}<>"",$D{P_HOLD_FIRST}=0)', _grid(p, P_HOLD_FIRST, P_HOLD_LAST, 1, 10),
+        (h, f'=AND($A{H_FIRST}<>"",$E{H_FIRST}=0)', _grid(h, H_FIRST, H_LAST, 1, len(HOLDINGS_HEADERS)),
          {"textFormat": {"foregroundColor": COLOR_GRAY_TEXT}}),
     ]
     out = []
@@ -609,11 +657,15 @@ def conditional_rules(ids: dict[str, int]) -> list[tuple[int, str, dict]]:
     return out
 
 
+MANAGED_CF_TABS = (TAB_FILLS, TAB_PORTFOLIO, TAB_HOLDINGS)
+
+
 def protection_specs(ids: dict[str, int], plan_formula_cols: list[int]) -> list[tuple[str, dict]]:
     """(설명, protectedRange) — 모두 "경고만 표시"(warningOnly). 설명이 같은 보호가 있으면 건너뛴다."""
     specs = [
         ("목록 전체", {"range": {"sheetId": ids[TAB_LIST]}}),
         ("매매일지 전체", {"range": {"sheetId": ids[TAB_JOURNAL]}}),
+        ("보유현황 전체", {"range": {"sheetId": ids[TAB_HOLDINGS]}}),
         ("투자현황 수식 칸", {"range": {"sheetId": ids[TAB_PORTFOLIO]},
                          "unprotectedRanges": [_grid(ids[TAB_PORTFOLIO], 2, 3, 2, 2)]}),
         ("체결 1행", {"range": _grid(ids[TAB_FILLS], 1, 1, 1, 26)}),
@@ -770,25 +822,38 @@ class SheetSetup:
         journal_now = self._formula_grid(tabs[TAB_JOURNAL]) if TAB_JOURNAL in tabs else []
         self._values(TAB_JOURNAL, changed_ranges(journal_now, journal_values()), "매매일지 수식")
 
-        # 5) 투자현황 (B2·B3은 비었을 때만)
+        # 5) 보유현황
+        hold_now = self._formula_grid(tabs[TAB_HOLDINGS]) if TAB_HOLDINGS in tabs else []
+        self._values(TAB_HOLDINGS, changed_ranges(hold_now, holdings_values()), "보유현황 수식")
+
+        # 6) 투자현황 (A·B 두 열, B2·B3은 비었을 때만). 예전 배치(C열 이후 사용)면 1~3행 A·B를 뺀 나머지를
+        #    한 번 지우고(값·서식·메모) 새로 쓴다 — 탭은 지우지 않고 B2·B3 입력값은 그대로 둔다.
         port_now = self._formula_grid(tabs[TAB_PORTFOLIO]) if TAB_PORTFOLIO in tabs else []
         cell = lambda g, r, c: _str(g[r - 1][c - 1]) if r - 1 < len(g) and c - 1 < len(g[r - 1]) else ""  # noqa: E731
+        if portfolio_needs_reset(port_now):
+            pid = ids[TAB_PORTFOLIO]
+            clear = "userEnteredValue,userEnteredFormat,note"
+            self._batch([
+                {"updateCells": {"range": _grid(pid, 4, None, 1, P_CLEAR_COLS), "fields": clear}},
+                {"updateCells": {"range": _grid(pid, 1, 3, 3, P_CLEAR_COLS), "fields": clear}},
+            ], "투자현황 예전 배치 지우기(4행 이하·C열 이후, B2·B3 보존)")
+            port_now = [list(r[:2]) for r in port_now[:3]]
         port_vals, port_notes = portfolio_values(cell(port_now, 2, 2), cell(port_now, 3, 2))
         self._values(TAB_PORTFOLIO, changed_ranges(port_now, port_vals), "투자현황 수식")
         self.out("\n".join(f"  · {n}" for n in port_notes))
 
-        # 6) 계획 A2 오타
+        # 7) 계획 A2 오타
         a2 = cell(before_plan, 2, 1)
         if a2 == "OLED":
             self._values(TAB_PLAN, {"A2": [["ODFL"]]}, "계획 A2 OLED → ODFL")
         elif a2 != "ODFL":
             self.oddities.append(f"계획 A2가 {a2!r} — OLED가 아니라 고치지 않음")
 
-        # 7) 관심
+        # 8) 관심
         watch_now = self._formula_grid(tabs[TAB_WATCH]) if TAB_WATCH in tabs else []
         self._values(TAB_WATCH, changed_ranges(watch_now, watch_values()), "관심 수식")
 
-        # 8) 서식·조건부 서식·보호·탭 순서
+        # 9) 서식·조건부 서식·보호·탭 순서
         meta = self._meta()
         self._format(meta, ids, len(before_fills))
         self._conditional(meta, ids)
@@ -831,13 +896,26 @@ class SheetSetup:
         self._batch(reqs, "검사·색·형식·메모·너비·고정")
 
     def _conditional(self, meta, ids):
-        existing = {}
+        wanted = conditional_rules(ids)
+        wanted_by_sheet: dict[int, set] = {}
+        for sid, formula, _ in wanted:
+            wanted_by_sheet.setdefault(sid, set()).add(formula)
+        managed = {ids[t] for t in MANAGED_CF_TABS if ids.get(t, -1) >= 0}
+        existing: dict[int, set] = {}
+        deletes = []
         for s in meta.get("sheets", []):
             sid = s["properties"]["sheetId"]
-            for rule in s.get("conditionalFormats", []):
+            for i, rule in enumerate(s.get("conditionalFormats", [])):
                 vals = (((rule.get("booleanRule") or {}).get("condition") or {}).get("values") or [{}])
-                existing.setdefault(sid, set()).add(vals[0].get("userEnteredValue"))
-        reqs = [req for sid, formula, req in conditional_rules(ids) if formula not in existing.get(sid, set())]
+                formula = vals[0].get("userEnteredValue")
+                if sid in managed and (formula not in wanted_by_sheet.get(sid, set()) or formula in existing.get(sid, set())):
+                    deletes.append({"deleteConditionalFormatRule": {"sheetId": sid, "index": i}})
+                    continue
+                existing.setdefault(sid, set()).add(formula)
+        # 같은 탭에서 뒤 번호부터 지워야 앞 번호가 밀리지 않는다
+        deletes.sort(key=lambda r: (r["deleteConditionalFormatRule"]["sheetId"], -r["deleteConditionalFormatRule"]["index"]))
+        self._batch(deletes, "예전 조건부 서식 지우기")
+        reqs = [req for sid, formula, req in wanted if formula not in existing.get(sid, set())]
         self._batch(reqs, "조건부 서식")
 
     def _protect(self, meta, ids, plan_cols):
