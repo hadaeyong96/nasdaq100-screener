@@ -409,7 +409,8 @@ def test_time_zone_set_to_seoul_and_kept(tmp_path):
 
 def test_plan_number_formats_b_and_d():
     ids = {t: i for i, t in enumerate(ss.TAB_ORDER)}
-    reqs = [r["repeatCell"] for r in ss.format_requests(ids) if "repeatCell" in r and r["repeatCell"]["range"]["sheetId"] == ids["계획"]]
+    reqs = [r["repeatCell"] for r in ss.format_requests(ids) if "repeatCell" in r and r["repeatCell"]["range"]["sheetId"] == ids["계획"]
+            and "numberFormat" in r["repeatCell"]["cell"]["userEnteredFormat"]]
     by_col = {r["range"]["startColumnIndex"]: r["cell"]["userEnteredFormat"]["numberFormat"]["pattern"] for r in reqs}
     assert by_col == {1: "#,##0", 3: "0.00"}  # B열, D열(기준가)
 
@@ -513,3 +514,67 @@ def test_portfolio_formulas_reference_holdings_not_hidden_columns():
     formulas = " ".join(v for rng in vals.values() for row in rng for v in row)
     assert "'보유현황'!$J$" in formulas and "'보유현황'!$I$" in formulas
     assert all(re.fullmatch(r"[AB]\d+(:[AB]\d+)?", k) for k in vals)  # A·B 열만 쓴다
+
+
+# ── 메모 열 맨 뒤·손익률·가운데 정렬 ──────────────────────────────────────────
+
+_FILLS_V31 = [
+    ["날짜", "티커", "구분", "수량", "체결가($)", "차수", "종목명", "손절가($)", "매도이유", "규칙대로", "메모", "환율(원/$)", "수수료($)"],
+    ["46294", "ODFL", "매수", "4", "178.41", "1차", "=ARRAYFORMULA(...)", "170", "", "예", "첫 매수", "1359.5", "0.5"],
+]
+
+
+def test_fill_memo_moved_last_with_two_moves_and_values_kept(tmp_path):
+    assert ss.FILLS_HEADERS[-3:] == ["환율(원/$)", "수수료($)", "메모"]
+    ops, header = ss.plan_fill_columns(_FILLS_V31[0])
+    assert ops == [{"op": "move", "from": 11, "to": 10}, {"op": "move", "from": 12, "to": 11}]
+    assert header == ss.FILLS_HEADERS
+    sh = _sheet(fills=copy.deepcopy(_FILLS_V31))
+    result, _ = _run(sh, tmp_path=tmp_path)
+    assert result["verify"]["problems"] == []
+    g = sh.tabs["체결"].get_all_values()
+    assert g[0][:13] == ss.FILLS_HEADERS
+    row = dict(zip(g[0], g[1]))
+    assert (row["메모"], row["환율(원/$)"], row["수수료($)"], row["손절가($)"], row["규칙대로"]) == ("첫 매수", "1359.5", "0.5", "170", "예")
+
+
+def test_formulas_follow_new_fill_columns():
+    assert (ss.FC["fx"], ss.FC["fee"], ss.FC["memo"], ss.FC["rule"], ss.FC["stop"]) == ("K", "L", "M", "J", "H")
+    vals = ss.journal_values()
+    helper_range = next(k for k in vals if k.startswith(ss.HELPER_COLS["key"]) and ":" in k and k.endswith(str(ss.J_LAST)))
+    row = dict(zip([n for n, _ in ss._HELPERS], vals[helper_range][0]))
+    assert "'체결'!$K$1:$K$401" in row["sfx"]  # 매도 줄 환율
+    assert "'체결'!K2" in row["v_amount"]  # 매수 줄 환율
+    assert "'체결'!L2" in row["v_pnl"] and "'체결'!$L$1:$L$401" in row["v_pnl"]  # 수수료
+    assert "'체결'!J2" in row["v_rule"] and "'체결'!H2" in row["v_stop"]
+    holdings = " ".join(ss.holdings_values()[f"B{ss.H_FIRST}:K{ss.H_LAST}"][0])
+    assert "IF('체결'!$K$2:$K$401=\"\"" in holdings and "'체결'!$L$" not in holdings
+    ids = {t: i for i, t in enumerate(ss.TAB_ORDER)}
+    rules = {r["setDataValidation"]["range"]["startColumnIndex"]: r["setDataValidation"]["rule"]["condition"]
+             for r in ss.format_requests(ids) if "setDataValidation" in r and r["setDataValidation"]["range"]["sheetId"] == ids["체결"]}
+    assert rules[10]["values"][0]["userEnteredValue"] == "=ISNUMBER(K2)"  # K 환율
+    assert rules[11]["values"][0]["userEnteredValue"] == "=ISNUMBER(L2)"  # L 수수료
+    assert 12 not in rules  # M 메모는 검사 없음
+
+
+def test_total_return_is_value_over_principal():
+    layout = {label: formula for _, label, formula, _ in ss.portfolio_layout()}
+    assert layout["전체 손익률"] == '=IF(N(B7)=0,"",B8/B7-1)'
+    b7, b8 = 961_016, 959_346
+    assert round(b8 / b7 - 1, 3) == -0.002
+
+
+def test_center_alignment_every_tab_no_right_alignment():
+    ids = {t: i for i, t in enumerate(ss.TAB_ORDER)}
+    reqs = ss.format_requests(ids)
+    centered = {}
+    for r in reqs:
+        fmt = r.get("repeatCell", {}).get("cell", {}).get("userEnteredFormat", {})
+        assert fmt.get("horizontalAlignment") != "RIGHT"
+        if fmt.get("horizontalAlignment") == "CENTER" and fmt.get("verticalAlignment") == "MIDDLE":
+            rng = r["repeatCell"]["range"]
+            centered[rng["sheetId"]] = (rng["startRowIndex"], rng["endRowIndex"], rng["endColumnIndex"])
+            assert "numberFormat" not in r["repeatCell"]["fields"]
+    assert set(centered) == set(ids.values())
+    assert centered[ids["체결"]] == (0, 1000, 13)  # 새로 적는 줄까지
+    assert centered[ids["투자현황"]][2] == 2

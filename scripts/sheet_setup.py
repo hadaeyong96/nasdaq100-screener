@@ -54,9 +54,22 @@ PROTECT_PREFIX = "sheet_setup: "
 
 # ── 체결 탭 ─────────────────────────────────────────────────────────────────
 FILLS_HEADERS = [
-    "날짜", "티커", "구분", "수량", "체결가($)", "차수", "종목명", "손절가($)", "매도이유", "규칙대로", "메모",
-    "환율(원/$)", "수수료($)",
+    "날짜", "티커", "구분", "수량", "체결가($)", "차수", "종목명", "손절가($)", "매도이유", "규칙대로",
+    "환율(원/$)", "수수료($)", "메모",
 ]
+# 체결 열 문자 — 수식·검사·색은 모두 이 표에서 열을 찾는다(열 순서를 바꿔도 FILLS_HEADERS만 고치면 된다)
+_FILL_KEYS = {
+    "date": "날짜", "tk": "티커", "side": "구분", "qty": "수량", "price": "체결가($)", "unit": "차수", "name": "종목명",
+    "stop": "손절가($)", "reason": "매도이유", "rule": "규칙대로", "fx": "환율(원/$)", "fee": "수수료($)", "memo": "메모",
+}
+
+
+def _fill_col(key: str) -> int:
+    """체결 열 번호(1부터)."""
+    return FILLS_HEADERS.index(_FILL_KEYS[key]) + 1
+
+
+FC = {k: chr(64 + FILLS_HEADERS.index(h) + 1) for k, h in _FILL_KEYS.items()}  # {"fx": "K", ...} (M열까지라 한 글자)
 # 지금 시트 머리글 → 새 머리글 (괄호·공백을 뺀 이름으로 비교한다)
 FILLS_RENAME = {"종목": "티커", "체결가": "체결가($)", "환율": "환율(원/$)", "수수료": "수수료($)", "손절가": "손절가($)"}
 FILL_ROWS = 400  # 매매일지가 따라가는 체결 줄 수(체결 2~401행 — 매수 줄 200개 + 매도 줄 여유)
@@ -254,44 +267,44 @@ def _fcol(c: str) -> str:
 # 보조 열 정의: (이름, 수식 템플릿). {r}=체결 행, {h}=이 줄, {이름}=같은 줄의 보조 열 셀,
 # {이름:all}=보조 열 전체 범위. 순서대로 AA열부터 배치한다.
 _HELPERS: list[tuple[str, str]] = [
-    ("key", f'=IF({_F}!A{{r}}="","",IFERROR(({_F}!A{{r}}+0)*1000+{{r}},""))'),
-    ("tk", f'=UPPER(TRIM({_F}!B{{r}}))'),
-    ("side", f'={_F}!C{{r}}&""'),
-    ("cash", f'={_F}!F{{r}}="대기자금"'),
-    ("sq", '=IF(OR({key}="",{tk}="",{cash}),0,IF({side}="매수",1,IF({side}="매도",-1,0))*N(' + _F + '!D{r}))'),
+    ("key", f'=IF({_F}!{FC["date"]}{{r}}="","",IFERROR(({_F}!{FC["date"]}{{r}}+0)*1000+{{r}},""))'),
+    ("tk", f'=UPPER(TRIM({_F}!{FC["tk"]}{{r}}))'),
+    ("side", f'={_F}!{FC["side"]}{{r}}&""'),
+    ("cash", f'={_F}!{FC["unit"]}{{r}}="대기자금"'),
+    ("sq", '=IF(OR({key}="",{tk}="",{cash}),0,IF({side}="매수",1,IF({side}="매도",-1,0))*N(' + _F + '!' + FC['qty'] + '{r}))'),
     ("held", '=IF({key}="","",SUMIFS({sq:all},{tk:all},{tk},{key:all},"<"&{key}))'),
     ("isbuy", '=AND({key}<>"",{tk}<>"",{side}="매수",NOT({cash}))'),
     ("cstart", '=AND({isbuy},N({held})<=0)'),
     ("ckey", '=IF({isbuy},MAXIFS({key:all},{tk:all},{tk},{cstart:all},TRUE,{key:all},"<="&{key}),"")'),
     ("idx", '=IF({isbuy},COUNTIFS({tk:all},{tk},{isbuy:all},TRUE,{key:all},">="&{ckey},{key:all},"<="&{key}),"")'),
-    ("unit", '=IF({isbuy},IF(' + _F + '!F{r}<>"",' + _F + '!F{r},CHOOSE(MIN({idx},3),"1차","2차","3차")),IF({side}="매도",' + _F + '!F{r}&"",""))'),
+    ("unit", '=IF({isbuy},IF(' + _F + '!' + FC['unit'] + '{r}<>"",' + _F + '!' + FC['unit'] + '{r},CHOOSE(MIN({idx},3),"1차","2차","3차")),IF({side}="매도",' + _F + '!' + FC['unit'] + '{r}&"",""))'),
     ("skey", '=IF({isbuy},IFERROR(1/(1/MINIFS({key:all},{tk:all},{tk},{side:all},"매도",{unit:all},{unit},{key:all},">"&{key})),""),"")'),
     ("srow", '=IF({skey}="","",MOD({skey},1000))'),
-    ("sqty", '=IF({srow}="","",INDEX(' + _fcol("D") + ',{srow}))'),
-    ("sfx", '=IF({srow}="","",IF(INDEX(' + _fcol("L") + ',{srow})<>"",INDEX(' + _fcol("L") + ',{srow}),' + J_FX_CELL + '))'),
+    ("sqty", '=IF({srow}="","",INDEX(' + _fcol(FC['qty']) + ',{srow}))'),
+    ("sfx", '=IF({srow}="","",IF(INDEX(' + _fcol(FC['fx']) + ',{srow})<>"",INDEX(' + _fcol(FC['fx']) + ',{srow}),' + J_FX_CELL + '))'),
     # ── 보이는 열과 같은 순서(종목명~규칙대로) ──
     ("v_name", '=IF({isbuy},IFERROR(VLOOKUP({tk},' + q(TAB_LIST) + '!$A:$B,2,FALSE),""),"")'),
     ("v_tk", '=IF({isbuy},{tk},"")'),
     ("v_sector", '=IF({isbuy},IFERROR(VLOOKUP({tk},' + q(TAB_LIST) + '!$A:$C,3,FALSE),""),"")'),
     ("v_unit", '=IF({isbuy},{unit},"")'),
     ("v_reason", '=IF({isbuy},IFERROR(VLOOKUP({unit},{"1차","RSI 30 탈출";"2차","골든크로스";"3차","구름 돌파";"재진입","추세 재진입"},2,FALSE),""),"")'),
-    ("v_bdate", '=IF({isbuy},' + _F + '!A{r},"")'),
-    ("v_bprice", '=IF({isbuy},' + _F + '!E{r},"")'),
-    ("v_qty", '=IF({isbuy},' + _F + '!D{r},"")'),
-    ("v_amount", '=IF({isbuy},{v_bprice}*{v_qty}*IF(' + _F + '!L{r}<>"",' + _F + '!L{r},' + J_FX_CELL + '),"")'),
-    ("v_stop", '=IF(AND({isbuy},' + _F + '!H{r}<>""),' + _F + '!H{r},"")'),
+    ("v_bdate", '=IF({isbuy},' + _F + '!' + FC['date'] + '{r},"")'),
+    ("v_bprice", '=IF({isbuy},' + _F + '!' + FC['price'] + '{r},"")'),
+    ("v_qty", '=IF({isbuy},' + _F + '!' + FC['qty'] + '{r},"")'),
+    ("v_amount", '=IF({isbuy},{v_bprice}*{v_qty}*IF(' + _F + '!' + FC['fx'] + '{r}<>"",' + _F + '!' + FC['fx'] + '{r},' + J_FX_CELL + '),"")'),
+    ("v_stop", '=IF(AND({isbuy},' + _F + '!' + FC['stop'] + '{r}<>""),' + _F + '!' + FC['stop'] + '{r},"")'),
     ("v_target", '=IF({v_stop}="","",{v_bprice}+2*({v_bprice}-{v_stop}))'),
     ("v_status", '=IF({isbuy},IF({srow}="","보유 중",IF({sqty}<{v_qty},"일부 매도 (남은 "&({v_qty}-{sqty})&"주)","매도 완료")),"")'),
     ("v_now", '=IF(AND({isbuy},OR({srow}="",N({sqty})<{v_qty})),IFERROR(GOOGLEFINANCE({tk},"price"),""),"")'),
     ("v_ret", '=IF({isbuy},IF({srow}="",IF({v_now}="","",{v_now}/{v_bprice}-1),{v_sprice}/{v_bprice}-1),"")'),
-    ("v_sdate", '=IF({srow}="","",INDEX(' + _fcol("A") + ',{srow}))'),
-    ("v_sprice", '=IF({srow}="","",INDEX(' + _fcol("E") + ',{srow}))'),
-    ("v_sreason", '=IF({srow}="","",INDEX(' + _fcol("I") + ',{srow})&"")'),
-    ("v_pnl", '=IF({srow}="","",({v_sprice}-{v_bprice})*{sqty}*{sfx}-(N(' + _F + '!M{r})+N(INDEX(' + _fcol("M") + ',{srow})))*{sfx})'),
+    ("v_sdate", '=IF({srow}="","",INDEX(' + _fcol(FC['date']) + ',{srow}))'),
+    ("v_sprice", '=IF({srow}="","",INDEX(' + _fcol(FC['price']) + ',{srow}))'),
+    ("v_sreason", '=IF({srow}="","",INDEX(' + _fcol(FC['reason']) + ',{srow})&"")'),
+    ("v_pnl", '=IF({srow}="","",({v_sprice}-{v_bprice})*{sqty}*{sfx}-(N(' + _F + '!' + FC['fee'] + '{r})+N(INDEX(' + _fcol(FC['fee']) + ',{srow})))*{sfx})'),
     ("v_r", '=IF(OR({srow}="",{v_stop}="",{v_bprice}={v_stop}),"",({v_sprice}-{v_bprice})/({v_bprice}-{v_stop}))'),
     ("v_days", '=IF({isbuy},IF({srow}="",TODAY(),{v_sdate})-{v_bdate},"")'),
     # 규칙대로: 매도 줄 값이 있으면 그것, 없으면 매수 줄 값 (AND 안의 INDEX는 매도 없을 때 오류라 IF를 겹친다)
-    ("v_rule", '=IF({isbuy},IF({srow}="",' + _F + '!J{r}&"",IF(INDEX(' + _fcol("J") + ',{srow})&""<>"",INDEX(' + _fcol("J") + ',{srow})&"",' + _F + '!J{r}&"")),"")'),
+    ("v_rule", '=IF({isbuy},IF({srow}="",' + _F + '!' + FC['rule'] + '{r}&"",IF(INDEX(' + _fcol(FC['rule']) + ',{srow})&""<>"",INDEX(' + _fcol(FC['rule']) + ',{srow})&"",' + _F + '!' + FC['rule'] + '{r}&"")),"")'),
 ]
 HELPER_COLS = {name: col_letter(J_HELPER_START + i) for i, (name, _) in enumerate(_HELPERS)}
 
@@ -371,7 +384,7 @@ def portfolio_layout() -> list[tuple[int, str, str, str]]:
         (8, "평가금액(원)", f"=SUM({_h('J')})", "krw"),
         (9, "남은 현금(원)", "=B2-B7", "krw"),
         (10, "투자 비중", '=IFERROR(B7/B2,"")', "pct"),
-        (11, "전체 손익률", '=IFERROR((B8-B7)/B2,"")', "pct"),
+        (11, "전체 손익률", '=IF(N(B7)=0,"",B8/B7-1)', "pct"),  # 평가금액 ÷ 투자 중 원금 − 1, 원금 0이면 빈칸
         (13, "[코어·위성]", "", "section"),
         (14, "코어(QQQM) 평가금액(원)", f'=SUMIFS({_h("J")},{_h("D")},"코어")', "krw"),
         (15, "코어 비중", '=IFERROR(B14/B8,"")', "pct"),
@@ -430,7 +443,7 @@ def portfolio_needs_reset(grid: list[list]) -> bool:
 def holdings_values() -> dict[str, list[list[str]]]:
     """보유현황 탭: 체결 B열 고유 티커마다 한 줄. M열(숨김)은 현재 환율."""
     L = q(TAB_LIST)
-    fb, fc, fd, fe, ff, fl = (f"{_F}!${c}$2:${c}${FILL_LAST}" for c in "BCDEFL")
+    fb, fc, fd, fe, ff, fl = (f"{_F}!${FC[k]}$2:${FC[k]}${FILL_LAST}" for k in ("tk", "side", "qty", "price", "unit", "fx"))
     fx = f"${col_letter(H_FX_COL)}$2"
     fx_arr = f'IF({fl}="",{fx},{fl})'
     rows = []
@@ -512,6 +525,25 @@ def _number(pattern, kind="NUMBER"):
     return {"numberFormat": {"type": kind, "pattern": pattern}}
 
 
+def _center(sheet_id, r1, r2, c1, c2):
+    """가로·세로 가운데 정렬 — 정렬 칸만 바꾸고 숫자 형식 등 다른 서식은 그대로 둔다."""
+    return _repeat(sheet_id, r1, r2, c1, c2, {"horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE"},
+                   "userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment")
+
+
+# 탭별 가운데 정렬 범위(1행부터 마지막 행, 1열부터 마지막 열) — 사용 중인 범위 전체(체결은 새로 적을 줄까지)
+def center_ranges(fill_rows: int = 1000) -> dict[str, tuple[int, int]]:
+    return {
+        TAB_PORTFOLIO: (P_SECTOR_LAST, 2),
+        TAB_HOLDINGS: (H_LAST, len(HOLDINGS_HEADERS)),
+        TAB_JOURNAL: (J_LAST, len(JOURNAL_HEADERS)),
+        TAB_FILLS: (fill_rows, len(FILLS_HEADERS)),
+        TAB_PLAN: (1000, 12),
+        TAB_WATCH: (WATCH_ROWS[1], 7),
+        TAB_LIST: (300, 3),
+    }
+
+
 def _note(sheet_id, row, col, text):
     return {"updateCells": {"range": _grid(sheet_id, row, row, col, col), "rows": [{"values": [{"note": text}]}], "fields": "note"}}
 
@@ -541,26 +573,27 @@ def format_requests(ids: dict[str, int], fill_rows: int = 1000) -> list[dict]:
         _validation(f, c["날짜"], {"condition": {"type": "DATE_IS_VALID"}}, rows=fill_rows),
         _validation(f, c["티커"], {"condition": {"type": "ONE_OF_RANGE", "values": [{"userEnteredValue": f"={q(TAB_LIST)}!$A$2:$A"}]}}, rows=fill_rows),
         _validation(f, c["구분"], _list_rule(["매수", "매도"]), rows=fill_rows),
-        _validation(f, c["수량"], _custom_rule("=AND(ISNUMBER(D2),D2>0,D2=INT(D2))"), rows=fill_rows),
+        _validation(f, c["수량"], _custom_rule(f"=AND(ISNUMBER({FC['qty']}2),{FC['qty']}2>0,{FC['qty']}2=INT({FC['qty']}2))"), rows=fill_rows),
         _validation(f, c["체결가($)"], {"condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0"}]}}, rows=fill_rows),
         _validation(f, c["차수"], _list_rule(UNITS), rows=fill_rows),
-        _validation(f, c["손절가($)"], _custom_rule("=ISNUMBER(H2)"), rows=fill_rows),
+        _validation(f, c["손절가($)"], _custom_rule(f"=ISNUMBER({FC['stop']}2)"), rows=fill_rows),
         _validation(f, c["매도이유"], _list_rule(SELL_REASONS), rows=fill_rows),
         _validation(f, c["규칙대로"], _list_rule(["예", "아니오"]), rows=fill_rows),
-        _validation(f, c["환율(원/$)"], _custom_rule("=ISNUMBER(L2)"), rows=fill_rows),
-        _validation(f, c["수수료($)"], _custom_rule("=ISNUMBER(M2)"), rows=fill_rows),
+        _validation(f, c["환율(원/$)"], _custom_rule(f"=ISNUMBER({FC['fx']}2)"), rows=fill_rows),
+        _validation(f, c["수수료($)"], _custom_rule(f"=ISNUMBER({FC['fee']}2)"), rows=fill_rows),
     ]
     # 체결 색·형식
     reqs += [
-        _repeat(f, 1, fill_rows, 1, 5, {"backgroundColor": COLOR_INPUT}, "userEnteredFormat.backgroundColor"),
-        _repeat(f, 1, fill_rows, 6, 6, {"backgroundColor": COLOR_OPTIONAL}, "userEnteredFormat.backgroundColor"),
-        _repeat(f, 1, fill_rows, 8, 11, {"backgroundColor": COLOR_OPTIONAL}, "userEnteredFormat.backgroundColor"),
-        _repeat(f, 1, fill_rows, 7, 7, {"backgroundColor": COLOR_AUTO}, "userEnteredFormat.backgroundColor"),
-        _repeat(f, 1, fill_rows, 12, 13, {"backgroundColor": COLOR_AUTO}, "userEnteredFormat.backgroundColor"),
-        _repeat(f, 2, fill_rows, 1, 1, _number("yyyy-mm-dd", "DATE"), "userEnteredFormat.numberFormat"),
-        _repeat(f, 2, fill_rows, 5, 5, _number('"$"0.00'), "userEnteredFormat.numberFormat"),
-        _repeat(f, 2, fill_rows, 8, 8, _number('"$"0.00'), "userEnteredFormat.numberFormat"),
-        _repeat(f, 2, fill_rows, 12, 12, _number("#,##0.00"), "userEnteredFormat.numberFormat"),
+        # 색: 필수 입력 연노랑 / 선택 입력 아주 연한 노랑 / 자동·선택(비우면 자동) 회색
+        *[_repeat(f, 1, fill_rows, _fill_col(k), _fill_col(k), {"backgroundColor": color}, "userEnteredFormat.backgroundColor")
+          for k, color in [("date", COLOR_INPUT), ("tk", COLOR_INPUT), ("side", COLOR_INPUT), ("qty", COLOR_INPUT),
+                           ("price", COLOR_INPUT), ("unit", COLOR_OPTIONAL), ("name", COLOR_AUTO), ("stop", COLOR_OPTIONAL),
+                           ("reason", COLOR_OPTIONAL), ("rule", COLOR_OPTIONAL), ("fx", COLOR_AUTO), ("fee", COLOR_AUTO),
+                           ("memo", COLOR_OPTIONAL)]],
+        _repeat(f, 2, fill_rows, _fill_col("date"), _fill_col("date"), _number("yyyy-mm-dd", "DATE"), "userEnteredFormat.numberFormat"),
+        _repeat(f, 2, fill_rows, _fill_col("price"), _fill_col("price"), _number('"$"0.00'), "userEnteredFormat.numberFormat"),
+        _repeat(f, 2, fill_rows, _fill_col("stop"), _fill_col("stop"), _number('"$"0.00'), "userEnteredFormat.numberFormat"),
+        _repeat(f, 2, fill_rows, _fill_col("fx"), _fill_col("fx"), _number("#,##0.00"), "userEnteredFormat.numberFormat"),
         _repeat(f, 1, 1, 1, 13, {"textFormat": {"bold": True}}, "userEnteredFormat.textFormat.bold"),
         _note(f, 1, c["차수"], "살 때는 비우면 매수 순서대로 자동. 팔 때는 필수. 손절로 여러 차수를 팔면 차수별로 한 줄씩. QQQM 코어는 대기자금"),
         _note(f, 1, c["손절가($)"], "살 때 보고서의 손절가"),
@@ -598,7 +631,6 @@ def format_requests(ids: dict[str, int], fill_rows: int = 1000) -> list[dict]:
                 "userEnteredFormat.textFormat.bold,userEnteredFormat.backgroundColor"),
         _repeat(p, 2, 3, 2, 2, {"backgroundColor": COLOR_INPUT}, "userEnteredFormat.backgroundColor"),
         _repeat(p, 2, 3, 2, 2, kinds["krw"], "userEnteredFormat.numberFormat"),
-        _repeat(p, 1, 200, 2, 2, {"horizontalAlignment": "RIGHT"}, "userEnteredFormat.horizontalAlignment"),
         _repeat(p, P_SECTOR_FIRST, P_SECTOR_LAST, 2, 2, kinds["pct"], "userEnteredFormat.numberFormat"),
         _note(p, 2, 1, "프로그램(계획 자동 기록 v2)이 A열 이름으로 이 칸을 읽는다 — 이름 바꾸지 말 것"),
         _width(p, 1, 1, 260), _width(p, 2, 2, 140),
@@ -632,6 +664,7 @@ def format_requests(ids: dict[str, int], fill_rows: int = 1000) -> list[dict]:
         _repeat(w, 2, WATCH_ROWS[1], 4, 7, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat"),
         _repeat(w, 1, 1, 1, 7, {"textFormat": {"bold": True}}, "userEnteredFormat.textFormat.bold"),
         _freeze(pl),
+        *[_center(ids[tab], 1, last_row, 1, last_col) for tab, (last_row, last_col) in center_ranges(fill_rows).items()],
         _repeat(pl, 2, 1000, 2, 2, _number("#,##0"), "userEnteredFormat.numberFormat"),
         # 기준가는 소수 둘째 자리까지 보이게 — read_sheets가 보이는 값을 읽으므로 178.41이 178로 읽히지 않게 한다
         _repeat(pl, 2, 1000, 4, 4, _number("0.00"), "userEnteredFormat.numberFormat"),
@@ -970,6 +1003,8 @@ class SheetSetup:
         for i, b in enumerate(b_rows):
             a = a_rows[i] if i < len(a_rows) else {}
             for k, v in b.items():
+                if k == _FILL_KEYS["name"]:  # 종목명(G2)은 이 스크립트가 쓰는 수식 열 — 사용자 데이터 아님
+                    continue
                 if _str(a.get(k, "")) != v:
                     problems.append(f"체결 데이터 {i + 2}행 {k}: {v!r} → {a.get(k)!r}")
         if len(a_rows) != len(b_rows):
