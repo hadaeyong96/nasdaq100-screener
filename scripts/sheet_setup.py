@@ -46,6 +46,8 @@ TAB_ORDER = [TAB_PORTFOLIO, TAB_JOURNAL, TAB_FILLS, TAB_PLAN, TAB_WATCH, TAB_LIS
 NEW_TABS = {TAB_PORTFOLIO: (200, 14), TAB_JOURNAL: (410, 70), TAB_WATCH: (60, 8), TAB_LIST: (300, 3)}
 
 FORMAT_HASH_KEY = "sheet_setup_format_hash"
+TIME_ZONE = "Asia/Seoul"  # TODAY()(보유일수·올해 실현손익)를 한국 날짜로
+SPECIAL_SECTORS = {"QQQM": "ETF"}  # yfinance 업종이 없는 종목
 PROTECT_PREFIX = "sheet_setup: "
 
 # ── 체결 탭 ─────────────────────────────────────────────────────────────────
@@ -141,12 +143,12 @@ def build_list_rows(universe_tickers, name_map: dict, sector_map: dict, fills_ti
     """목록 탭 값(머리글 포함). 나스닥100 + QQQM + 체결 티커, 티커 오름차순.
 
     입력: universe_tickers, name_map({티커: 한글 이름}), sector_map({티커: 업종}), fills_tickers
-    출력: [["티커","종목명","업종"], [티커, 이름 또는 "", 업종 또는 ""], ...]
+    출력: [["티커","종목명","업종"], [티커, 이름 또는 "", 업종 또는 ""], ...] — 업종이 없으면 SPECIAL_SECTORS(QQQM "ETF")
     """
     tickers = {str(t).strip().upper() for t in list(universe_tickers) + ["QQQM"] + list(fills_tickers) if str(t).strip()}
     rows = [["티커", "종목명", "업종"]]
     for t in sorted(tickers):
-        rows.append([t, name_map.get(t, "") or "", sector_map.get(t, "") or ""])
+        rows.append([t, name_map.get(t, "") or "", sector_map.get(t, "") or SPECIAL_SECTORS.get(t, "")])
     return rows
 
 
@@ -583,6 +585,9 @@ def format_requests(ids: dict[str, int], fill_rows: int = 1000) -> list[dict]:
         _repeat(w, 2, WATCH_ROWS[1], 4, 7, _number("0.0%", "PERCENT"), "userEnteredFormat.numberFormat"),
         _repeat(w, 1, 1, 1, 7, {"textFormat": {"bold": True}}, "userEnteredFormat.textFormat.bold"),
         _freeze(pl),
+        _repeat(pl, 2, 1000, 2, 2, _number("#,##0"), "userEnteredFormat.numberFormat"),
+        # 기준가는 소수 둘째 자리까지 보이게 — read_sheets가 보이는 값을 읽으므로 178.41이 178로 읽히지 않게 한다
+        _repeat(pl, 2, 1000, 4, 4, _number("0.00"), "userEnteredFormat.numberFormat"),
     ]
     return reqs
 
@@ -676,7 +681,8 @@ class SheetSetup:
     # ── 읽기 ──
     def _meta(self):
         return self.sh.fetch_sheet_metadata(params={
-            "fields": "properties(locale),developerMetadata,sheets(properties,protectedRanges,conditionalFormats)"})
+            "fields": "properties(locale,timeZone),developerMetadata,"
+                      "sheets(properties,protectedRanges,conditionalFormats,data.columnMetadata.hiddenByUser)"})
 
     def _tabs(self) -> dict[str, object]:
         return {ws.title: ws for ws in self.sh.worksheets()}
@@ -789,6 +795,8 @@ class SheetSetup:
         plan_cols = sorted({j + 1 for row in before_plan[1:] for j, v in enumerate(row) if str(v).startswith("=")})
         self._protect(meta, ids, plan_cols)
         self._tab_order(meta, ids)
+        self._time_zone(meta)
+        self._journal_hidden(meta, ids)
 
         result = {"changes": self.changes, "oddities": self.oddities, "backup": self.backup_path}
         self._print_summary()
@@ -850,6 +858,23 @@ class SheetSetup:
             reqs.append({"updateSheetProperties": {"properties": {"sheetId": ids[TAB_LIST], "hidden": True}, "fields": "hidden"}})
         self._batch(reqs, "탭 순서·목록 숨김")
 
+    def _time_zone(self, meta):
+        if (meta.get("properties") or {}).get("timeZone") != TIME_ZONE:
+            self._batch([{"updateSpreadsheetProperties": {"properties": {"timeZone": TIME_ZONE}, "fields": "timeZone"}}],
+                        f"스프레드시트 시간대 → {TIME_ZONE}")
+
+    def _journal_hidden(self, meta, ids):
+        """매매일지 보조 열(W~)이 실제로 숨겨져 있는지 시트에서 확인하고, 아니면 숨긴다(해시와 무관)."""
+        sheet = next((s for s in meta.get("sheets", []) if s["properties"].get("title") == TAB_JOURNAL), None)
+        if sheet is None or ids.get(TAB_JOURNAL, -1) < 0:
+            return
+        cols = ((sheet.get("data") or [{}])[0].get("columnMetadata")) or []
+        last = J_HELPER_START + len(_HELPERS) - 1
+        shown = [col_letter(c) for c in range(J_HIDE_FROM, last + 1)
+                 if c - 1 >= len(cols) or not cols[c - 1].get("hiddenByUser")]
+        if shown:
+            self._batch([_hide_cols(ids[TAB_JOURNAL], J_HIDE_FROM, last)], f"매매일지 보조 열 숨김 ({shown[0]}~{shown[-1]} 중 {len(shown)}열)")
+
     def _print_summary(self):
         self.out("[바꿀 내용]" if not self.apply else "[바꾼 내용]")
         self.out("\n".join(f"  - {c}" for c in self.changes) if self.changes else "  (없음 — 이미 정리된 상태)")
@@ -895,10 +920,16 @@ def real_list_rows(fills_tickers) -> list[list[str]]:
     from data.sectors import get_sectors
     from data.universe import get_universe
 
+    import pandas as pd
+
     universe = get_universe()
-    name_map = dict(zip(universe["ticker"], universe["name_kr"]))
+    # name_kr.csv 전체(구성 종목이 아닌 QQQM 등 포함) + 구성 종목 조인 결과
+    kr = pd.read_csv(ROOT / "data" / "name_kr.csv", dtype=str).fillna("")
+    name_map = {t.strip(): n.strip() for t, n in zip(kr["ticker"], kr["name_kr"])}
+    name_map.update({t: n for t, n in zip(universe["ticker"], universe["name_kr"]) if n})
     tickers = sorted({*universe["ticker"], "QQQM", *fills_tickers})
     sector_map, failed = get_sectors(tickers)
+    failed = [t for t in failed if t not in SPECIAL_SECTORS]  # QQQM은 "ETF"로 채운다
     if failed:
         print(f"[목록] 업종을 못 받은 종목 {len(failed)}개(빈칸): {', '.join(sorted(failed))}")
     return build_list_rows(universe["ticker"], name_map, sector_map, fills_tickers)

@@ -42,6 +42,8 @@ class FakeSpreadsheet:
         self.cf: dict[int, list[dict]] = {}
         self.dev_meta: list[dict] = []
         self.write_calls = 0
+        self.time_zone = "America/Los_Angeles"
+        self.hidden_cols: dict[int, set[int]] = {}  # sheetId -> 숨긴 열(0부터)
 
     # gspread 인터페이스
     def worksheets(self):
@@ -61,8 +63,11 @@ class FakeSpreadsheet:
                 "properties": {"title": t, "sheetId": ws.id, **self.props[t]},
                 "protectedRanges": [p for p in self.protected if p["sheet"] == ws.id],
                 "conditionalFormats": self.cf.get(ws.id, []),
+                "data": [{"columnMetadata": [{"hiddenByUser": True} if c in self.hidden_cols.get(ws.id, set()) else {}
+                                             for c in range(80)]}],
             })
-        return {"properties": {"locale": "ko_KR"}, "developerMetadata": list(self.dev_meta), "sheets": sheets}
+        return {"properties": {"locale": "ko_KR", "timeZone": self.time_zone}, "developerMetadata": list(self.dev_meta),
+                "sheets": sheets}
 
     def _ws_by_id(self, sid):
         return next(w for w in self.tabs.values() if w.id == sid)
@@ -90,6 +95,11 @@ class FakeSpreadsheet:
             elif kind == "deleteDeveloperMetadata":
                 mid = spec["dataFilter"]["developerMetadataLookup"]["metadataId"]
                 self.dev_meta = [m for m in self.dev_meta if m["metadataId"] != mid]
+            elif kind == "updateSpreadsheetProperties":
+                self.time_zone = spec["properties"]["timeZone"]
+            elif kind == "updateDimensionProperties" and spec["properties"].get("hiddenByUser"):
+                rng = spec["range"]
+                self.hidden_cols.setdefault(rng["sheetId"], set()).update(range(rng["startIndex"], rng["endIndex"]))
             elif kind == "updateSheetProperties":
                 p = spec["properties"]
                 title = self._ws_by_id(p["sheetId"]).title
@@ -375,3 +385,46 @@ def test_journal_formulas_encode_rules():
     # 수식 안에 남은 미치환 자리표시자가 없다
     for formula in vals[helper_range][0] + vals[helper_range][-1]:
         assert not re.search(r"\{[a-z_]+(:all)?\}", formula), formula
+
+
+# ── 마무리(시간대·계획 형식·QQQM 업종·보조 열 숨김) ─────────────────────────────
+
+
+def test_time_zone_set_to_seoul_and_kept(tmp_path):
+    sh = _sheet()
+    _run(sh, tmp_path=tmp_path)
+    assert sh.time_zone == "Asia/Seoul"
+    second, _ = _run(sh, tmp_path=tmp_path)
+    assert second["changes"] == []
+
+
+def test_plan_number_formats_b_and_d():
+    ids = {t: i for i, t in enumerate(ss.TAB_ORDER)}
+    reqs = [r["repeatCell"] for r in ss.format_requests(ids) if "repeatCell" in r and r["repeatCell"]["range"]["sheetId"] == ids["계획"]]
+    by_col = {r["range"]["startColumnIndex"]: r["cell"]["userEnteredFormat"]["numberFormat"]["pattern"] for r in reqs}
+    assert by_col == {1: "#,##0", 3: "0.00"}  # B열, D열(기준가)
+
+
+def test_qqqm_sector_is_etf():
+    rows = ss.build_list_rows(["AAPL"], {}, {"AAPL": "Technology"}, [])
+    assert ["QQQM", "", "ETF"] in rows and ["AAPL", "", "Technology"] in rows
+
+
+def test_journal_helper_columns_rehidden_if_shown(tmp_path):
+    sh = _sheet()
+    _run(sh, tmp_path=tmp_path)
+    jid = sh.tabs["매매일지"].id
+    assert set(range(ss.J_HIDE_FROM - 1, ss.J_HELPER_START + len(ss._HELPERS) - 1)) <= sh.hidden_cols[jid]
+    sh.hidden_cols[jid].discard(30)  # 사용자가 보조 열 하나를 다시 펼침
+    result, _ = _run(sh, tmp_path=tmp_path)
+    assert any("매매일지 보조 열 숨김" in c for c in result["changes"])
+    assert 30 in sh.hidden_cols[jid]
+    assert any(p["description"] == ss.PROTECT_PREFIX + "매매일지 전체" for p in sh.protected)
+
+
+def test_name_kr_csv_has_no_blank_names():
+    import pandas as pd
+
+    kr = pd.read_csv(ss.ROOT / "data" / "name_kr.csv", dtype=str).fillna("")
+    assert (kr["name_kr"].str.strip() == "").sum() == 0
+    assert dict(zip(kr["ticker"], kr["name_kr"]))["ODFL"] == "올드 도미니언 프레이트 라인"

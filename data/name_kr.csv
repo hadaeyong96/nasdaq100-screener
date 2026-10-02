@@ -1,13 +1,13 @@
 ticker,name_kr
 ADBE,어도비
-ADP,
+ADP,오토매틱 데이터 프로세싱
 AMD,AMD
 ABNB,에어비앤비
-ALNY,
+ALNY,Alnylam Pharmaceuticals
 GOOGL,알파벳(구글) A주
 GOOG,알파벳(구글) C주
 AMZN,아마존
-AEP,
+AEP,아메리칸 일렉트릭 파워
 AMGN,암젠
 ADI,아날로그디바이스
 AAPL,애플
@@ -15,36 +15,36 @@ AMAT,어플라이드머티어리얼즈
 APP,앱러빈
 ARM,암홀딩스
 ASML,ASML
-ALAB,
+ALAB,아스테라 랩스
 ADSK,오토데스크
-AXON,
+AXON,액손 엔터프라이즈
 BKR,베이커휴즈
 BKNG,부킹홀딩스
 AVGO,브로드컴
 CDNS,케이던스디자인시스템즈
 CTAS,신타스
 CSCO,시스코
-CCEP,
+CCEP,코카콜라 유로퍼시픽 파트너스
 CMCSA,컴캐스트
-CEG,
-CPRT,
-CRWV,
+CEG,컨스텔레이션 에너지
+CPRT,코파트
+CRWV,코어위브
 COST,코스트코
 CRWD,크라우드스트라이크
-CSX,
+CSX,CSX
 DDOG,데이터독
 DXCM,덱스콤
 FANG,다이아몬드백에너지
 DASH,도어대시
-EXC,
+EXC,엑셀론
 FAST,패스널
-FER,
+FER,페로비알
 FTNT,포티넷
 GEHC,GE헬스케어
 GILD,길리어드사이언스
 HON,허니웰테크놀로지스
 HONA,허니웰에어로스페이스
-IDXX,
+IDXX,아이덱스 래버러토리스
 INTC,인텔
 INTU,인튜이트
 ISRG,인튜이티브서지컬
@@ -52,35 +52,35 @@ KDP,큐리그닥터페퍼
 KLAC,KLA코퍼레이션
 LRCX,램리서치
 LIN,린데
-LITE,
+LITE,루멘텀
 MAR,메리어트인터내셔널
 MRVL,마벨테크놀로지
 MELI,메르카도리브레
 META,메타플랫폼스
-MCHP,
+MCHP,마이크로칩 테크놀로지
 MU,마이크론테크놀로지
 MSFT,마이크로소프트
 MSTR,마이크로스트래티지
 MDLZ,몬델리즈인터내셔널
-MPWR,
+MPWR,모놀리식 파워 시스템즈
 MNST,몬스터베버리지
-NBIS,
+NBIS,네비우스 그룹
 NFLX,넷플릭스
 NVDA,엔비디아
 NXPI,NXP반도체
-ORLY,
-ODFL,
-PCAR,
+ORLY,오라일리 오토모티브
+ODFL,올드 도미니언 프레이트 라인
+PCAR,PACCAR
 PLTR,팔란티어테크놀로지스
 PANW,팔로알토네트웍스
-PAYX,
+PAYX,페이첵스
 PYPL,페이팔
 PDD,PDD홀딩스(핀둬둬)
 PEP,펩시코
 QCOM,퀄컴
 REGN,리제네론파마슈티컬스
 RKLB,로켓랩
-ROP,
+ROP,로퍼 테크놀로지스
 ROST,로스스토어스
 SNDK,샌디스크
 STX,시게이트테크놀로지
@@ -90,7 +90,7 @@ SBUX,스타벅스
 SNPS,시놉시스
 TMUS,T모바일US
 TTWO,테이크투인터랙티브
-TER,
+TER,테라다인
 TSLA,테슬라
 TXN,텍사스인스트루먼츠
 TRI,톰슨로이터
@@ -99,4 +99,5 @@ WMT,월마트
 WBD,워너브라더스디스커버리
 WDC,웨스턴디지털
 WDAY,워크데이
-XEL,
+XEL,엑셀 에너지
+QQQM,Invesco NASDAQ 100 ETF
