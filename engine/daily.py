@@ -901,7 +901,7 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
     elif event["kind"] == "A2":
         base.update(
             {
-                "a1_date": str(states_after.get("a1_date").date()) if states_after.get("a1_date") is not None else "",
+                "a1_date": str(pd.Timestamp(states_after.get("a1_date")).date()) if states_after.get("a1_date") is not None else "",
                 "macd_norm": round(row.get("macd_norm"), 2) if not pd.isna(row.get("macd_norm")) else None,
                 "rsi_now": round(row.get("rsi"), 1) if not pd.isna(row.get("rsi")) else None,
             }
