@@ -649,3 +649,185 @@ def compute_posttax_a(result: PortfolioResult, data: PortfolioData, cfg: dict, e
     years = (pd.Timestamp(end) - pd.Timestamp(result.equity_rows[0]["date"])).days / 365.25 if result.equity_rows else 0
     cagr = (liquidated_value_krw / total_krw) ** (1 / years) - 1 if years > 0 and liquidated_value_krw > 0 else -1.0
     return {"cagr_liquidated_pct": round(cagr * 100, 2), "tax_paid_krw": round(tax_amount_krw), "liquidated_value_krw": round(liquidated_value_krw)}
+
+
+# ── L1: 목표 비중 시뮬레이션 (docs/l1_plan.md, configs/l1_preregistration.yaml) ─────────
+# simulate_portfolio(P0·P3·P4·P5)는 그대로 두고, 날짜별 목표 비중(core·qld·reserve)을 받아
+# 그대로 따라가는 일반 시뮬레이터를 따로 둔다. 체결·배당·세금·수수료 규칙은 위 엔진과 같다.
+
+
+def _settle_may_tax_proportional(
+    broker: PortfolioBroker, year: int, core_price: float | None, qld_price: float | None,
+    fx_rate: float, cfg: dict, settlement_year: int, date_iso: str,
+) -> float:
+    """year 실현손익의 양도세를 settlement_year 5월에 낸다. 재원은 보유 위험자산(코어·QLD)을
+    평가액 비율로 팔아 마련하고, 위험자산이 없으면 대기 자금(국채)에서 꺼낸다 (L1 사전 등록
+    execution.tax_settlement_source). 코어만 있으면 PortfolioBroker.settle_may_tax와 같은 결과."""
+    tax_cfg = cfg["backtest"]["tax"]
+    gain = broker.realized_gain_by_year.get(year, 0.0)
+    amount_krw = (
+        tax.capital_gains_tax(gain, tax_cfg["capital_gains_deduction_krw"], tax_cfg["capital_gains_rate_pct"] / 100)
+        if broker.apply_tax else 0.0
+    )
+    if amount_krw <= 0:
+        broker.tax_log.append({"year": year, "gain_krw": gain, "tax_krw": 0.0})
+        return 0.0
+    spread_pct = cfg["backtest"]["costs"]["fx_spread_pct"] if broker.apply_costs else 0.0
+    usd_needed = amount_krw / (fx_rate * (1 - spread_pct / 100))
+    core_v = broker.core.value_usd(core_price) if core_price else 0.0
+    qld_v = broker.qld.value_usd(qld_price) if qld_price else 0.0
+    risky = core_v + qld_v
+    if risky > 0:
+        if core_v > 0:
+            broker.sell_core(usd_needed * core_v / risky, core_price, cfg, fx_rate, settlement_year, date_iso)
+        if qld_v > 0:
+            broker.sell_qld(usd_needed * qld_v / risky, qld_price, cfg, fx_rate, settlement_year, date_iso)
+    else:
+        broker.move_reserve_to_cash(usd_needed, cfg, date_iso)
+    broker.cash_usd -= usd_needed  # 세금은 재투자하지 않고 밖으로 나간다
+    broker.tax_log.append({"year": year, "gain_krw": gain, "tax_krw": amount_krw})
+    return amount_krw
+
+
+def _rebalance_to(broker: PortfolioBroker, target: dict, core_px: float | None, qld_px: float | None,
+                  cfg: dict, fx_rate: float | None, year: int, date_iso: str) -> None:
+    """현재 보유를 target 비중(core·qld·reserve)으로 맞춘다: 넘치는 자산을 먼저 팔고, 모자란 자산을 산다."""
+    core_px = core_px or 0.0
+    qld_px = qld_px or 0.0
+    total = broker.total_value_usd(core_px, qld_px)
+    if total <= 0:
+        return
+    cur = {"core": broker.core.value_usd(core_px), "qld": broker.qld.value_usd(qld_px), "reserve": broker.reserve_usd}
+    want = {k: total * target.get(k, 0.0) for k in cur}
+    if cur["core"] > want["core"] + 1e-9 and core_px:
+        broker.sell_core(cur["core"] - want["core"], core_px, cfg, fx_rate, year, date_iso)
+    if cur["qld"] > want["qld"] + 1e-9 and qld_px:
+        broker.sell_qld(cur["qld"] - want["qld"], qld_px, cfg, fx_rate, year, date_iso)
+    if cur["reserve"] > want["reserve"] + 1e-9:
+        broker.move_reserve_to_cash(cur["reserve"] - want["reserve"], cfg, date_iso)
+    deficits = {k: max(want[k] - cur[k], 0.0) for k in cur}
+    need = sum(deficits.values())
+    cash = max(broker.cash_usd, 0.0)
+    if need <= 0 or cash <= 0:
+        return
+    buy_commission = cfg["backtest"]["costs"]["commission_buy_pct"] / 100 if broker.apply_costs else 0.0
+    budget = min(cash, need)
+    for k, deficit in deficits.items():
+        if deficit <= 0:
+            continue
+        share = budget * deficit / need
+        if k == "core" and core_px:
+            broker.buy_core(share / (1 + buy_commission), core_px, cfg, date_iso)
+        elif k == "qld" and qld_px:
+            broker.buy_qld(share / (1 + buy_commission), qld_px, cfg, date_iso)
+        elif k == "reserve":
+            broker.move_cash_to_reserve(share, cfg, date_iso)
+
+
+def simulate_target_weights(
+    data: PortfolioData, cfg: dict, start: date, end: date, weights: pd.DataFrame, *,
+    apply_costs: bool = True, apply_tax: bool = True,
+) -> PortfolioResult:
+    """날짜별 목표 비중(core.regime.target_weights 결과)을 [start, end]에서 따라간다 (순수 함수).
+
+    - 첫날: 그날 목표 비중을 그날 종가에 산다(환전 1회).
+    - d일 종가 목표가 직전 목표와 다르면 d+1일 시가에 맞춘다(같은 국면 안에서는 재조정 없음).
+    - 배당은 받은 날 종가로 같은 자산에 재투자, 5월 첫 거래일에 전년 양도세 납부(위험자산 비율로 매도).
+    equity_rows 각 행에 regime(그날 보유 기준 "공격"|"방어")을 남긴다. trade_count = 실제 전환 횟수.
+    """
+    total_krw = cfg["backtest"]["total_krw"]
+    costs = cfg["backtest"]["costs"]
+    trading_days = [d for d in data.qqq_df.index if pd.Timestamp(start) <= d <= pd.Timestamp(end)]
+    broker = PortfolioBroker(apply_costs=apply_costs, apply_tax=apply_tax)
+    if not trading_days:
+        return PortfolioResult(equity_rows=[], broker=broker, trade_count=0)
+    may_days = _may_settlement_days(list(data.qqq_df.index))
+
+    def target_on(d) -> dict:
+        r = weights.loc[d]
+        return {"core": float(r["core"]), "qld": float(r["qld"]), "reserve": float(r["reserve"])}
+
+    day0 = trading_days[0]
+    day0_iso = day0.date().isoformat()
+    fx0 = data.fx_by_date.get(day0_iso)
+    core0, qld0 = _price_on(data.core_df, day0), _price_on(data.qld_df, day0)
+    if fx0 is None or core0 is None:
+        return PortfolioResult(equity_rows=[], broker=broker, trade_count=0)
+    spread = costs["fx_spread_pct"] / 100 if apply_costs else 0.0
+    broker.cash_usd = total_krw / fx0 * (1 - spread)
+    held_target = target_on(day0)
+    held_regime = str(weights.loc[day0, "regime"])
+    _rebalance_to(broker, held_target, core0, qld0, cfg, fx0, day0.year, day0_iso)
+
+    pending: dict | None = None
+    pending_regime = None
+    # 첫날 가격이 없는 자산(합성 QLD는 첫 수익률을 구할 전일 종가가 없어 시작일 다음 날부터 있다)은
+    # 다음 거래일 시가에 마저 산다 — 전환으로 세지 않는다.
+    initial_retry = broker.cash_usd > 0.01 * broker.total_value_usd(core0 or 0.0, qld0 or 0.0)
+    switches = 0
+    equity_rows: list = []
+    for d in trading_days:
+        date_iso = d.date().isoformat()
+        fx_rate = data.fx_by_date.get(date_iso)
+        broker.grow_reserve(data.reserve_daily_rate.get(d) if d in data.reserve_daily_rate.index else None)
+        core_open, qld_open = _price_on(data.core_df, d, "open"), _price_on(data.qld_df, d, "open")
+        core_close, qld_close = _price_on(data.core_df, d, "close"), _price_on(data.qld_df, d, "close")
+
+        if initial_retry and d != day0:
+            _rebalance_to(broker, held_target, core_open or core_close, qld_open or qld_close, cfg, fx_rate, d.year, date_iso)
+            initial_retry = False
+        if pending is not None:
+            _rebalance_to(broker, pending, core_open or core_close, qld_open or qld_close, cfg, fx_rate, d.year, date_iso)
+            held_target, held_regime = pending, pending_regime
+            pending = None
+            switches += 1
+
+        if broker.core.shares > 0 and d in data.core_dividends.index and core_close:
+            net_usd = broker.receive_dividend(float(data.core_dividends.loc[d]) * broker.core.shares, cfg)
+            if net_usd > 0:
+                broker.buy_core(net_usd, core_close, cfg, date_iso, count_as_trade=False)
+        if broker.qld.shares > 0 and d in data.qld_dividends.index and qld_close:
+            net_usd = broker.receive_dividend(float(data.qld_dividends.loc[d]) * broker.qld.shares, cfg)
+            if net_usd > 0:
+                broker.buy_qld(net_usd, qld_close, cfg, date_iso, count_as_trade=False)
+
+        if may_days.get(d.year) == d and (core_close or qld_close):
+            _settle_may_tax_proportional(broker, d.year - 1, core_close, qld_close, fx_rate or 0.0, cfg, d.year, date_iso)
+
+        tgt = target_on(d)
+        if tgt != held_target:
+            pending, pending_regime = tgt, str(weights.loc[d, "regime"])
+
+        total_value_usd = broker.total_value_usd(core_close or 0.0, qld_close or 0.0)
+        equity_rows.append({
+            "date": date_iso,
+            "total_krw": round(total_value_usd * fx_rate) if fx_rate else None,
+            "core_usd": broker.core.value_usd(core_close or 0.0),
+            "qld_usd": broker.qld.value_usd(qld_close or 0.0),
+            "reserve_usd": broker.reserve_usd,
+            "cash_usd": broker.cash_usd,
+            "regime": held_regime,
+        })
+    return PortfolioResult(equity_rows=equity_rows, broker=broker, trade_count=switches)
+
+
+def seal_portfolio_data(data: PortfolioData, last_date) -> PortfolioData:
+    """PortfolioData의 모든 시계열을 last_date까지 자르고, 남은 행이 봉인을 어기면 멈춘다 (L1 봉인 규칙)."""
+    from dataclasses import replace as _replace
+
+    from core import regime as rg
+
+    def cut(obj, name):
+        out = rg.truncate_to_seal(obj, last_date)
+        rg.enforce_seal(out, last_date, name)
+        return out
+
+    return _replace(
+        data,
+        qqq_df=cut(data.qqq_df, "qqq_df"), qqq_dividends=cut(data.qqq_dividends, "qqq_dividends"),
+        core_df=cut(data.core_df, "core_df"), core_dividends=cut(data.core_dividends, "core_dividends"),
+        qld_df=cut(data.qld_df, "qld_df"), qld_dividends=cut(data.qld_dividends, "qld_dividends"),
+        reserve_daily_rate=cut(data.reserve_daily_rate, "reserve_daily_rate"),
+        fx_by_date=cut(data.fx_by_date, "fx_by_date"),
+        sma_source_df=cut(data.sma_source_df, "sma_source_df"),
+    )
