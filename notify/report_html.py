@@ -21,6 +21,7 @@ from core import macro_status
 from notify import macro_explain
 from notify.briefing import PUBLIC_DISCLAIMER, report_titles
 from core.sizing import format_krw
+from core.signals import levels
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -80,6 +81,13 @@ _BUY_TITLES = {
     "b2": "2차 확인 · 2/9",
     "b3": "3차 확정 · 6/9",
     "b9": "재진입 · 슬롯 전체",
+}
+# 실전(live)은 종목별 계획금액으로 수량을 정한다 — 탭 이름도 "계획금액" 기준으로 쓴다.
+_BUY_TITLES_LIVE = {
+    "b1": "1차 정찰 · 계획금액의 1/9",
+    "b2": "2차 확인 · 2/9",
+    "b3": "3차 확정 · 6/9",
+    "b9": "재진입 · 계획금액 전체",
 }
 _NUM_HEADERS = {"지정가", "수량", "투입금액", "손절가", "손절폭", "최대손실", "점수"}
 
@@ -167,9 +175,7 @@ def _live_judgment_row_ctx(r: dict) -> dict:
 
 
 # ── 오늘의 스크리닝 (보고서 맨 위, docs/design/screening_view.md) ─────────────────
-# 전략 카드 문구는 여기 상수로 두고, 기한·임계값 숫자는 cfg에서 읽는다. RSI 30/50/70,
-# 교차 집계 20거래일, 실적 3거래일은 config에 없는 전략 문서 고정값이라(core/signals.py·
-# core/filters.py에도 같은 값이 고정돼 있다) 문구 상수로 둔다.
+# 전략 카드 문구는 여기 상수로 두고, 기한·임계값 숫자는 모두 cfg(assumptions·strategy_levels·risk)에서 읽는다.
 _STRATEGY_NAME = "바닥 반전 3단 확인 매수법 (1:2:6 피라미딩)"
 _STRATEGY_LINE = (
     "많이 떨어진 종목이 RSI → MACD → 일목 구름 순서로 반등을 증명할 때마다 1 → 2 → 6으로 늘려 산다. "
@@ -191,25 +197,27 @@ _LANE_COLOR = {"a1": "a1", "a2": "a2", "a3": "a3", "b": "b"}
 def _strategy_card(cfg: dict) -> dict:
     """"우리 전략 한눈에" 고정 카드. 숫자는 cfg에서 읽는다."""
     a, risk = cfg["assumptions"], cfg["risk"]
+    lv = levels(cfg)
+    lo, mid, hi = (f"{lv[k]:g}" for k in ("rsi_oversold", "rsi_mid", "rsi_overbought"))
     exp, swing, gap = a["a1_to_a2_expiry_days"], a["swing_low_period"], a["gap_filter_pct"]
     total_risk = round(risk["a1_budget_pct"] + risk["a2_budget_pct"] + risk["a3_budget_pct"], 2)
     stages = [
-        {"cls": "a1", "name": "1차 정찰", "weight": "1/9", "buy": "RSI가 어제 30 미만 → 오늘 30 이상 (보유 중·재진입 대기 아님)",
+        {"cls": "a1", "name": "1차 정찰", "weight": "1/9", "buy": f"RSI가 어제 {lo} 미만 → 오늘 {lo} 이상 (보유 중·재진입 대기 아님)",
          "mean": "떨어지던 힘이 멈춤 (첫 신호)", "stop": f"{swing}일 최저가", "sell": "MACD 데드크로스 → 1차분"},
         {"cls": "a2", "name": "2차 확인", "weight": "2/9",
-         "buy": f"1차를 산 뒤 {exp}거래일 안(1차 당일 포함)에 MACD 골든크로스 · RSI 30~70",
-         "mean": "방향이 진짜로 바뀜", "stop": f"{swing}일 최저가 (1차 기준)", "sell": "RSI 50 이탈 → 2차분"},
+         "buy": f"1차 체결 다음 거래일부터, 1차일 포함 {exp}거래일 안에 MACD 골든크로스 · RSI {lo}~{hi}",
+         "mean": "방향이 진짜로 바뀜", "stop": f"{swing}일 최저가 (1차 기준)", "sell": f"RSI {mid} 이탈 → 2차분"},
         {"cls": "a3", "name": "3차 확정", "weight": "6/9",
-         "buy": f"2차 보유 중 · 종가 > 구름 상단 · 앞구름 양운 · 종가 > {cfg['indicators']['ichimoku_shift']}일 전 고가 · MACD > 시그널 & RSI ≥ 50",
+         "buy": f"2차 보유 중 · 종가 > 구름 상단 · 앞구름 양운 · 종가 > {cfg['indicators']['ichimoku_shift']}일 전 고가 · MACD > 시그널 & RSI ≥ {mid}",
          "mean": "상승 추세가 자리 잡음 (본 진입)", "stop": f"{swing}일 최저가·구름 하단 중 높은 값", "sell": "구름 이탈 → 남은 전량"},
         {"cls": "b", "name": "재진입", "weight": "한 번에",
-         "buy": f"이미 구름 위(양운·후행스팬 돌파) · 골든크로스 · 정규화 MACD {a['s_grade_macd_norm_min_pct']:g}% 이상 · RSI 50~70",
+         "buy": f"이미 구름 위(양운·후행스팬 돌파) · 골든크로스 · 정규화 MACD {a['s_grade_macd_norm_min_pct']:g}% 이상 · RSI {mid}~{hi} (쿨다운 없음)",
          "mean": "쉬던 상승 추세가 다시 달림", "stop": f"진입일 {swing}일 최저가", "sell": "1·2·3차와 같은 순서"},
     ]
     bans = (
-        f"공통 금지: 실적 발표 3거래일 이내(모든 차수) · 골든크로스 날 RSI 70 이상(2차·재진입) · "
-        f"최근 20거래일 MACD 교차 {a['whipsaw_max_crosses_20d']}회 이상(2차·재진입) · 구름 안·앞구름 음운(3차·재진입) · "
-        f"시가 갭 {gap:g}% 이상(3차)."
+        f"공통 금지(신규 매수만): 실적 발표 {lv['earnings_filter_trading_days']}거래일 이내(모든 차수) · 골든크로스 날 RSI {hi} 이상(2차·재진입) · "
+        f"최근 {lv['cross_window_days']}거래일 MACD 교차 {a['whipsaw_max_crosses_20d']}회 이상(2차·재진입) · 구름 안·앞구름 음운(3차·재진입) · "
+        f"신호일 시가 갭 {gap:g}% 이상(3차). 매수일 시가가 {gap:g}% 이상 높게 시작하면 직접 보류(3차, 수동 규칙)."
     )
     risk_line = (
         f"한 종목 최대 손실: 계좌의 {total_risk:g}% (1:2:6 단계 합) · 재진입은 {risk['b_budget_pct']:g}% · "
@@ -285,7 +293,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         buy_tabs.append(
             {
                 "key": key,
-                "title": _BUY_TITLES[key],
+                "title": (_BUY_TITLES_LIVE if summary.get("mode") == "live" else _BUY_TITLES)[key],
                 "count": len(rows),
                 "headers": _BUY_HEADERS,
                 "rows": [_buy_row_ctx(r, include_stage_label=False) for r in rows],

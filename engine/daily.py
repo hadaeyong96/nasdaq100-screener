@@ -745,7 +745,7 @@ def _unfilled_rows_from_events(today_events: list[dict], name_map, mode: str) ->
     return rows
 
 
-def _compute_funnel(today_events: list[dict], indicator_map: dict, as_of_by_ticker: dict) -> dict:
+def _compute_funnel(today_events: list[dict], indicator_map: dict, as_of_by_ticker: dict, cfg: dict | None = None) -> dict:
     """통과 현황(1차 RSI 30 돌파 → 2차 골든크로스 → 3차 구름 4요소 → 4차 매매금지 → 5차 보유한도).
 
     보고서에는 표시하지 않고 outputs/funnel_{모드}_YYYY-MM-DD.csv와 events에만 남긴다 (지시문 3번).
@@ -758,7 +758,7 @@ def _compute_funnel(today_events: list[dict], indicator_map: dict, as_of_by_tick
         idx = df.index.get_loc(date)
         row = df.loc[date]
         prev_rsi = df.iloc[idx - 1]["rsi"] if idx > 0 else float("nan")
-        if sig.check_a1(prev_rsi, row.get("rsi")):
+        if sig.check_a1(prev_rsi, row.get("rsi"), cfg):
             stage1 += 1
         if bool(row.get("gc")) if not pd.isna(row.get("gc")) else False:
             stage2 += 1
@@ -899,7 +899,7 @@ def _build_buy_row(
                 "cloud_ok": bool(row.get("close") > row.get("cloud_top")) if not pd.isna(row.get("cloud_top")) else False,
                 "future_yang_ok": bool(row.get("future_yang")) if not pd.isna(row.get("future_yang")) else False,
                 "chikou_ok": bool(row.get("chikou_ok")) if not pd.isna(row.get("chikou_ok")) else False,
-                "momentum_ok": bool(row.get("macd") > row.get("signal") and row.get("rsi") >= 50)
+                "momentum_ok": bool(row.get("macd") > row.get("signal") and row.get("rsi") >= sig.levels(cfg)["rsi_mid"])
                 if not (pd.isna(row.get("macd")) or pd.isna(row.get("signal")) or pd.isna(row.get("rsi")))
                 else False,
                 "gap_pct": gap_pct,
@@ -1368,7 +1368,7 @@ def build_report_summary(
         date = event["date"]
         row = df.loc[date] if date in df.index else None
         idx = df.index.get_loc(date) if date in df.index else None
-        gc_count = filt.macd_cross_count(df, date) if (event["stage"] in ("A2", "B") and date in df.index) else None
+        gc_count = filt.macd_cross_count(df, date, cfg=cfg) if (event["stage"] in ("A2", "B") and date in df.index) else None
         gap_pct = None
         if event["stage"] == "A3" and row is not None and idx:
             prev_close = df.iloc[idx - 1]["close"]
@@ -1461,7 +1461,7 @@ def build_report_summary(
         if sig.kijun_breach(row.get("close"), row.get("kijun")):
             ctx = {"kr": name_kr, "close": row.get("close"), "kijun": row.get("kijun")}
             warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "기준선 이탈 (매도 아님)", "badge_class": "b-info", "explain": expl.explain_warn("KIJUN_BREACH", ctx, cfg)})
-        if sig.rsi_overheat_relief(prev_rsi, row.get("rsi")):
+        if sig.rsi_overheat_relief(prev_rsi, row.get("rsi"), cfg):
             ctx = {"kr": name_kr, "rsi_prev": round(prev_rsi, 1) if not pd.isna(prev_rsi) else None, "rsi_now": round(row.get("rsi"), 1) if not pd.isna(row.get("rsi")) else None}
             warn_rows.append({"티커": ticker, "종목명": name_kr, "내용": "RSI 과열 해소 (매도 아님)", "badge_class": "b-info", "explain": expl.explain_warn("RSI_RELIEF", ctx, cfg)})
         avg_entry = _average_entry_price(state_)
@@ -1640,7 +1640,7 @@ def build_report_summary(
     held_tickers_count = _held_count(positions)
 
     # ── 통과 현황(5단계 funnel): 순수 계산만 — 파일·DB 기록은 호출부(run()) 몫 ──
-    funnel = _compute_funnel(today_events, indicator_map, as_of_by_ticker)
+    funnel = _compute_funnel(today_events, indicator_map, as_of_by_ticker, cfg)
 
     return {
         "mode": mode,

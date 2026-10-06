@@ -20,6 +20,8 @@ core/state.py가 이미 정한 결과를 문장으로 옮길 뿐이다).
 
 from __future__ import annotations
 
+from core.signals import levels
+
 _LEVEL = ("y", "n", "i")
 
 
@@ -84,6 +86,8 @@ def _score_breakdown(ctx: dict, cfg: dict, stage: str | None = None) -> str:
 
 _BUY_TITLE = {"A1": "1차 정찰 매수", "A2": "2차 확인 매수", "A3": "3차 확정 매수", "B": "재진입 매수"}
 _BUY_BADGE = {"A1": "슬롯의 1/9", "A2": "슬롯의 2/9", "A3": "슬롯의 6/9", "B": "슬롯 전체 · 1회"}
+# 실전(live)은 계좌 슬롯이 아니라 종목별 계획금액으로 수량을 정한다 (docs/design/live_advisor.md).
+_BUY_BADGE_LIVE = {"A1": "계획금액의 1/9", "A2": "계획금액의 2/9", "A3": "계획금액의 6/9", "B": "계획금액 전체 · 1회"}
 _BUY_FRACTION = {"A1": "1/9", "A2": "2/9", "A3": "6/9", "B": "전체(9/9)"}
 # 근거 줄: 전략 문서 장·절과 13장 근거 대본 매핑을 그대로 옮긴다.
 _BUY_SOURCE = {
@@ -139,13 +143,14 @@ def _gc_item(ctx: dict) -> dict:
 
 def _earnings_item(ctx: dict) -> dict:
     facts = ctx.get("facts") or {}
+    n = levels(ctx.get("_cfg"))["earnings_filter_trading_days"]
     if "earnings_within" not in facts:
-        return _chk("i", "실적 발표 3거래일 이내 아님 · 확인 불가")
+        return _chk("i", f"실적 발표 {n}거래일 이내 아님 · 확인 불가")
     ed = facts.get("earnings_date")
     if ed is None:
         return _chk("i", "실적 발표일 확인 불가 · 모르면 막지 않음")
     within = facts.get("earnings_within")
-    return _verdict(None if within is None else not within, f"실적 발표 {_md(ed)} · 기준: 3거래일 이내면 금지")
+    return _verdict(None if within is None else not within, f"실적 발표 {_md(ed)} · 기준: {n}거래일 이내면 금지")
 
 
 def _whipsaw_item(ctx: dict, cfg: dict) -> dict:
@@ -153,7 +158,8 @@ def _whipsaw_item(ctx: dict, cfg: dict) -> dict:
     if n is None:
         n = ctx.get("gc_count_20d")
     w = cfg["assumptions"]["whipsaw_max_crosses_20d"]
-    return _verdict(None if n is None else n < w, f"최근 20거래일 MACD 교차 {_v(n, '{}')}회 · 기준: {w}회 미만(휩소 아님)")
+    days = levels(cfg)["cross_window_days"]
+    return _verdict(None if n is None else n < w, f"최근 {days}거래일 MACD 교차 {_v(n, '{}')}회 · 기준: {w}회 미만(휩소 아님)")
 
 
 def _cloud_items(ctx: dict, cfg: dict) -> list[dict]:
@@ -182,13 +188,15 @@ def _cloud_items(ctx: dict, cfg: dict) -> list[dict]:
 def _rule_items(stage: str, ctx: dict, cfg: dict) -> list[dict]:
     """① 우리 규칙: 차수 조건마다 오늘 실제 값과 기준. ✓/✗는 값 비교로만 정한다."""
     a = cfg["assumptions"]
+    lv = levels(cfg)
+    lo, mid, hi = lv["rsi_oversold"], lv["rsi_mid"], lv["rsi_overbought"]
     facts = ctx.get("facts") or {}
     rsi_now, rsi_prev = _fact(ctx, "rsi_now"), _fact(ctx, "rsi_prev")
     items: list[dict] = []
     if stage == "A1":
         items.append(_verdict(
-            None if rsi_prev is None or rsi_now is None else (rsi_prev < 30 <= rsi_now),
-            f"RSI 어제 {_v(rsi_prev, '{:.1f}')} → 오늘 {_v(rsi_now, '{:.1f}')} · 기준: 어제 30 미만 → 오늘 30 이상",
+            None if rsi_prev is None or rsi_now is None else (rsi_prev < lo <= rsi_now),
+            f"RSI 어제 {_v(rsi_prev, '{:.1f}')} → 오늘 {_v(rsi_now, '{:.1f}')} · 기준: 어제 {lo:g} 미만 → 오늘 {lo:g} 이상",
         ))
         if "pre_state" in facts:
             pre = facts["pre_state"]
@@ -212,15 +220,16 @@ def _rule_items(stage: str, ctx: dict, cfg: dict) -> list[dict]:
             f"1차 매수일 {_md(a1_date) or '?'} · 오늘 {_v(elapsed, '{}')}/{exp}거래일째 · 기준: 1차 당일 포함 {exp}거래일 안",
         ))
         items.append(_gc_item(ctx))
-        items.append(_verdict(None if rsi_now is None else 30 <= rsi_now < 70, f"RSI {_v(rsi_now, '{:.1f}')} · 기준: 30 이상 70 미만"))
-        items.append(_verdict(None if rsi_now is None else rsi_now < 70, f"금지 구간: 골든크로스 날 RSI {_v(rsi_now, '{:.1f}')} · 기준: 70 미만"))
+        items.append(_verdict(None if rsi_now is None else lo <= rsi_now < hi, f"RSI {_v(rsi_now, '{:.1f}')} · 기준: {lo:g} 이상 {hi:g} 미만"))
+        items.append(_verdict(None if rsi_now is None else rsi_now < hi, f"금지 구간: 골든크로스 날 RSI {_v(rsi_now, '{:.1f}')} · 기준: {hi:g} 미만"))
         items.append(_whipsaw_item(ctx, cfg))
         items.append(_earnings_item(ctx))
         mn = _fact(ctx, "macd_norm")
         g = _fact(ctx, "grade")
         items.append(_chk("i", (
             f"등급 {g or '없음'} · 정규화 MACD {_v(mn, '{:+.2f}')}% · 기준: S {a['s_grade_macd_norm_min_pct']}% 이상, "
-            f"A {a['b_grade_macd_norm_max_pct']}%~{a['s_grade_macd_norm_min_pct']}% & 20일 교차 1회 이하, B 그 밖"
+            f"A {a['b_grade_macd_norm_max_pct']}%~{a['s_grade_macd_norm_min_pct']}% & {lv['cross_window_days']}일 교차(골든+데드) "
+            f"{lv['grade_a_max_crosses']}회 이하, B 그 밖"
         )))
     elif stage == "A3":
         units = facts.get("units") or {}
@@ -230,9 +239,9 @@ def _rule_items(stage: str, ctx: dict, cfg: dict) -> list[dict]:
         items.extend(_cloud_items(ctx, cfg))
         m, s = _fact(ctx, "macd"), _fact(ctx, "signal")
         if None not in (m, s, rsi_now):
-            items.append(_verdict(m > s and rsi_now >= 50, f"MACD {m:+.3f} vs 시그널 {s:+.3f}, RSI {rsi_now:.1f} · 기준: MACD > 시그널 & RSI 50 이상"))
+            items.append(_verdict(m > s and rsi_now >= mid, f"MACD {m:+.3f} vs 시그널 {s:+.3f}, RSI {rsi_now:.1f} · 기준: MACD > 시그널 & RSI {mid:g} 이상"))
         else:
-            items.append(_verdict(ctx.get("momentum_ok"), "MACD > 시그널 & RSI 50 이상"))
+            items.append(_verdict(ctx.get("momentum_ok"), f"MACD > 시그널 & RSI {mid:g} 이상"))
         gap, th = _fact(ctx, "gap_pct"), a["gap_filter_pct"]
         items.append(_verdict(None if gap is None else gap < th, f"오늘 시가 갭 {_v(gap, '{:+.1f}')}% · 기준: {th:g}% 미만"))
         items.append(_earnings_item(ctx))
@@ -244,7 +253,7 @@ def _rule_items(stage: str, ctx: dict, cfg: dict) -> list[dict]:
         items.append(_gc_item(ctx))
         mn, s_min = _fact(ctx, "macd_norm"), a["s_grade_macd_norm_min_pct"]
         items.append(_verdict(None if mn is None else mn >= s_min, f"정규화 MACD {_v(mn, '{:+.2f}')}% · 기준: {s_min}% 이상(0선 근처)"))
-        items.append(_verdict(None if rsi_now is None else 50 <= rsi_now < 70, f"RSI {_v(rsi_now, '{:.1f}')} · 기준: 50 이상 70 미만"))
+        items.append(_verdict(None if rsi_now is None else mid <= rsi_now < hi, f"RSI {_v(rsi_now, '{:.1f}')} · 기준: {mid:g} 이상 {hi:g} 미만"))
         items.append(_whipsaw_item(ctx, cfg))
         items.append(_earnings_item(ctx))
         b_pct = cfg.get("risk", {}).get("b_budget_pct")
@@ -353,6 +362,8 @@ def explain_buy(stage: str, ctx: dict, cfg: dict) -> dict:
     """
     kr = ctx.get("kr", "")
     assumptions = cfg["assumptions"]
+    ctx = {**ctx, "_cfg": cfg}
+    lv = levels(cfg)
     title = f"{kr} · {_BUY_TITLE[stage]}"
     rule_items = _rule_items(stage, ctx, cfg)
     deadline = _md(_fact(ctx, "a2_deadline")) or ctx.get("a2_expiry_date")
@@ -361,7 +372,7 @@ def explain_buy(stage: str, ctx: dict, cfg: dict) -> dict:
         rsi_prev, rsi_now = _fact(ctx, "rsi_prev"), _fact(ctx, "rsi_now")
         body = (
             f"RSI는 주가가 최근 얼마나 많이 올랐고 내렸는지를 0~100으로 나타낸 값이에요. "
-            f"<b>30 아래는 \"너무 많이 떨어진 상태(과매도)\"</b>인데, {kr}는 {rsi_prev}까지 내려갔다가 "
+            f"<b>{lv['rsi_oversold']:g} 아래는 \"너무 많이 떨어진 상태(과매도)\"</b>인데, {kr}는 {rsi_prev}까지 내려갔다가 "
             f"오늘 {rsi_now}로 올라왔어요. 떨어지던 힘이 멈추고 반등을 시작할 수 있다는 <b>첫 신호</b>예요. "
             f"아직 확실하지 않아서 가장 적은 금액(1/9)만 먼저 사 봐요."
         )
@@ -382,7 +393,7 @@ def explain_buy(stage: str, ctx: dict, cfg: dict) -> dict:
         met = sum(1 for c in rule_items[1:5] if c["level"] == "y") if (ctx.get("facts") or {}).get("pre_state") else None
         body = (
             "3차(가장 큰 6/9)는 <b>상승 추세가 자리 잡았다는 4가지 조건</b>이 모두 맞아야 사요: 구름 위 · 앞구름 양운 · "
-            f"후행스팬 돌파 · MACD 골든크로스+RSI 50 이상. {kr}는 오늘 "
+            f"후행스팬 돌파 · MACD 골든크로스+RSI {lv['rsi_mid']:g} 이상. {kr}는 오늘 "
             + (f"4가지 중 {met}가지를 충족했어요." if met is not None and met != 4 else "4가지를 모두 충족했어요.")
         )
         next_ = "3차까지 다 샀어요. 이제 매도 신호(E1→E2→E3)를 기다려요. 손절가는 10일 최저가와 구름 하단 중 더 높은 값이에요."
@@ -395,7 +406,7 @@ def explain_buy(stage: str, ctx: dict, cfg: dict) -> dict:
         )
         next_ = (
             f"손절가 {_usd(ctx.get('stop'))}(진입일 기준 {assumptions['swing_low_period']}일 최저가). "
-            "이후 MACD 데드크로스→RSI 50 이탈→구름 이탈 순서로 나눠 팔아요."
+            f"이후 MACD 데드크로스→RSI {lv['rsi_mid']:g} 이탈→구름 이탈 순서로 나눠 팔아요."
         )
 
     # 기존 checks(요약 칩): ① 규칙 확인과 같은 값 비교 결과를 그대로 쓴다(고정 "y" 없음).
@@ -416,16 +427,17 @@ def explain_buy(stage: str, ctx: dict, cfg: dict) -> dict:
     checks.append(_chk("i", score_txt))
 
     funnel_txt = _funnel_sentence(ctx)
-    why_text = (f"<b>{funnel_txt}</b><br>" if funnel_txt else "") + body
+    # 쉬운 설명(body)은 ① 규칙 바로 아래, ②에는 깔때기 문장과 점수 내역만 둔다.
     sections = [
-        {"key": "rule", "title": "① 우리 규칙", "items": rule_items, "text": None},
-        {"key": "why", "title": "② 왜 이 종목인가", "items": [_chk("i", score_txt)], "text": why_text},
+        {"key": "rule", "title": "① 우리 규칙", "items": rule_items, "text": body},
+        {"key": "why", "title": "② 왜 이 종목인가", "items": [_chk("i", score_txt)], "text": f"<b>{funnel_txt}</b>" if funnel_txt else None},
         {"key": "how", "title": "③ 어떻게 사나", "items": _how_items(stage, ctx, cfg), "text": None},
         {"key": "next", "title": "④ 다음 단계", "items": [], "text": next_},
     ]
 
+    badge = (_BUY_BADGE_LIVE if (ctx.get("sizing") or {}).get("mode") == "live" else _BUY_BADGE)[stage]
     return {
-        "title": title, "badge": _BUY_BADGE[stage], "checks": checks, "body": body, "next": next_,
+        "title": title, "badge": badge, "checks": checks, "body": body, "next": next_,
         "sections": sections, "source": _BUY_SOURCE[stage],
     }
 
@@ -498,7 +510,7 @@ def explain_sell(kind: str, ctx: dict, cfg: dict) -> dict:
 
 
 def _classify_ban_reason(reason: str) -> str:
-    if "RSI 70" in reason:
+    if "골든크로스 당일 RSI" in reason or "RSI 70" in reason:
         return "OVERHEAT"
     if "휩소" in reason:
         return "WHIPSAW"
@@ -531,6 +543,8 @@ def explain_filtered(reasons: list[str], ctx: dict, cfg: dict) -> dict:
     """
     kr = ctx.get("kr", "")
     assumptions = cfg["assumptions"]
+    lv = levels(cfg)
+    hi, days, earn = lv["rsi_overbought"], lv["cross_window_days"], lv["earnings_filter_trading_days"]
     codes = sorted({_classify_ban_reason(r) for r in reasons}, key=lambda c: _FILTER_ORDER.index(c) if c in _FILTER_ORDER else 99)
     if any("한도 초과" in r for r in reasons):
         codes = ["LIMIT"]
@@ -546,15 +560,15 @@ def explain_filtered(reasons: list[str], ctx: dict, cfg: dict) -> dict:
     for code in codes:
         if code == "OVERHEAT":
             rsi_now = ctx.get("rsi_now")
-            checks.append(_chk("n", f"RSI {rsi_now} · 70 초과" if rsi_now is not None else "RSI 70 초과"))
+            checks.append(_chk("n", f"RSI {rsi_now} · {hi:g} 이상" if rsi_now is not None else f"RSI {hi:g} 이상"))
             bodies.append(
-                "RSI 70 이상은 <b>\"이미 짧은 기간에 많이 오른 상태(과매수)\"</b>예요. 신호가 나왔어도 지금 사면 비싸게 "
-                "따라 사는 셈이라, 잠깐만 쉬어도 손절에 걸리기 쉬워요. RSI가 70 아래로 내려온 뒤 다시 신호가 나면 매수해요."
+                f"RSI {hi:g} 이상은 <b>\"이미 짧은 기간에 많이 오른 상태(과매수)\"</b>예요. 신호가 나왔어도 지금 사면 비싸게 "
+                f"따라 사는 셈이라, 잠깐만 쉬어도 손절에 걸리기 쉬워요. RSI가 {hi:g} 아래로 내려온 뒤 다시 신호가 나면 매수해요."
             )
         elif code == "WHIPSAW":
             gc_count = ctx.get("gc_count_20d")
             limit = assumptions["whipsaw_max_crosses_20d"]
-            checks.append(_chk("n", f"최근 20거래일 MACD 교차 {gc_count}회 · 기준({limit}회) 이상" if gc_count is not None else f"최근 20거래일 MACD 교차 기준({limit}회) 이상"))
+            checks.append(_chk("n", f"최근 {days}거래일 MACD 교차 {gc_count}회 · 기준({limit}회) 이상" if gc_count is not None else f"최근 {days}거래일 MACD 교차 기준({limit}회) 이상"))
             bodies.append(
                 "주가가 한 방향으로 가지 않고 옆으로 오르내리면(횡보), MACD가 골든크로스와 데드크로스를 번갈아 자주 "
                 "내요. 이런 때 나오는 골든크로스는 <b>가짜 신호일 가능성이 높아서</b> 매수하지 않아요."
@@ -580,9 +594,9 @@ def explain_filtered(reasons: list[str], ctx: dict, cfg: dict) -> dict:
             )
         elif code == "EARNINGS":
             earnings_date = ctx.get("earnings_date")
-            checks.append(_chk("n", f"실적 발표 {earnings_date}" if earnings_date else "실적 발표 3거래일 이내"))
+            checks.append(_chk("n", f"실적 발표 {earnings_date}" if earnings_date else f"실적 발표 {earn}거래일 이내"))
             bodies.append(
-                "<b>실적 발표가 3거래일 안</b>에 있어요. 실적 발표 다음 날에는 주가가 하루에 크게 뛰거나 빠지는 일이 "
+                f"<b>실적 발표가 {earn}거래일 안</b>에 있어요. 실적 발표 다음 날에는 주가가 하루에 크게 뛰거나 빠지는 일이 "
                 "흔해서, 미리 정한 손절가가 소용없을 수 있어요. 발표가 지난 뒤 조건이 다시 맞으면 그때 신호가 나요."
             )
 
@@ -611,8 +625,9 @@ def explain_warn(kind: str, ctx: dict, cfg: dict) -> dict:
         next_ = None
     elif kind == "RSI_RELIEF":
         title = f"{kr} · RSI 과열 해소 (참고용)"
-        checks = [_chk("i", f"RSI {ctx.get('rsi_prev')} → {ctx.get('rsi_now')} · 70 아래로 내려옴")]
-        body = "RSI가 70 이상(과매수)이었다가 다시 70 아래로 내려왔어요. 오르는 힘이 잠시 식었다는 뜻으로, 매도 신호는 아니에요."
+        hi = levels(cfg)["rsi_overbought"]
+        checks = [_chk("i", f"RSI {ctx.get('rsi_prev')} → {ctx.get('rsi_now')} · {hi:g} 아래로 내려옴")]
+        body = f"RSI가 {hi:g} 이상(과매수)이었다가 다시 {hi:g} 아래로 내려왔어요. 오르는 힘이 잠시 식었다는 뜻으로, 매도 신호는 아니에요."
         next_ = None
     elif kind == "TARGET_REACHED":
         title = f"{kr} · 목표 도달 (참고용)"
@@ -676,7 +691,8 @@ def explain_watch(kind: str, ctx: dict, cfg: dict) -> dict:
             _chk("y" if ctx.get("chikou_ok") else "n", f"후행스팬이 {assumptions['ichimoku_shift']}일 전 가격 위"),
         ]
         rsi_now = ctx.get("rsi_now")
-        checks.append(_chk("y" if (rsi_now is not None and rsi_now >= 50) else "n", f"RSI {rsi_now} · 50 미만" if (rsi_now is not None and rsi_now < 50) else f"RSI {rsi_now} · 50 이상"))
+        mid = levels(cfg)["rsi_mid"]
+        checks.append(_chk("y" if (rsi_now is not None and rsi_now >= mid) else "n", f"RSI {rsi_now} · {mid:g} 미만" if (rsi_now is not None and rsi_now < mid) else f"RSI {rsi_now} · {mid:g} 이상"))
         body = (
             "3차(가장 큰 6/9)는 <b>상승 추세가 자리 잡았다는 4가지 조건</b>이 모두 맞아야 사요. 지금 몇 가지는 맞았고 "
             "나머지가 남았어요. 모두 맞으면 3차 매수 신호가 나요."

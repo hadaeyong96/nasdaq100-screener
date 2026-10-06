@@ -26,14 +26,35 @@ def _bool(value) -> bool:
     return bool(value)
 
 
-def check_a1(prev_rsi: float, rsi: float) -> bool:
-    """A1 정찰: RSI가 전일 30 미만에서 당일 30 이상으로 상향 돌파."""
+# config.yaml strategy_levels의 기본값(전략 문서 값). cfg에 이 섹션(또는 키)이 없을 때만 쓴다 —
+# 옛 테스트 fixture처럼 일부 키만 담은 cfg와의 호환용이고, 실제 값은 config.yaml이 정한다.
+_LEVEL_DEFAULTS = {
+    "rsi_oversold": 30,
+    "rsi_mid": 50,
+    "rsi_overbought": 70,
+    "cross_window_days": 20,
+    "grade_a_max_crosses": 1,
+    "earnings_filter_trading_days": 3,
+}
+
+
+def levels(cfg: dict | None) -> dict:
+    """전략 고정값(RSI 30/50/70, 교차 집계 기간, 실적 필터 거래일 등)을 cfg["strategy_levels"]에서 읽는다.
+
+    입력: cfg(config.yaml 로드값, None 가능) / 출력: _LEVEL_DEFAULTS와 같은 키의 dict
+    """
+    return {**_LEVEL_DEFAULTS, **((cfg or {}).get("strategy_levels") or {})}
+
+
+def check_a1(prev_rsi: float, rsi: float, cfg: dict | None = None) -> bool:
+    """A1 정찰: RSI가 전일 rsi_oversold(기본 30) 미만에서 당일 그 이상으로 상향 돌파."""
     if pd.isna(prev_rsi) or pd.isna(rsi):
         return False
-    return bool(prev_rsi < 30 and rsi >= 30)
+    lo = levels(cfg)["rsi_oversold"]
+    return bool(prev_rsi < lo and rsi >= lo)
 
 
-def check_a2(row: pd.Series) -> bool:
+def check_a2(row: pd.Series, cfg: dict | None = None) -> bool:
     """A2 확인: 오늘 MACD 골든크로스, RSI 30 이상 70 미만.
 
     A1 이후 10거래일 이내인지(유효기간)는 core/state.py가 a1_date와
@@ -45,7 +66,8 @@ def check_a2(row: pd.Series) -> bool:
     """
     if pd.isna(row.get("gc")) or pd.isna(row.get("rsi")):
         return False
-    return bool(row["gc"] and 30 <= row["rsi"] < 70)
+    lv = levels(cfg)
+    return bool(row["gc"] and lv["rsi_oversold"] <= row["rsi"] < lv["rsi_overbought"])
 
 
 def check_a1_expired(bars_since_a1: int, expiry_days: int) -> bool:
@@ -74,7 +96,7 @@ def check_a3_breakout(row: pd.Series, cfg: dict) -> bool:
         and row["future_yang"]
         and row["chikou_ok"]
         and row["macd"] > row["signal"]
-        and row["rsi"] >= 50
+        and row["rsi"] >= levels(cfg)["rsi_mid"]
     )
 
 
@@ -112,13 +134,14 @@ def check_b(row: pd.Series, cfg: dict) -> bool:
     if any(pd.isna(row.get(f)) for f in fields):
         return False
     s_min = cfg["assumptions"]["s_grade_macd_norm_min_pct"]
+    lv = levels(cfg)
     return bool(
         row["close"] > row["cloud_top"]
         and row["future_yang"]
         and row["chikou_ok"]
         and row["gc"]
         and row["macd_norm"] >= s_min
-        and 50 <= row["rsi"] < 70
+        and lv["rsi_mid"] <= row["rsi"] < lv["rsi_overbought"]
     )
 
 
@@ -127,11 +150,12 @@ def check_e1(row: pd.Series) -> bool:
     return _bool(row.get("dc"))
 
 
-def check_e2(prev_rsi: float, rsi: float) -> bool:
-    """E2 추세 약화: RSI가 전일 50 이상에서 당일 50 미만으로 하향 이탈."""
+def check_e2(prev_rsi: float, rsi: float, cfg: dict | None = None) -> bool:
+    """E2 추세 약화: RSI가 전일 rsi_mid(기본 50) 이상에서 당일 그 미만으로 하향 이탈."""
     if pd.isna(prev_rsi) or pd.isna(rsi):
         return False
-    return bool(prev_rsi >= 50 and rsi < 50)
+    mid = levels(cfg)["rsi_mid"]
+    return bool(prev_rsi >= mid and rsi < mid)
 
 
 def check_e3(row: pd.Series) -> bool:
@@ -168,11 +192,12 @@ def entry_limit_price(signal_close: float, cfg: dict) -> float:
     return round(float(signal_close) * cfg["entry"]["limit_markup"], 2)
 
 
-def rsi_overheat_relief(prev_rsi: float, rsi: float) -> bool:
-    """RSI 과열 해소 경고: RSI가 전일 70 이상이었다가 당일 70 아래로 내려옴."""
+def rsi_overheat_relief(prev_rsi: float, rsi: float, cfg: dict | None = None) -> bool:
+    """RSI 과열 해소 경고: RSI가 전일 rsi_overbought(기본 70) 이상이었다가 당일 그 아래로 내려옴."""
     if pd.isna(prev_rsi) or pd.isna(rsi):
         return False
-    return bool(prev_rsi >= 70 and rsi < 70)
+    hi = levels(cfg)["rsi_overbought"]
+    return bool(prev_rsi >= hi and rsi < hi)
 
 
 def kijun_breach(close: float, kijun: float) -> bool:

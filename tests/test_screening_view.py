@@ -286,3 +286,46 @@ def test_report_without_screening_still_renders(cfg):
     summary = _empty_run_summary("live", pd.Timestamp("2026-10-05"), [])
     html = report_html._env.get_template("report.html.j2").render(**report_html.build_context(summary, copy.deepcopy(cfg)))
     assert "바닥 반전 3단 확인 매수법" in html and "오늘의 깔때기" not in html
+
+
+# ── 전략 고정값 config화 (strategy_levels) ───────────────────────────────
+
+
+def test_config_strategy_levels_equal_document_defaults(cfg):
+    from core import signals as sig
+
+    assert cfg["strategy_levels"] == sig._LEVEL_DEFAULTS
+    assert sig.levels(cfg) == sig.levels(None)
+
+
+def test_strategy_levels_change_signals_and_filters(cfg):
+    from core import filters
+    from core import signals as sig
+
+    c = copy.deepcopy(cfg)
+    c["strategy_levels"].update(rsi_oversold=25, rsi_mid=55, rsi_overbought=65, cross_window_days=5,
+                                grade_a_max_crosses=0, earnings_filter_trading_days=1)
+    assert sig.check_a1(28.0, 31.0) is True and sig.check_a1(28.0, 31.0, c) is False
+    assert sig.check_e2(52.0, 51.0) is False and sig.check_e2(56.0, 54.0, c) is True
+    assert sig.rsi_overheat_relief(68.0, 64.0, c) is True and sig.rsi_overheat_relief(68.0, 64.0) is False
+    row = pd.Series({"gc": True, "rsi": 66.0})
+    assert sig.check_a2(row) is True and sig.check_a2(row, c) is False
+    idx = pd.bdate_range("2026-01-01", periods=20)
+    df = pd.DataFrame({"gc": [i == 3 for i in range(20)], "dc": [i == 10 for i in range(20)]}, index=idx)
+    assert filters.macd_cross_count(df, idx[-1]) == 2 and filters.macd_cross_count(df, idx[-1], cfg=c) == 0
+    assert filters.grade(-1.0, 1, cfg) == "A" and filters.grade(-1.0, 1, c) == "B"
+    d, e = pd.Timestamp("2026-03-09"), pd.Timestamp("2026-03-11")
+    assert filters.is_earnings_within(d, e) is True and filters.is_earnings_within(d, e, cfg=c) is False
+    reasons = filters.ban_reasons(stage="A2", row=pd.Series({"rsi": 66.0}, name=d), gc_count_20d=0, prev_close=1.0, cfg=c)
+    assert reasons == ["골든크로스 당일 RSI 65 이상"]
+    card = __import__("notify.report_html", fromlist=["x"])._strategy_card(c)
+    assert "어제 25 미만" in card["stages"][0]["buy"] and "최근 5거래일" in card["bans"] and "실적 발표 1거래일" in card["bans"]
+
+
+def test_buy_badge_follows_mode_and_body_sits_under_rule(cfg, sample_summary):
+    rop = next(r for r in sample_summary["buy_groups"]["b1"] if r["ticker"] == "ROP")
+    e = rop["explain"]
+    assert e["badge"] == "계획금액의 1/9"  # 견본은 실전(live)
+    assert e["sections"][0]["text"] == e["body"] and e["body"] not in (e["sections"][1]["text"] or "")
+    paper = expl.explain_buy("A1", {"kr": "X", "limit": 10.0, "stop": 9.0, "sizing": {"mode": "paper"}}, cfg)
+    assert paper["badge"] == "슬롯의 1/9"

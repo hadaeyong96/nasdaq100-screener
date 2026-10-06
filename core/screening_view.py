@@ -129,15 +129,15 @@ def display_score(df: pd.DataFrame, date, with_grade: bool, cfg: dict) -> tuple[
     출력: (등급 또는 None, 우선순위 점수)
     """
     row = df.loc[date]
-    grade_letter = filters.grade(row.get("macd_norm"), filters.macd_cross_count(df, date), cfg) if with_grade else None
+    grade_letter = filters.grade(row.get("macd_norm"), filters.macd_cross_count(df, date, cfg=cfg), cfg) if with_grade else None
     thickness = filters.cloud_thickness_pct(row.get("cloud_top"), row.get("cloud_bot"), row.get("close"))
     return grade_letter, filters.priority_score(grade_letter, row.get("vol_ratio"), thickness, row.get("bb_width_pct"), cfg)
 
 
 def _reason_label(reason: str) -> str:
-    """core/filters.py ban_reasons 원문 -> 표의 짧은 제외 사유."""
-    if "RSI 70" in reason:
-        return "RSI 70 이상"
+    """core/filters.py ban_reasons 원문 -> 표의 짧은 제외 사유 (숫자는 원문에 들어 있는 값을 그대로 쓴다)."""
+    if "골든크로스 당일 RSI" in reason:
+        return reason.replace("골든크로스 당일 ", "")
     if "휩소" in reason:
         return "횡보(교차 잦음)"
     if "구름 안" in reason:
@@ -147,7 +147,7 @@ def _reason_label(reason: str) -> str:
     if "갭" in reason:
         return "시가 갭"
     if "실적" in reason:
-        return "실적 3거래일 이내"
+        return reason.replace("실적 발표 ", "실적 ")
     if "한도" in reason:
         return "동시 보유 한도"
     return reason
@@ -238,6 +238,8 @@ def build_screening_view(
     rsi_cross = a3_cond = 0
     today_a1: list[str] = []
     s_min = cfg["assumptions"]["s_grade_macd_norm_min_pct"]
+    lv = sig.levels(cfg)
+    lo, mid, hi = lv["rsi_oversold"], lv["rsi_mid"], lv["rsi_overbought"]
 
     for ticker in scanned:
         df = indicator_map[ticker]
@@ -254,8 +256,8 @@ def build_screening_view(
         if ev(ticker, "A1"):
             today_a1.append(ticker)
 
-        # ── 1차: RSI 30 상향 돌파한 모든 종목 ──
-        if sig.check_a1(prev_rsi, row.get("rsi")):
+        # ── 1차: RSI rsi_oversold(기본 30) 상향 돌파한 모든 종목 ──
+        if sig.check_a1(prev_rsi, row.get("rsi"), cfg):
             rsi_cross += 1
             _, score = display_score(df, date, False, cfg)
             r = {**_base_row(ticker, name_map, df, date), "rsi_prev": _num(prev_rsi, 1), "score": score}
@@ -297,10 +299,10 @@ def build_screening_view(
                 r.update(result="추천", tone="ok")
             elif blocked:
                 r.update(result="제외", reason=_blocked_label(blocked), tone="no")
-            elif gc and rsi is not None and rsi >= 70:
-                r.update(result="제외", reason="RSI 70 이상", tone="no")
-            elif gc and rsi is not None and rsi < 30:
-                r.update(result="제외", reason="RSI 30 미만", tone="no")
+            elif gc and rsi is not None and rsi >= hi:
+                r.update(result="제외", reason=f"RSI {hi:g} 이상", tone="no")
+            elif gc and rsi is not None and rsi < lo:
+                r.update(result="제외", reason=f"RSI {lo:g} 미만", tone="no")
             elif gc:
                 r.update(result="확인 필요", reason="오늘 신호 기록 없음", tone="inf")
             else:
@@ -316,7 +318,7 @@ def build_screening_view(
                 "chikou": _flag(row.get("chikou_ok")),
                 "momentum": (
                     None if _num(row.get("macd"), 4) is None or _num(row.get("signal"), 4) is None or _num(row.get("rsi")) is None
-                    else bool(row["macd"] > row["signal"] and row["rsi"] >= 50)
+                    else bool(row["macd"] > row["signal"] and row["rsi"] >= mid)
                 ),
             }
             met = sum(1 for v in conds.values() if v)
@@ -361,10 +363,10 @@ def build_screening_view(
                         r.update(result="제외", reason="오늘 1차 신호 우선", tone="inf")
                     elif mn is not None and mn < s_min:
                         r.update(result="제외", reason=f"정규화 MACD {s_min:g}% 미만", tone="no")
-                    elif rsi is not None and rsi < 50:
-                        r.update(result="제외", reason="RSI 50 미만", tone="no")
-                    elif rsi is not None and rsi >= 70:
-                        r.update(result="제외", reason="RSI 70 이상", tone="no")
+                    elif rsi is not None and rsi < mid:
+                        r.update(result="제외", reason=f"RSI {mid:g} 미만", tone="no")
+                    elif rsi is not None and rsi >= hi:
+                        r.update(result="제외", reason=f"RSI {hi:g} 이상", tone="no")
                     else:
                         r.update(result="확인 필요", reason="오늘 신호 기록 없음", tone="inf")
                     b_rows.append(r)
@@ -428,10 +430,10 @@ def build_screening_view(
 
     lanes = {
         "a1": {
-            "key": "a1", "title": "1차 정찰 · RSI 30 탈출",
+            "key": "a1", "title": f"1차 정찰 · RSI {lo:g} 탈출",
             "steps": [
                 {"label": "스캔", "count": len(scanned)},
-                {"label": "RSI 30 탈출", "count": rsi_cross},
+                {"label": f"RSI {lo:g} 탈출", "count": rsi_cross},
                 {"label": "검사 통과", "count": a1_pass},
                 {"label": "오늘 추천", "count": a1_rec},
             ],
@@ -557,9 +559,9 @@ def buy_facts(
         "ichimoku_shift": D,
         "pre_state": pre_state,
         "cooldown_until": state_after.get("cooldown_until"),
-        "cross_count_20d": filters.macd_cross_count(df, date) if {"gc", "dc"} <= set(df.columns) else None,
+        "cross_count_20d": filters.macd_cross_count(df, date, cfg=cfg) if {"gc", "dc"} <= set(df.columns) else None,
         "earnings_date": pd.Timestamp(earnings_date) if earnings_date is not None else None,
-        "earnings_within": filters.is_earnings_within(date, earnings_date) if earnings_date is not None else None,
+        "earnings_within": filters.is_earnings_within(date, earnings_date, cfg=cfg) if earnings_date is not None else None,
         "units": {u: q for u, q in (state_after.get("units") or {}).items() if q},
     }
     o, pc = facts["open"], facts["prev_close"]

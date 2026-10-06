@@ -77,6 +77,17 @@ assumptions:
   #     검증 범위: 25 / 26, 트레이딩뷰 대조 후 확정.
   ichimoku_shift: *ichimoku_shift
 
+# ── 전략 고정값 (4·5·7장) ───────────────────────────────────────────────
+# 전략 문서가 정한 값이라 [가정]은 아니지만, 코드 곳곳에 숫자로 박혀 있던 것을 여기 한 곳으로
+# 모았다 (2026-10-06, feat/why-explain). 기본값은 문서 값 그대로다. core.signals.levels()가 읽는다.
+strategy_levels:
+  rsi_oversold: 30 # A1 상향 돌파선, A2 RSI 하한
+  rsi_mid: 50 # A3·B RSI 하한, E2 하향 이탈선
+  rsi_overbought: 70 # A2·B RSI 상한, 골든크로스 날 매매 금지, 과열 해소 경고
+  cross_window_days: 20 # MACD 교차(골든+데드) 집계 기간 — 휩소 필터·A등급 판정
+  grade_a_max_crosses: 1 # A등급 "첫 골든크로스": 최근 cross_window_days 교차 이 값 이하
+  earnings_filter_trading_days: 3 # 실적 발표 이 거래일 이내면 신규 매수 금지
+
 # ── 계좌 (P2, 6장 / P3.6 6-1번) ────────────────────────────────────────
 # equity_usd는 P3.6에서 제거했다. 달러 계산이 필요하면 total_krw ÷ 환율(data/fx.py)로 구한다.
 account:
