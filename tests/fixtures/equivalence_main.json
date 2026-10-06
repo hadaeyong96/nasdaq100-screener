@@ -1,0 +1,2734 @@
+{
+ "events": [
+  {
+   "date": "2026-01-28",
+   "ticker": "T19",
+   "kind": "B",
+   "unit": "9",
+   "price": 133.682,
+   "score": 65,
+   "stop_after": 126.7863,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-01-28",
+   "ticker": "T19",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 135.02,
+   "qty": 15,
+   "stop_after": 126.7863,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-03",
+   "ticker": "T15",
+   "kind": "A1",
+   "unit": "1",
+   "price": 83.0883,
+   "score": 10,
+   "stop_after": 80.0274,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-03",
+   "ticker": "T15",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 83.92,
+   "qty": 2,
+   "stop_after": 80.0274,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-06",
+   "ticker": "T02",
+   "kind": "A1",
+   "unit": "1",
+   "price": 64.6658,
+   "score": 0,
+   "stop_after": 63.4974,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-06",
+   "ticker": "T02",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 65.31,
+   "qty": 3,
+   "stop_after": 63.4974,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-06",
+   "ticker": "T15",
+   "kind": "A2",
+   "unit": "2",
+   "price": 84.7011,
+   "score": 30,
+   "grade": "B",
+   "stop_after": 80.0274,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-06",
+   "ticker": "T15",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 85.55,
+   "qty": 5,
+   "stop_after": 80.0274,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-12",
+   "ticker": "T02",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-02-13",
+   "ticker": "T10",
+   "kind": "B",
+   "unit": "9",
+   "price": 102.3663,
+   "score": 60,
+   "stop_after": 95.5804,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-13",
+   "ticker": "T10",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 103.39,
+   "qty": 20,
+   "stop_after": 95.5804,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-19",
+   "ticker": "T13",
+   "kind": "A1",
+   "unit": "1",
+   "price": 104.2492,
+   "score": 20,
+   "stop_after": 104.0265,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-19",
+   "ticker": "T13",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 105.29,
+   "qty": 2,
+   "stop_after": 104.0265,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-02-20",
+   "ticker": "T10",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 95.5804,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-02-20",
+   "ticker": "T19",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 1,
+   "stop_after": 126.7863,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-02-23",
+   "ticker": "T13",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-02-27",
+   "ticker": "T15",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 5,
+   "stop_after": 80.0274,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-03-02",
+   "ticker": "T10",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": 95.5804,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-03-02",
+   "ticker": "T15",
+   "kind": "E3",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-02",
+   "ticker": "T20",
+   "kind": "BLOCKED",
+   "stage": "B",
+   "unit": "9",
+   "score": 75,
+   "reasons": [
+    "최근 20거래일 MACD 교차 4회 이상 (휩소)"
+   ],
+   "blocked_type": "ban",
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-09",
+   "ticker": "T03",
+   "kind": "A1",
+   "unit": "1",
+   "price": 65.4879,
+   "score": 10,
+   "stop_after": 63.3442,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-09",
+   "ticker": "T03",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 66.14,
+   "qty": 3,
+   "stop_after": 63.3442,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-12",
+   "ticker": "T03",
+   "kind": "A2",
+   "unit": "2",
+   "price": 65.0921,
+   "score": 35,
+   "grade": "B",
+   "stop_after": 63.3442,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-12",
+   "ticker": "T03",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 65.74,
+   "qty": 7,
+   "stop_after": 63.3442,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-12",
+   "ticker": "T19",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 3,
+   "stop_after": 126.7863,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-03-17",
+   "ticker": "T09",
+   "kind": "A1",
+   "unit": "1",
+   "price": 87.9153,
+   "score": 10,
+   "stop_after": 85.603,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-17",
+   "ticker": "T09",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 88.79,
+   "qty": 2,
+   "stop_after": 85.603,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-18",
+   "ticker": "T03",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-18",
+   "ticker": "T03",
+   "kind": "STOP",
+   "unit": "2",
+   "qty": 7,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-19",
+   "ticker": "T00",
+   "kind": "B",
+   "unit": "9",
+   "price": 117.3632,
+   "score": 80,
+   "stop_after": 109.1062,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-19",
+   "ticker": "T00",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 118.54,
+   "qty": 18,
+   "stop_after": 109.1062,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-23",
+   "ticker": "T14",
+   "kind": "B",
+   "unit": "9",
+   "price": 83.9129,
+   "score": 90,
+   "stop_after": 78.425,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-23",
+   "ticker": "T14",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 84.75,
+   "qty": 25,
+   "stop_after": 78.425,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-24",
+   "ticker": "T11",
+   "kind": "A1",
+   "unit": "1",
+   "price": 74.6533,
+   "score": 35,
+   "stop_after": 70.3871,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-24",
+   "ticker": "T11",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 75.4,
+   "qty": 3,
+   "stop_after": 70.3871,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-03-24",
+   "ticker": "T14",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 25,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-24",
+   "ticker": "T23",
+   "kind": "BLOCKED",
+   "stage": "B",
+   "unit": "9",
+   "score": 75,
+   "reasons": [
+    "최근 20거래일 MACD 교차 5회 이상 (휩소)"
+   ],
+   "blocked_type": "ban",
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-27",
+   "ticker": "T09",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-30",
+   "ticker": "T10",
+   "kind": "STOP",
+   "unit": "9",
+   "qty": 14,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-03-30",
+   "ticker": "T11",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-01",
+   "ticker": "T12",
+   "kind": "B",
+   "unit": "9",
+   "price": 99.8992,
+   "score": 75,
+   "stop_after": 91.1696,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-01",
+   "ticker": "T12",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 100.9,
+   "qty": 21,
+   "stop_after": 91.1696,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-03",
+   "ticker": "T09",
+   "kind": "A1",
+   "unit": "1",
+   "price": 83.1779,
+   "score": 20,
+   "stop_after": 80.4299,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-03",
+   "ticker": "T09",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 84.01,
+   "qty": 2,
+   "stop_after": 80.4299,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-06",
+   "ticker": "T11",
+   "kind": "A1",
+   "unit": "1",
+   "price": 69.8144,
+   "score": 35,
+   "stop_after": 68.2948,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-06",
+   "ticker": "T11",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 70.51,
+   "qty": 3,
+   "stop_after": 68.2948,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-07",
+   "ticker": "T00",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 109.1062,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-07",
+   "ticker": "T00",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": 109.1062,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-07",
+   "ticker": "T06",
+   "kind": "A1",
+   "unit": "1",
+   "price": 64.3931,
+   "score": 20,
+   "stop_after": 62.5301,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-07",
+   "ticker": "T06",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 65.04,
+   "qty": 3,
+   "stop_after": 62.5301,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-08",
+   "ticker": "T11",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-09",
+   "ticker": "T02",
+   "kind": "A1",
+   "unit": "1",
+   "price": 58.4833,
+   "score": 0,
+   "stop_after": 57.1057,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-09",
+   "ticker": "T02",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 59.07,
+   "qty": 4,
+   "stop_after": 57.1057,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-09",
+   "ticker": "T06",
+   "kind": "A2",
+   "unit": "2",
+   "price": 63.844,
+   "score": 45,
+   "grade": "B",
+   "stop_after": 62.5301,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-09",
+   "ticker": "T06",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 64.48,
+   "qty": 7,
+   "stop_after": 62.5301,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-10",
+   "ticker": "T09",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-10",
+   "ticker": "T14",
+   "kind": "B",
+   "unit": "9",
+   "price": 87.3052,
+   "score": 60,
+   "stop_after": 81.9198,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-10",
+   "ticker": "T14",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 88.18,
+   "qty": 24,
+   "stop_after": 81.9198,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-10",
+   "ticker": "T15",
+   "kind": "B",
+   "unit": "9",
+   "price": 90.9745,
+   "score": 60,
+   "stop_after": 84.5307,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-10",
+   "ticker": "T15",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 91.88,
+   "qty": 23,
+   "stop_after": 84.5307,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-13",
+   "ticker": "T02",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 4,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-13",
+   "ticker": "T17",
+   "kind": "B",
+   "unit": "9",
+   "price": 140.659,
+   "score": 50,
+   "stop_after": 130.0084,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-13",
+   "ticker": "T17",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 142.07,
+   "qty": 15,
+   "stop_after": 130.0084,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-14",
+   "ticker": "T06",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-14",
+   "ticker": "T06",
+   "kind": "STOP",
+   "unit": "2",
+   "qty": 7,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-14",
+   "ticker": "T07",
+   "kind": "B",
+   "unit": "9",
+   "price": 124.5301,
+   "score": 60,
+   "stop_after": 116.0852,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-14",
+   "ticker": "T07",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 125.78,
+   "qty": 17,
+   "stop_after": 116.0852,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-16",
+   "ticker": "T14",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 81.9198,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-16",
+   "ticker": "T17",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 3,
+   "stop_after": 130.0084,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-17",
+   "ticker": "T07",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 1,
+   "stop_after": 116.0852,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-17",
+   "ticker": "T14",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 5,
+   "stop_after": 81.9198,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-17",
+   "ticker": "T17",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 1,
+   "stop_after": 130.0084,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-21",
+   "ticker": "T18",
+   "kind": "BLOCKED",
+   "stage": "A1",
+   "unit": "1",
+   "score": 20,
+   "reasons": [
+    "동시 보유 종목 수 한도 초과"
+   ],
+   "blocked_type": "limit",
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-21",
+   "ticker": "T20",
+   "kind": "A1",
+   "unit": "1",
+   "price": 107.4779,
+   "score": 35,
+   "stop_after": 103.014,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-21",
+   "ticker": "T20",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 108.55,
+   "qty": 2,
+   "stop_after": 103.014,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-22",
+   "ticker": "T06",
+   "kind": "BLOCKED",
+   "stage": "A1",
+   "unit": "1",
+   "score": 35,
+   "reasons": [
+    "동시 보유 종목 수 한도 초과"
+   ],
+   "blocked_type": "limit",
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-22",
+   "ticker": "T14",
+   "kind": "STOP",
+   "unit": "9",
+   "qty": 17,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-23",
+   "ticker": "T07",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 3,
+   "stop_after": 116.0852,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-23",
+   "ticker": "T20",
+   "kind": "A2",
+   "unit": "2",
+   "price": 110.6858,
+   "score": 45,
+   "grade": "B",
+   "stop_after": 103.014,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-23",
+   "ticker": "T20",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 111.79,
+   "qty": 4,
+   "stop_after": 103.014,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-24",
+   "ticker": "T08",
+   "kind": "A1",
+   "unit": "1",
+   "price": 52.2553,
+   "score": 20,
+   "stop_after": 50.7297,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-24",
+   "ticker": "T08",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 52.78,
+   "qty": 4,
+   "stop_after": 50.7297,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-04-24",
+   "ticker": "T17",
+   "kind": "STOP",
+   "unit": "9",
+   "qty": 11,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-27",
+   "ticker": "T07",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 13,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-04-29",
+   "ticker": "T12",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 91.1696,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-04-30",
+   "ticker": "T14",
+   "kind": "BLOCKED",
+   "stage": "B",
+   "unit": "9",
+   "score": 75,
+   "reasons": [
+    "최근 20거래일 MACD 교차 4회 이상 (휩소)"
+   ],
+   "blocked_type": "ban",
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-05",
+   "ticker": "T20",
+   "kind": "BLOCKED",
+   "stage": "A3",
+   "unit": "6",
+   "score": 20,
+   "reasons": [
+    "당일 시가 갭 5.6% (필터 4.0% 이상)"
+   ],
+   "blocked_type": "ban",
+   "stop_after": 103.014,
+   "state_after": "확인"
+  },
+  {
+   "date": "2026-05-05",
+   "ticker": "T22",
+   "kind": "B",
+   "unit": "9",
+   "price": 126.1731,
+   "score": 60,
+   "stop_after": 120.023,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-05",
+   "ticker": "T22",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 127.43,
+   "qty": 16,
+   "stop_after": 120.023,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-06",
+   "ticker": "T12",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": 91.1696,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-05-06",
+   "ticker": "T16",
+   "kind": "A1",
+   "unit": "1",
+   "price": 89.9251,
+   "score": 35,
+   "stop_after": 87.9032,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-06",
+   "ticker": "T16",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 90.82,
+   "qty": 2,
+   "stop_after": 87.9032,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-06",
+   "ticker": "T20",
+   "kind": "A3",
+   "unit": "6",
+   "price": 125.2488,
+   "score": 20,
+   "grade": "B",
+   "stop_after": 122.3818,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-06",
+   "ticker": "T20",
+   "kind": "stop_changed",
+   "stop_after": 122.3818,
+   "state_after": "주문대기",
+   "old_stop": 103.014,
+   "new_stop": 122.3818
+  },
+  {
+   "date": "2026-05-06",
+   "ticker": "T20",
+   "kind": "VIRTUAL_FILL",
+   "unit": "6",
+   "price": 126.5,
+   "qty": 11,
+   "stop_after": 122.3818,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-06",
+   "ticker": "T22",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 1,
+   "stop_after": 120.023,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-05-07",
+   "ticker": "T00",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 12,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-07",
+   "ticker": "T08",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 4,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-07",
+   "ticker": "T20",
+   "kind": "E3",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-07",
+   "ticker": "T20",
+   "kind": "E3",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-07",
+   "ticker": "T20",
+   "kind": "E3",
+   "unit": "6",
+   "qty": 11,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-07",
+   "ticker": "T22",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 3,
+   "stop_after": 120.023,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-05-08",
+   "ticker": "T16",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-11",
+   "ticker": "T22",
+   "kind": "STOP",
+   "unit": "9",
+   "qty": 12,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-12",
+   "ticker": "T00",
+   "kind": "B",
+   "unit": "9",
+   "price": 123.7448,
+   "score": 65,
+   "stop_after": 114.1376,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-12",
+   "ticker": "T00",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 124.98,
+   "qty": 17,
+   "stop_after": 114.1376,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-13",
+   "ticker": "T11",
+   "kind": "A1",
+   "unit": "1",
+   "price": 64.3451,
+   "score": 0,
+   "stop_after": 63.3167,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-13",
+   "ticker": "T11",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 64.99,
+   "qty": 3,
+   "stop_after": 63.3167,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-13",
+   "ticker": "T14",
+   "kind": "BLOCKED",
+   "stage": "B",
+   "unit": "9",
+   "score": 80,
+   "reasons": [
+    "최근 20거래일 MACD 교차 4회 이상 (휩소)"
+   ],
+   "blocked_type": "ban",
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-14",
+   "ticker": "T19",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 11,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-19",
+   "ticker": "T00",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 17,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-19",
+   "ticker": "T15",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 84.5307,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-05-21",
+   "ticker": "T16",
+   "kind": "A1",
+   "unit": "1",
+   "price": 83.4215,
+   "score": 20,
+   "stop_after": 82.0418,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-21",
+   "ticker": "T16",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 84.26,
+   "qty": 2,
+   "stop_after": 82.0418,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-22",
+   "ticker": "T11",
+   "kind": "A2",
+   "unit": "2",
+   "price": 65.447,
+   "score": 10,
+   "grade": "B",
+   "stop_after": 63.3167,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-22",
+   "ticker": "T11",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 66.1,
+   "qty": 7,
+   "stop_after": 63.3167,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-22",
+   "ticker": "T12",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 15,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-05-25",
+   "ticker": "T16",
+   "kind": "A2",
+   "unit": "2",
+   "price": 86.0291,
+   "score": 30,
+   "grade": "B",
+   "stop_after": 82.0418,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-25",
+   "ticker": "T16",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 86.89,
+   "qty": 5,
+   "stop_after": 82.0418,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-25",
+   "ticker": "T22",
+   "kind": "A1",
+   "unit": "1",
+   "price": 108.1765,
+   "score": 20,
+   "stop_after": 106.0615,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-25",
+   "ticker": "T22",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 109.26,
+   "qty": 2,
+   "stop_after": 106.0615,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-26",
+   "ticker": "T23",
+   "kind": "B",
+   "unit": "9",
+   "price": 115.694,
+   "score": 65,
+   "stop_after": 106.95,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-26",
+   "ticker": "T23",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 116.85,
+   "qty": 18,
+   "stop_after": 106.95,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-27",
+   "ticker": "T02",
+   "kind": "B",
+   "unit": "9",
+   "price": 65.2324,
+   "score": 60,
+   "stop_after": 59.8952,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-27",
+   "ticker": "T02",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 65.88,
+   "qty": 32,
+   "stop_after": 59.8952,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-27",
+   "ticker": "T19",
+   "kind": "A1",
+   "unit": "1",
+   "price": 131.0216,
+   "score": 20,
+   "stop_after": 125.0126,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-27",
+   "ticker": "T19",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 132.33,
+   "qty": 1,
+   "stop_after": 125.0126,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-05-28",
+   "ticker": "T02",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 32,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-01",
+   "ticker": "T19",
+   "kind": "A2",
+   "unit": "2",
+   "price": 137.3131,
+   "score": 30,
+   "grade": "B",
+   "stop_after": 125.0126,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-01",
+   "ticker": "T19",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 138.69,
+   "qty": 3,
+   "stop_after": 125.0126,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-02",
+   "ticker": "T11",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 7,
+   "stop_after": 63.3167,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-06-02",
+   "ticker": "T21",
+   "kind": "A1",
+   "unit": "1",
+   "price": 153.604,
+   "score": 0,
+   "stop_after": 146.8557,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-02",
+   "ticker": "T21",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 155.14,
+   "qty": 1,
+   "stop_after": 146.8557,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-02",
+   "ticker": "T22",
+   "kind": "A2",
+   "unit": "2",
+   "price": 108.2759,
+   "score": 45,
+   "grade": "B",
+   "stop_after": 106.0615,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-02",
+   "ticker": "T22",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 109.36,
+   "qty": 4,
+   "stop_after": 106.0615,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-03",
+   "ticker": "T11",
+   "kind": "E3",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-04",
+   "ticker": "T15",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 5,
+   "stop_after": 84.5307,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-06-04",
+   "ticker": "T19",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 3,
+   "stop_after": 125.0126,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-06-05",
+   "ticker": "T04",
+   "kind": "B",
+   "unit": "9",
+   "price": 90.68,
+   "score": 50,
+   "stop_after": 84.289,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-05",
+   "ticker": "T04",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 91.59,
+   "qty": 23,
+   "stop_after": 84.289,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-05",
+   "ticker": "T19",
+   "kind": "E3",
+   "unit": "1",
+   "qty": 1,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-05",
+   "ticker": "T21",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 1,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-08",
+   "ticker": "T22",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-08",
+   "ticker": "T22",
+   "kind": "STOP",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-10",
+   "ticker": "T03",
+   "kind": "B",
+   "unit": "9",
+   "price": 75.9469,
+   "score": 60,
+   "stop_after": 71.8803,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-10",
+   "ticker": "T03",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 76.71,
+   "qty": 27,
+   "stop_after": 71.8803,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-12",
+   "ticker": "T16",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 5,
+   "stop_after": 82.0418,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-06-12",
+   "ticker": "T23",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 106.95,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-06-15",
+   "ticker": "T16",
+   "kind": "E3",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-18",
+   "ticker": "T09",
+   "kind": "A1",
+   "unit": "1",
+   "price": 78.2716,
+   "score": 10,
+   "stop_after": 76.3009,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-18",
+   "ticker": "T09",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 79.05,
+   "qty": 3,
+   "stop_after": 76.3009,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-19",
+   "ticker": "T07",
+   "kind": "A1",
+   "unit": "1",
+   "price": 114.127,
+   "score": 10,
+   "stop_after": 112.2338,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-19",
+   "ticker": "T07",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 115.27,
+   "qty": 2,
+   "stop_after": 112.2338,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-19",
+   "ticker": "T15",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 16,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-22",
+   "ticker": "T05",
+   "kind": "A1",
+   "unit": "1",
+   "price": 70.589,
+   "score": 35,
+   "stop_after": 67.6907,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-22",
+   "ticker": "T05",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 71.29,
+   "qty": 3,
+   "stop_after": 67.6907,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-23",
+   "ticker": "T03",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 27,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-06-24",
+   "ticker": "T04",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 84.289,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-06-26",
+   "ticker": "T20",
+   "kind": "A1",
+   "unit": "1",
+   "price": 117.7188,
+   "score": 10,
+   "stop_after": 111.0818,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-26",
+   "ticker": "T20",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 118.9,
+   "qty": 2,
+   "stop_after": 111.0818,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-29",
+   "ticker": "T07",
+   "kind": "A2",
+   "unit": "2",
+   "price": 122.344,
+   "score": 20,
+   "grade": "B",
+   "stop_after": 112.2338,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-29",
+   "ticker": "T07",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 123.57,
+   "qty": 3,
+   "stop_after": 112.2338,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-29",
+   "ticker": "T09",
+   "kind": "A2",
+   "unit": "2",
+   "price": 80.1904,
+   "score": 30,
+   "grade": "B",
+   "stop_after": 76.3009,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-29",
+   "ticker": "T09",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 80.99,
+   "qty": 5,
+   "stop_after": 76.3009,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-30",
+   "ticker": "T05",
+   "kind": "A2",
+   "unit": "2",
+   "price": 73.6675,
+   "score": 20,
+   "grade": "B",
+   "stop_after": 67.6907,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-06-30",
+   "ticker": "T05",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 74.4,
+   "qty": 6,
+   "stop_after": 67.6907,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-01",
+   "ticker": "T02",
+   "kind": "B",
+   "unit": "9",
+   "price": 69.3763,
+   "score": 75,
+   "stop_after": 65.7001,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-01",
+   "ticker": "T02",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 70.07,
+   "qty": 30,
+   "stop_after": 65.7001,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-02",
+   "ticker": "T02",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": 65.7001,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-02",
+   "ticker": "T18",
+   "kind": "A1",
+   "unit": "1",
+   "price": 65.5971,
+   "score": 10,
+   "stop_after": 64.0131,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-02",
+   "ticker": "T18",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 66.25,
+   "qty": 3,
+   "stop_after": 64.0131,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-02",
+   "ticker": "T23",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": 106.95,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-07",
+   "ticker": "T09",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 5,
+   "stop_after": 76.3009,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-07",
+   "ticker": "T18",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-07-08",
+   "ticker": "T07",
+   "kind": "A3",
+   "unit": "6",
+   "price": 138.248,
+   "score": 20,
+   "grade": "B",
+   "stop_after": 128.4919,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-08",
+   "ticker": "T07",
+   "kind": "stop_changed",
+   "stop_after": 128.4919,
+   "state_after": "주문대기",
+   "old_stop": 112.2338,
+   "new_stop": 128.4919
+  },
+  {
+   "date": "2026-07-08",
+   "ticker": "T07",
+   "kind": "VIRTUAL_FILL",
+   "unit": "6",
+   "price": 139.63,
+   "qty": 10,
+   "stop_after": 128.4919,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-08",
+   "ticker": "T09",
+   "kind": "E3",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-07-08",
+   "ticker": "T20",
+   "kind": "A2",
+   "unit": "2",
+   "price": 115.8158,
+   "score": 10,
+   "grade": "B",
+   "stop_after": 111.0818,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-08",
+   "ticker": "T20",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 116.97,
+   "qty": 4,
+   "stop_after": 111.0818,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-10",
+   "ticker": "T14",
+   "kind": "A1",
+   "unit": "1",
+   "price": 79.0319,
+   "score": 20,
+   "stop_after": 78.2981,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-10",
+   "ticker": "T14",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 79.82,
+   "qty": 2,
+   "stop_after": 78.2981,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-13",
+   "ticker": "T05",
+   "kind": "A3",
+   "unit": "6",
+   "price": 82.0375,
+   "score": 10,
+   "grade": "B",
+   "stop_after": 76.2587,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-13",
+   "ticker": "T05",
+   "kind": "stop_changed",
+   "stop_after": 76.2587,
+   "state_after": "주문대기",
+   "old_stop": 67.6907,
+   "new_stop": 76.2587
+  },
+  {
+   "date": "2026-07-13",
+   "ticker": "T05",
+   "kind": "VIRTUAL_FILL",
+   "unit": "6",
+   "price": 82.86,
+   "qty": 17,
+   "stop_after": 76.2587,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-13",
+   "ticker": "T14",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-07-14",
+   "ticker": "T12",
+   "kind": "A1",
+   "unit": "1",
+   "price": 99.5095,
+   "score": 10,
+   "stop_after": 95.4339,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-14",
+   "ticker": "T12",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 100.5,
+   "qty": 2,
+   "stop_after": 95.4339,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-15",
+   "ticker": "T02",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 6,
+   "stop_after": 65.7001,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-15",
+   "ticker": "T23",
+   "kind": "E3",
+   "unit": "9",
+   "qty": 12,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-07-17",
+   "ticker": "T12",
+   "kind": "A2",
+   "unit": "2",
+   "price": 103.7372,
+   "score": 25,
+   "grade": "B",
+   "stop_after": 95.4339,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-17",
+   "ticker": "T12",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 104.77,
+   "qty": 4,
+   "stop_after": 95.4339,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-22",
+   "ticker": "T07",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 128.4919,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-22",
+   "ticker": "T07",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 3,
+   "stop_after": 128.4919,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-23",
+   "ticker": "T07",
+   "kind": "STOP",
+   "unit": "6",
+   "qty": 10,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-07-23",
+   "ticker": "T12",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 95.4339,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-24",
+   "ticker": "T05",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": 76.2587,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-24",
+   "ticker": "T12",
+   "kind": "E3",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-07-24",
+   "ticker": "T20",
+   "kind": "A3",
+   "unit": "6",
+   "price": 134.2543,
+   "score": 0,
+   "grade": "B",
+   "stop_after": 121.0279,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-24",
+   "ticker": "T20",
+   "kind": "stop_changed",
+   "stop_after": 121.0279,
+   "state_after": "주문대기",
+   "old_stop": 111.0818,
+   "new_stop": 121.0279
+  },
+  {
+   "date": "2026-07-24",
+   "ticker": "T20",
+   "kind": "VIRTUAL_FILL",
+   "unit": "6",
+   "price": 135.6,
+   "qty": 10,
+   "stop_after": 121.0279,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-27",
+   "ticker": "T05",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 6,
+   "stop_after": 76.2587,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-07-29",
+   "ticker": "T13",
+   "kind": "B",
+   "unit": "9",
+   "price": 146.2316,
+   "score": 40,
+   "stop_after": 137.4797,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-29",
+   "ticker": "T13",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 147.69,
+   "qty": 14,
+   "stop_after": 137.4797,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-30",
+   "ticker": "T14",
+   "kind": "A1",
+   "unit": "1",
+   "price": 75.8421,
+   "score": 10,
+   "stop_after": 73.8494,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-30",
+   "ticker": "T14",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 76.6,
+   "qty": 3,
+   "stop_after": 73.8494,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-07-31",
+   "ticker": "T14",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 3,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-08-06",
+   "ticker": "T19",
+   "kind": "B",
+   "unit": "9",
+   "price": 157.769,
+   "score": 75,
+   "stop_after": 142.3145,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-06",
+   "ticker": "T19",
+   "kind": "VIRTUAL_FILL",
+   "unit": "9",
+   "price": 159.35,
+   "qty": 13,
+   "stop_after": 142.3145,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-06",
+   "ticker": "T20",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 2,
+   "stop_after": 121.0279,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-08-07",
+   "ticker": "T01",
+   "kind": "A1",
+   "unit": "1",
+   "price": 107.8403,
+   "score": 20,
+   "stop_after": 103.5506,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-07",
+   "ticker": "T01",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 108.92,
+   "qty": 2,
+   "stop_after": 103.5506,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-07",
+   "ticker": "T11",
+   "kind": "A1",
+   "unit": "1",
+   "price": 55.139,
+   "score": 20,
+   "stop_after": 53.4679,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-07",
+   "ticker": "T11",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 55.69,
+   "qty": 4,
+   "stop_after": 53.4679,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-10",
+   "ticker": "T05",
+   "kind": "STOP",
+   "unit": "6",
+   "qty": 17,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-08-11",
+   "ticker": "T14",
+   "kind": "A1",
+   "unit": "1",
+   "price": 70.8224,
+   "score": 35,
+   "stop_after": 69.0618,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-11",
+   "ticker": "T14",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 71.53,
+   "qty": 3,
+   "stop_after": 69.0618,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-13",
+   "ticker": "T17",
+   "kind": "BLOCKED",
+   "stage": "A1",
+   "unit": "1",
+   "score": 20,
+   "reasons": [
+    "동시 보유 종목 수 한도 초과"
+   ],
+   "blocked_type": "limit",
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-08-14",
+   "ticker": "T13",
+   "kind": "E1",
+   "unit": "1",
+   "qty": 1,
+   "stop_after": 137.4797,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-08-14",
+   "ticker": "T14",
+   "kind": "A2",
+   "unit": "2",
+   "price": 71.4232,
+   "score": 35,
+   "grade": "B",
+   "stop_after": 69.0618,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-14",
+   "ticker": "T14",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 72.14,
+   "qty": 6,
+   "stop_after": 69.0618,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-17",
+   "ticker": "T01",
+   "kind": "A2",
+   "unit": "2",
+   "price": 109.7048,
+   "score": 30,
+   "grade": "B",
+   "stop_after": 103.5506,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-17",
+   "ticker": "T01",
+   "kind": "VIRTUAL_FILL",
+   "unit": "2",
+   "price": 110.8,
+   "qty": 4,
+   "stop_after": 103.5506,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-17",
+   "ticker": "T11",
+   "kind": "STOP",
+   "unit": "1",
+   "qty": 4,
+   "stop_after": null,
+   "state_after": "대기"
+  },
+  {
+   "date": "2026-08-17",
+   "ticker": "T20",
+   "kind": "E2",
+   "unit": "2",
+   "qty": 4,
+   "stop_after": 121.0279,
+   "state_after": "청산중"
+  },
+  {
+   "date": "2026-08-18",
+   "ticker": "T12",
+   "kind": "A1",
+   "unit": "1",
+   "price": 93.3256,
+   "score": 0,
+   "stop_after": 88.9975,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-18",
+   "ticker": "T12",
+   "kind": "VIRTUAL_FILL",
+   "unit": "1",
+   "price": 94.26,
+   "qty": 2,
+   "stop_after": 88.9975,
+   "state_after": "주문대기"
+  },
+  {
+   "date": "2026-08-19",
+   "ticker": "T12",
+   "kind": "BLOCKED",
+   "stage": "A2",
+   "unit": "2",
+   "score": 10,
+   "reasons": [
+    "최근 20거래일 MACD 교차 4회 이상 (휩소)"
+   ],
+   "blocked_type": "ban",
+   "stop_after": 88.9975,
+   "state_after": "정찰"
+  },
+  {
+   "date": "2026-08-20",
+   "ticker": "T05",
+   "kind": "BLOCKED",
+   "stage": "A1",
+   "unit": "1",
+   "score": 20,
+   "reasons": [
+    "동시 보유 종목 수 한도 초과"
+   ],
+   "blocked_type": "limit",
+   "stop_after": null,
+   "state_after": "대기"
+  }
+ ],
+ "reports": {
+  "2026-02-06": {
+   "paper": {
+    "buys": [
+     {
+      "ticker": "T02",
+      "stage": "A1",
+      "limit": 65.31,
+      "stop": 63.4974,
+      "stop_pct": -2.8,
+      "qty": 3,
+      "amount_krw": 274302,
+      "max_loss_krw": 11727,
+      "decision": "매수",
+      "score": 0,
+      "grade": "",
+      "note": "RSI 24.4 → 30.4"
+     },
+     {
+      "ticker": "T15",
+      "stage": "A2",
+      "limit": 85.55,
+      "stop": 80.0274,
+      "stop_pct": -6.5,
+      "qty": 5,
+      "amount_krw": 598850,
+      "max_loss_krw": 47641,
+      "decision": "매수",
+      "score": 30,
+      "grade": "B",
+      "note": "등급 B · MACD 정규화 -2.06%"
+     }
+    ],
+    "sells": [],
+    "filtered": [],
+    "funnel": {
+     "1차 RSI 30 돌파": 1,
+     "2차 MACD 골든크로스": 3,
+     "3차 일목구름 4요소": 0,
+     "4차 매매금지 필터": 0,
+     "5차 보유한도": 0
+    }
+   },
+   "live": {
+    "buys": [
+     {
+      "ticker": "T02",
+      "stage": "A1",
+      "limit": 65.31,
+      "stop": 63.4974,
+      "stop_pct": -2.8,
+      "qty": 4,
+      "amount_krw": 444444,
+      "max_loss_krw": 0,
+      "decision": "매수",
+      "score": 0,
+      "grade": "",
+      "note": "RSI 24.4 → 30.4 · 기본 금액"
+     },
+     {
+      "ticker": "T15",
+      "stage": "A2",
+      "limit": 85.55,
+      "stop": 80.0274,
+      "stop_pct": -6.5,
+      "qty": 7,
+      "amount_krw": 888889,
+      "max_loss_krw": 0,
+      "decision": "매수",
+      "score": 30,
+      "grade": "B",
+      "note": "등급 B · MACD 정규화 -2.06% · 기본 금액"
+     }
+    ],
+    "sells": [],
+    "filtered": [],
+    "funnel": {
+     "1차 RSI 30 돌파": 1,
+     "2차 MACD 골든크로스": 3,
+     "3차 일목구름 4요소": 0,
+     "4차 매매금지 필터": 0,
+     "5차 보유한도": 0
+    }
+   }
+  },
+  "2026-04-10": {
+   "paper": {
+    "buys": [
+     {
+      "ticker": "T14",
+      "stage": "B",
+      "limit": 88.18,
+      "stop": 81.9198,
+      "stop_pct": -7.1,
+      "qty": 24,
+      "amount_krw": 2962848,
+      "max_loss_krw": 254785,
+      "decision": "매수",
+      "score": 60,
+      "grade": "",
+      "note": "재진입 1회 전량 · 위험 1%"
+     },
+     {
+      "ticker": "T15",
+      "stage": "B",
+      "limit": 91.88,
+      "stop": 84.5307,
+      "stop_pct": -8.0,
+      "qty": 12,
+      "amount_krw": 1543584,
+      "max_loss_krw": 146622,
+      "decision": "매수",
+      "score": 60,
+      "grade": "",
+      "note": "재진입 1회 전량 · 위험 1% · 남은 한도 부족"
+     }
+    ],
+    "sells": [
+     {
+      "티커": "T09",
+      "kind": "STOP",
+      "수량": 2,
+      "평균단가": 84.01,
+      "종가": 79.4
+     }
+    ],
+    "filtered": [],
+    "funnel": {
+     "1차 RSI 30 돌파": 0,
+     "2차 MACD 골든크로스": 2,
+     "3차 일목구름 4요소": 0,
+     "4차 매매금지 필터": 0,
+     "5차 보유한도": 0
+    }
+   },
+   "live": {
+    "buys": [
+     {
+      "ticker": "T14",
+      "stage": "B",
+      "limit": 88.18,
+      "stop": 81.9198,
+      "stop_pct": -7.1,
+      "qty": 32,
+      "amount_krw": 4000000,
+      "max_loss_krw": 0,
+      "decision": "매수",
+      "score": 60,
+      "grade": "",
+      "note": "재진입 1회 전량 · 위험 1% · 기본 금액"
+     },
+     {
+      "ticker": "T15",
+      "stage": "B",
+      "limit": 91.88,
+      "stop": 84.5307,
+      "stop_pct": -8.0,
+      "qty": 31,
+      "amount_krw": 4000000,
+      "max_loss_krw": 0,
+      "decision": "매수",
+      "score": 60,
+      "grade": "",
+      "note": "재진입 1회 전량 · 위험 1% · 기본 금액"
+     }
+    ],
+    "sells": [
+     {
+      "티커": "T09",
+      "kind": "STOP",
+      "수량": 2,
+      "평균단가": 84.01,
+      "종가": 79.4
+     }
+    ],
+    "filtered": [],
+    "funnel": {
+     "1차 RSI 30 돌파": 0,
+     "2차 MACD 골든크로스": 2,
+     "3차 일목구름 4요소": 0,
+     "4차 매매금지 필터": 0,
+     "5차 보유한도": 0
+    }
+   }
+  },
+  "2026-05-06": {
+   "paper": {
+    "buys": [
+     {
+      "ticker": "T16",
+      "stage": "A1",
+      "limit": 90.82,
+      "stop": 87.9032,
+      "stop_pct": -3.2,
+      "qty": 2,
+      "amount_krw": 254296,
+      "max_loss_krw": 11981,
+      "decision": "매수",
+      "score": 35,
+      "grade": "",
+      "note": "RSI 29.3 → 33.1"
+     },
+     {
+      "ticker": "T20",
+      "stage": "A3",
+      "limit": 126.5,
+      "stop": 122.3818,
+      "stop_pct": -3.3,
+      "qty": 11,
+      "amount_krw": 1948100,
+      "max_loss_krw": 92642,
+      "decision": "매수",
+      "score": 20,
+      "grade": "B",
+      "note": "시가 갭 -1.3%"
+     }
+    ],
+    "sells": [
+     {
+      "티커": "T12",
+      "kind": "E2",
+      "수량": 4,
+      "평균단가": 100.9,
+      "종가": 116.31
+     },
+     {
+      "티커": "T22",
+      "kind": "E1",
+      "수량": 1,
+      "평균단가": 127.43,
+      "종가": 124.28
+     }
+    ],
+    "filtered": [],
+    "funnel": {
+     "1차 RSI 30 돌파": 1,
+     "2차 MACD 골든크로스": 0,
+     "3차 일목구름 4요소": 1,
+     "4차 매매금지 필터": 0,
+     "5차 보유한도": 0
+    }
+   },
+   "live": {
+    "buys": [
+     {
+      "ticker": "T16",
+      "stage": "A1",
+      "limit": 90.82,
+      "stop": 87.9032,
+      "stop_pct": -3.2,
+      "qty": 3,
+      "amount_krw": 444444,
+      "max_loss_krw": 0,
+      "decision": "매수",
+      "score": 35,
+      "grade": "",
+      "note": "RSI 29.3 → 33.1 · 기본 금액"
+     },
+     {
+      "ticker": "T20",
+      "stage": "A3",
+      "limit": 126.5,
+      "stop": 122.3818,
+      "stop_pct": -3.3,
+      "qty": 15,
+      "amount_krw": 2666667,
+      "max_loss_krw": 0,
+      "decision": "매수",
+      "score": 20,
+      "grade": "B",
+      "note": "시가 갭 -1.3% · 기본 금액"
+     }
+    ],
+    "sells": [
+     {
+      "티커": "T12",
+      "kind": "E2",
+      "수량": 4,
+      "평균단가": 100.9,
+      "종가": 116.31
+     },
+     {
+      "티커": "T22",
+      "kind": "E1",
+      "수량": 1,
+      "평균단가": 127.43,
+      "종가": 124.28
+     }
+    ],
+    "filtered": [],
+    "funnel": {
+     "1차 RSI 30 돌파": 1,
+     "2차 MACD 골든크로스": 0,
+     "3차 일목구름 4요소": 1,
+     "4차 매매금지 필터": 0,
+     "5차 보유한도": 0
+    }
+   }
+  }
+ },
+ "final_states": {
+  "T00": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T01": {
+   "state": "확인",
+   "units": {
+    "1": 2,
+    "2": 4
+   },
+   "stop": 103.5506,
+   "a1_date": "2026-08-07 00:00:00"
+  },
+  "T02": {
+   "state": "청산중",
+   "units": {
+    "9": 21
+   },
+   "stop": 65.7001,
+   "a1_date": null
+  },
+  "T03": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T04": {
+   "state": "청산중",
+   "units": {
+    "9": 21
+   },
+   "stop": 84.289,
+   "a1_date": null
+  },
+  "T05": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T06": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T07": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T08": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T09": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T10": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T11": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T12": {
+   "state": "정찰",
+   "units": {
+    "1": 2
+   },
+   "stop": 88.9975,
+   "a1_date": "2026-08-18 00:00:00"
+  },
+  "T13": {
+   "state": "청산중",
+   "units": {
+    "9": 13
+   },
+   "stop": 137.4797,
+   "a1_date": null
+  },
+  "T14": {
+   "state": "확인",
+   "units": {
+    "1": 3,
+    "2": 6
+   },
+   "stop": 69.0618,
+   "a1_date": "2026-08-11 00:00:00"
+  },
+  "T15": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T16": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T17": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T18": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T19": {
+   "state": "추세보유",
+   "units": {
+    "9": 13
+   },
+   "stop": 142.3145,
+   "a1_date": null
+  },
+  "T20": {
+   "state": "청산중",
+   "units": {
+    "1": 0,
+    "2": 0,
+    "6": 10
+   },
+   "stop": 121.0279,
+   "a1_date": "2026-06-26 00:00:00"
+  },
+  "T21": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T22": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  },
+  "T23": {
+   "state": "대기",
+   "units": {},
+   "stop": null,
+   "a1_date": null
+  }
+ }
+}

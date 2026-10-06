@@ -60,6 +60,7 @@ from core import auto_plan  # noqa: E402
 from core import explain as expl  # noqa: E402
 from core import filters as filt  # noqa: E402
 from core import macro_status  # noqa: E402
+from core import screening_view as sview  # noqa: E402
 from core import sizing  # noqa: E402
 from core import signals as sig  # noqa: E402
 from core import state as st  # noqa: E402
@@ -102,6 +103,7 @@ _STAGE_FULL_LABEL = {"A1": "1차 정찰", "A2": "2차 확인", "A3": "3차 확�
 # 새 포지션(보유 중이 아니던 종목의 첫 신호)만 자금 계획의 "남은 한도" 배분을 받는다 —
 # A2·A3는 core/state.py가 대기 상태에서만 A1·B를 판정하므로 항상 기존 포지션의 추가 매수다.
 _NEW_POSITION_KINDS = ("A1", "B")
+_STAGE_RISK_KEY = {"A1": "a1_budget_pct", "A2": "a2_budget_pct", "A3": "a3_budget_pct", "B": "b_budget_pct"}
 
 # ── 손절 예약 알림 (P3.5) ────────────────────────────────────────────────
 # 우선순위: 손절(실제 매도 신호) > 손절 근접 > 손절 예약 변경 > 손절 예약 필요.
@@ -810,7 +812,9 @@ def _buy_stage_summary(kind: str, base: dict, earnings_date, as_of_date) -> str:
     return " · ".join(parts)
 
 
-def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict, name_map, earnings_map) -> dict:
+def _build_buy_row(
+    event: dict, df: pd.DataFrame, states_after: dict, cfg: dict, name_map, earnings_map, future_trading_days=None
+) -> dict:
     """매수 이벤트 하나를 보고서·텔레그램에 쓸 행 dict로 만든다 (탭별 조건 열 포함, P3.6 6-2번).
 
     수량·투입금액·최대손실은 여기서 계산하지 않는다 — build_report_summary가 오늘의
@@ -860,16 +864,21 @@ def _build_buy_row(event: dict, df: pd.DataFrame, states_after: dict, cfg: dict,
             round(t, 1) if not pd.isna(t := filt.cloud_thickness_pct(row.get("cloud_top"), row.get("cloud_bot"), row.get("close"))) else None
         ),
         "bb_width_pct": round(row.get("bb_width_pct"), 4) if not pd.isna(row.get("bb_width_pct")) else None,
+        # "왜?" ①·③용 오늘 실제 지표 값 (표시 전용, core.screening_view.buy_facts — 판정에는 쓰지 않는다)
+        "close": round(float(row["close"]), 2) if not pd.isna(row.get("close")) else None,
+        "facts": sview.buy_facts(
+            df, date, event["kind"], states_after, cfg, earnings_date=earnings_date, future_trading_days=future_trading_days
+        ),
     }
 
     if event["kind"] == "A1":
-        expiry_days = cfg["assumptions"]["a1_to_a2_expiry_days"]
-        expiry_idx = idx + expiry_days
+        # 2차 기한 = A1 당일 포함 a1_to_a2_expiry_days번째 거래일(그날까지 A2 가능, 표시 전용).
+        deadline = base["facts"].get("a2_deadline")
         base.update(
             {
                 "rsi_prev": round(prev_rsi, 1) if not pd.isna(prev_rsi) else None,
                 "rsi_now": round(row.get("rsi"), 1) if not pd.isna(row.get("rsi")) else None,
-                "a2_expiry_date": df.index[expiry_idx].strftime("%m/%d") if expiry_idx < len(df.index) else None,
+                "a2_expiry_date": deadline.strftime("%m/%d") if deadline is not None else None,
             }
         )
     elif event["kind"] == "A2":
@@ -1148,6 +1157,8 @@ def build_report_summary(
     plan_ref_price_by_ticker: dict[str, float] | None = None,
     default_budget_krw: float | None = None,
     remaining_cash_krw: float | None = None,
+    recent_events: list[dict] | None = None,
+    future_trading_days=None,
 ) -> dict:
     """오늘 이벤트·현재 상태·시세로 보고서·텔레그램용 summary dict를 만든다 (DB에 쓰지 않는다).
 
@@ -1169,7 +1180,10 @@ def build_report_summary(
          core.sizing.plan_tranche_qty가 기준가 기반 고정 총 주수 방식을 쓴다),
          default_budget_krw(live 전용 — 투자현황 "종목당 계획금액", 계획 없는 추천 줄의 기본 금액.
          None이면 계획 없는 줄은 수량 0, docs/design/auto_plan.md v2 규칙 B),
-         remaining_cash_krw(live 전용 — 총 투자금 − 투자 원금. None이면 남은 현금 경고 생략, 규칙 C)
+         remaining_cash_krw(live 전용 — 총 투자금 − 투자 원금. None이면 남은 현금 경고 생략, 규칙 C),
+         recent_events(최근 a1_to_a2_expiry_days 거래일의 이벤트 — "오늘의 스크리닝" 2차 레인의
+         "2차 대상 아님" 참고 목록용, 표시 전용. None이면 그 목록만 빈다),
+         future_trading_days(오늘 다음 NYSE 거래일 목록 — 2차 기한 표시용. None이면 주말만 빼는 근사)
 
     mode == "live"이면 계좌 총액 기반 자금 계획(core.sizing.size_buy_signals)을 전혀
     쓰지 않고 종목별 계획금액만으로 수량을 정한다(docs/design/live_advisor.md 0번) —
@@ -1181,6 +1195,12 @@ def build_report_summary(
     as_of = max(as_of_by_ticker.values()) if as_of_by_ticker else None
     fx_rate = fx_result.rate if fx_result else None
 
+    # ── 오늘의 스크리닝 (표시 전용): 차수별 깔때기 — core.screening_view (순수 함수) ──
+    screening = sview.build_screening_view(
+        indicator_map, as_of_by_ticker, positions, today_events, cfg,
+        name_map=name_map, recent_events=recent_events, future_trading_days=future_trading_days,
+    )
+
     # ── 오늘 매수 신호: 지정가·손절가·탭별 조건 열을 붙인다 (수량은 아직 안 붙인다) ──
     buy_groups: dict[str, list] = {"b1": [], "b2": [], "b3": [], "b9": []}
     earnings_unknown_count = sum(1 for d in earnings_map.values() if d is None)
@@ -1189,7 +1209,9 @@ def build_report_summary(
             continue
         ticker = event["ticker"]
         df = indicator_map[ticker]
-        row = _build_buy_row(event, df, positions[ticker], cfg, name_map, earnings_map)
+        row = _build_buy_row(event, df, positions[ticker], cfg, name_map, earnings_map, future_trading_days)
+        lane_facts = screening["facts_by_key"].get(row["key"])
+        row["funnel"] = {"steps": lane_facts["steps"], "rank": lane_facts["rank"]} if lane_facts else None
         buy_groups[row["bucket"]].append(row)
     for bucket in buy_groups:
         buy_groups[bucket].sort(key=lambda r: r["score"], reverse=True)
@@ -1206,6 +1228,7 @@ def build_report_summary(
         for r in all_buy_rows:
             has_plan = r["ticker"] in plan_by_ticker
             r["has_plan"] = has_plan
+            r["sizing"] = {"mode": "live", "fx_rate": fx_rate, "reduced": []}  # "왜?" ③ 수량 계산식 (표시 전용)
             if has_plan and r["stop"] is not None and fx_rate:
                 sized_row = sizing.plan_tranche_qty(
                     plan_by_ticker[r["ticker"]], r["stage"], r["limit"], fx_rate,
@@ -1215,10 +1238,19 @@ def build_report_summary(
                 clamped = sizing.clamp_plan_qty_to_remaining(sized_row["qty"], sized_row.get("total_shares"), held_qty)
                 r["qty"] = clamped["qty"]
                 r["amount_krw"] = round(sized_row["tranche_krw"]) if clamped["qty"] else 0
+                r["sizing"].update(
+                    budget_krw=plan_by_ticker[r["ticker"]], budget_source="계획금액", tranche_krw=sized_row["tranche_krw"],
+                    ref_price=plan_ref_price_by_ticker.get(r["ticker"]), total_shares=sized_row.get("total_shares"),
+                    raw_qty=sized_row["qty"],
+                )
                 if clamped["over_limit"]:
                     r["note"] = " · ".join(p for p in (r["note"], "계획 한도 초과") if p)
+                    r["sizing"]["reduced"].append(f"이미 보유한 {held_qty}주가 계획 총 주수 이상(계획 한도 초과)")
                 elif sized_row["qty"] == 0:
                     r["note"] = " · ".join(p for p in (r["note"], "계획금액으로 1주 미만") if p)
+                    r["sizing"]["reduced"].append("계획금액의 이번 차수 몫으로는 1주를 못 삼")
+                elif clamped["qty"] < sized_row["qty"]:
+                    r["sizing"]["reduced"].append(f"계획 총 주수에서 이미 보유한 {held_qty}주를 빼고 남은 만큼만")
             elif not has_plan and default_budget_krw and r["stop"] is not None and fx_rate:
                 # 계획 없는 추천: 투자현황 "종목당 계획금액"으로 수량만 보여준다(시트에 안 씀, 규칙 B).
                 # 기준가 없는 방식(오늘 지정가) — 판정 표(plan_by_ticker)에는 넣지 않는다.
@@ -1228,6 +1260,12 @@ def build_report_summary(
                 r["default_budget"] = True
                 notes = ["기본 금액"] + ([] if sized_row["qty"] else ["기본 금액으로 1주 미만"])
                 r["note"] = " · ".join(p for p in (r["note"], *notes) if p)
+                r["sizing"].update(
+                    budget_krw=default_budget_krw, budget_source="기본 금액(투자현황 종목당 계획금액)",
+                    tranche_krw=sized_row["tranche_krw"], raw_qty=sized_row["qty"],
+                )
+                if not sized_row["qty"]:
+                    r["sizing"]["reduced"].append("기본 금액의 이번 차수 몫으로는 1주를 못 삼")
             else:
                 r["qty"] = 0
                 r["amount_krw"] = 0
@@ -1289,6 +1327,13 @@ def build_report_summary(
             r["max_loss_krw"] = s["max_loss_krw"]
             r["risk_capped"] = s["risk_capped"]
             r["limited"] = s["limited"]
+            r["sizing"] = {  # "왜?" ③ 수량 계산식 (표시 전용)
+                "mode": "paper", "fx_rate": fx_rate, "slot_krw": sizing.slot_krw(cfg),
+                "target_qty": s.get("target_qty"), "risk_cap_qty": s.get("risk_cap_qty"),
+                "risk_pct": cfg["risk"][_STAGE_RISK_KEY[r["stage"]]],
+                "reduced": (["손절이 멀어 위험 상한으로 줄임"] if s["risk_capped"] and s["qty"] > 0 else [])
+                + (["오늘 남은 전략 한도가 부족"] if s["limited"] else []),
+            }
             extra_notes = []
             if s["risk_capped"] and s["qty"] > 0:
                 extra_notes.append("손절이 멀어 수량 축소")
@@ -1552,12 +1597,12 @@ def build_report_summary(
             bars_since = df.index.get_loc(date) - df.index.get_loc(state_["a1_date"])
             expiry_days = cfg["assumptions"]["a1_to_a2_expiry_days"]
             remaining = max(expiry_days - bars_since - 1, 0)
-            a1_idx = df.index.get_loc(state_["a1_date"])
-            expiry_idx = a1_idx + expiry_days
+            # 2차 기한 = A1 당일 포함 expiry_days번째 거래일(그날까지 A2 가능) — 표시 전용
+            deadline = sview.a2_deadline(df.index, state_["a1_date"], cfg, date, future_trading_days)
             watch_ctx = {
                 "kr": name_kr,
                 "macd_diff": round(row["macd"] - row["signal"], 2) if not (pd.isna(row.get("macd")) or pd.isna(row.get("signal"))) else None,
-                "expiry_date": df.index[expiry_idx].strftime("%m/%d") if expiry_idx < len(df.index) else None,
+                "expiry_date": deadline.strftime("%m/%d") if deadline is not None else None,
             }
             watch_rows.append(
                 {
@@ -1621,6 +1666,7 @@ def build_report_summary(
         "earnings_unknown_count": earnings_unknown_count,
         "all_events": today_events,
         "funnel": funnel,
+        "screening": screening,
         "funding_plan": funding_plan,
         "buy_risk_sum_krw": buy_risk_sum_krw,
         "buy_risk_pct": (
@@ -1636,6 +1682,29 @@ def build_report_summary(
         "fx_date": fx_result.rate_date if fx_result else None,
         "fx_is_fallback": bool(fx_result and fx_result.is_fallback),
     }
+
+
+def _screening_inputs(conn, indicator_map: dict, as_of_by_ticker: dict, today_events: list[dict], cfg: dict):
+    """"오늘의 스크리닝" 표시용 입력을 DB·거래소 달력에서 읽는다 (계산은 core.screening_view).
+
+    출력: (recent_events, future_trading_days)
+      recent_events: 오늘 이전 (a1_to_a2_expiry_days − 1)거래일의 DB 이벤트 + 오늘 이벤트(sim 결과).
+        모드별 DB(paper는 paper DB)에서 읽는다 — 2차 레인의 "2차 대상 아님" 참고 목록용.
+      future_trading_days: 오늘 다음 NYSE 거래일(약 6주) — 2차 기한 표시용.
+    """
+    as_of = max(as_of_by_ticker.values()) if as_of_by_ticker else None
+    if as_of is None:
+        return list(today_events), None
+    window = cfg["assumptions"]["a1_to_a2_expiry_days"]
+    master = sorted(set().union(*(df.index for df in indicator_map.values())))
+    past_days = [d for d in master if d < as_of][-(window - 1):] if window > 1 else []
+    recent: list[dict] = []
+    for d in past_days:
+        recent.extend(db.get_events_for_date(conn, str(pd.Timestamp(d).date())))
+    recent.extend(today_events)
+    start = (pd.Timestamp(as_of) + pd.Timedelta(days=1)).date()
+    future = list(trading_days_between(start, start + timedelta(days=45)))
+    return recent, future
 
 
 def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None) -> dict:
@@ -1915,6 +1984,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         print(f"  [시장 온도 값] {briefing._macro_item_text(row)} (기준일 {row.get('as_of')})")
     run_warnings.extend(macro_warnings)
 
+    recent_events, future_trading_days = _screening_inputs(conn, indicator_map, as_of_by_ticker, today_events, cfg)
     summary = build_report_summary(
         mode, cfg, indicator_map, name_map, earnings_map, positions, today_events,
         as_of_by_ticker, data_gap_tickers, fills_result, run_warnings, max_concurrent,
@@ -1922,6 +1992,7 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
         plan_by_ticker=plan_by_ticker, live_judgment_rows=live_judgment_rows,
         plan_ref_price_by_ticker=plan_ref_price_by_ticker,
         default_budget_krw=default_budget_krw, remaining_cash_krw=remaining_cash_krw,
+        recent_events=recent_events, future_trading_days=future_trading_days,
     )
     summary["macro_rows"] = macro_rows
     if auto_plan_info is not None:

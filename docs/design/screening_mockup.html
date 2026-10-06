@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>스크리닝 화면 견본</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1d1d1b;--mute:#6b6b66;--line:#e3e2dd;--ok:#1f7a4d;--okbg:#e4f3ea;--no:#b3261e;--nobg:#fbe7e5;--inf:#8a6100;--infbg:#fbf1d9;--a1:#3b6fb6;--a2:#7a4bb3;--a3:#1f7a4d;--b:#b5651d}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--card:#1f1f1d;--ink:#ecebe6;--mute:#a19f97;--line:#34332f;--okbg:#173527;--nobg:#3a1b19;--infbg:#3a2f12;--ok:#5fc38d;--no:#f08a82;--inf:#e5b94e}}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+.w{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 2px}h2{font-size:16px;margin:22px 0 8px}
+.sub{color:var(--mute);font-size:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:10px 0}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;font-weight:600}
+.ok{background:var(--okbg);color:var(--ok)}.no{background:var(--nobg);color:var(--no)}.inf{background:var(--infbg);color:var(--inf)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:center;vertical-align:top}
+th{color:var(--mute);font-weight:600;font-size:12px}td.l,th.l{text-align:left}
+.st{font-weight:700}.s1{color:var(--a1)}.s2{color:var(--a2)}.s3{color:var(--a3)}.sb{color:var(--b)}
+.flow{display:flex;gap:6px;align-items:stretch;flex-wrap:wrap;margin:6px 0 10px}
+.step{flex:1;min-width:120px;border-radius:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--line)}
+.step b{font-size:20px;display:block}.step span{font-size:12px;color:var(--mute)}
+.arrow{align-self:center;color:var(--mute)}
+.bar{height:6px;border-radius:3px;background:var(--line);margin-top:6px}.bar i{display:block;height:100%;border-radius:3px}
+.lane{border-left:4px solid var(--line);padding-left:12px}
+.lane.a1{border-color:var(--a1)}.lane.a2{border-color:var(--a2)}.lane.a3{border-color:var(--a3)}.lane.b{border-color:var(--b)}
+.score{font-weight:700}.mini{font-size:12px;color:var(--mute)}
+.note{background:var(--infbg);color:var(--inf);border-radius:8px;padding:6px 10px;font-size:12px;margin-bottom:10px}
+.scroll{overflow-x:auto}
+</style></head><body><div class="w">
+<div class="note">견본입니다. 종목과 숫자는 화면 형식을 보여 주기 위한 예시입니다.</div>
+<h1>오늘의 스크리닝</h1><div class="sub">10월 6일(월) 미국장 마감 · 나스닥 100 · 101종목</div>
+
+<h2>① 우리 전략 한눈에</h2>
+<div class="card">
+<div style="font-size:16px;font-weight:700">바닥 반전 3단 확인 매수법 (1:2:6 피라미딩)</div>
+<div class="mini" style="margin:4px 0 10px">많이 떨어진 종목이 <b>RSI → MACD → 일목 구름</b> 순서로 "진짜 반등"을 증명할 때마다 1 → 2 → 6 비율로 사서 늘린다. 떨어질 때 더 사는 물타기는 하지 않는다. 뼈대는 후지모토 1:2:6(대본 MACD_11)이고, "맞을 때만 더 산다"는 리버모어식 피라미딩과 같은 생각이다.</div>
+<div class="scroll"><table>
+<tr><th>차수</th><th>비중</th><th class="l">사는 조건 (모두 충족)</th><th class="l">뜻</th><th>손절</th><th>파는 신호</th></tr>
+<tr><td class="st s1">1차 정찰</td><td>1/9</td><td class="l">RSI가 어제 30 미만 → 오늘 30 이상</td><td class="l">떨어지던 힘이 멈춤 (첫 신호)</td><td>10일 최저가</td><td>MACD 데드크로스 → 1차분</td></tr>
+<tr><td class="st s2">2차 확인</td><td>2/9</td><td class="l">1차 후 10거래일 안에 MACD 골든크로스 · RSI 30~70</td><td class="l">방향이 진짜로 바뀜</td><td>10일 최저가</td><td>RSI 50 이탈 → 2차분</td></tr>
+<tr><td class="st s3">3차 확정</td><td>6/9</td><td class="l">2차 보유 중 · 구름 위 · 앞구름 양운 · 후행스팬 돌파 · MACD>시그널 & RSI≥50</td><td class="l">상승 추세가 자리 잡음 (본 진입)</td><td>10일 최저가·구름 하단 중 높은 값</td><td>구름 이탈 → 남은 전량</td></tr>
+<tr><td class="st sb">재진입</td><td>1회</td><td class="l">이미 구름 위 · 0선 근처 골든크로스 · RSI 50~70</td><td class="l">쉬던 상승 추세가 다시 달림</td><td>진입일 10일 최저가</td><td>1·2·3차와 같음</td></tr>
+</table></div>
+<div class="mini" style="margin-top:8px">공통 금지: 실적 발표 3거래일 이내 · 골든크로스 날 RSI 70 이상 · 최근 20일 교차 4회 이상(휩소) · 구름 안 · 앞구름 음운 · 시가 갭 4% 이상(3차). 한 종목 최대 손실은 계좌의 2%.</div>
+<table style="margin-top:10px"><tr><th class="l">비교</th><th class="l">윌리엄 오닐 CAN SLIM</th><th class="l">우리 전략</th></tr>
+<tr><td class="l">사는 자리</td><td class="l">신고가 근처 바닥 패턴 돌파</td><td class="l">많이 떨어진 뒤 반등이 확인되는 자리</td></tr>
+<tr><td class="l">종목 고르기</td><td class="l">실적·성장(펀더멘털) + 차트</td><td class="l">차트 지표만 (RSI·MACD·일목·거래량)</td></tr>
+<tr><td class="l">비중 늘리기</td><td class="l">오를 때 추가 매수(피라미딩)</td><td class="l">신호가 겹칠 때 1→2→6</td></tr>
+<tr><td class="l">손절</td><td class="l">매수가 −7~8%</td><td class="l">10일 최저가 (차트 기준)</td></tr></table>
+</div>
+
+<h2>② 오늘의 깔때기</h2>
+
+<div class="card lane a1">
+<div class="st s1">1차 정찰 · RSI 30 탈출</div>
+<div class="flow">
+<div class="step"><b>101</b><span>스캔</span><div class="bar"><i style="width:100%;background:var(--a1)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>6</b><span>RSI 30 탈출</span><div class="bar"><i style="width:6%;background:var(--a1)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>4</b><span>금지 구간 통과</span><div class="bar"><i style="width:4%;background:var(--a1)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>4</b><span>오늘 추천</span><div class="bar"><i style="width:4%;background:var(--a1)"></i></div></div>
+</div>
+<div class="scroll"><table>
+<tr><th>순위</th><th class="l">종목</th><th>RSI 어제→오늘</th><th>거래량</th><th>구름두께</th><th>점수</th><th>결과</th></tr>
+<tr><td>1</td><td class="l">로퍼 테크놀로지스 <span class="mini">ROP</span></td><td>27.1 → 33.0</td><td>1.7배</td><td>2.8%</td><td class="score">45</td><td><span class="tag ok">추천</span></td></tr>
+<tr><td>2</td><td class="l">올드 도미니언 <span class="mini">ODFL</span></td><td>27.8 → 31.2</td><td>1.6배</td><td>4.2%</td><td class="score">35</td><td><span class="tag ok">추천</span></td></tr>
+<tr><td>3</td><td class="l">페이첵스 <span class="mini">PAYX</span></td><td>29.0 → 30.4</td><td>1.3배</td><td>5.1%</td><td class="score">25</td><td><span class="tag ok">추천</span></td></tr>
+<tr><td>4</td><td class="l">코파트 <span class="mini">CPRT</span></td><td>28.4 → 30.9</td><td>0.9배</td><td>7.4%</td><td class="score">0</td><td><span class="tag ok">추천</span></td></tr>
+<tr><td>-</td><td class="l">아이덱스 <span class="mini">IDXX</span></td><td>26.5 → 32.2</td><td>1.4배</td><td>3.9%</td><td class="score">25</td><td><span class="tag no">제외 · 실적 3일 이내</span></td></tr>
+<tr><td>-</td><td class="l">테라다인 <span class="mini">TER</span></td><td>29.3 → 31.0</td><td>1.1배</td><td>6.5%</td><td class="score">0</td><td><span class="tag inf">제외 · 이미 보유</span></td></tr>
+</table></div></div>
+
+<div class="card lane a2">
+<div class="st s2">2차 확인 · 내가 1차를 산 종목 중 오늘 MACD 골든크로스</div>
+<div class="mini" style="margin:4px 0 8px">2차는 1차 물량에 더 사는 것이라, <b>1차를 실제로 사서 체결 탭에 적은 종목</b>만 후보가 됩니다. 이 명단은 프로그램 DB(positions 표, 구글 드라이브에 저장)에 1차 매수일과 함께 남아 있고, 10거래일 안에 골든크로스가 안 나오면 1차 만료로 빠집니다. 오늘 1차 추천 종목은 사서 체결에 적으면 내일부터 이 명단에 들어갑니다.</div>
+<div class="scroll"><table style="margin-bottom:10px">
+<tr><th>1차 매수일</th><th class="l">내가 1차를 산 종목</th><th>2차 기한</th></tr>
+<tr><td>9/24</td><td class="l">컨스텔레이션(CEG)</td><td>10/7</td></tr>
+<tr><td>9/26</td><td class="l">엑셀 에너지(XEL) · 엑셀론(EXC)</td><td>10/9</td></tr>
+<tr><td>9/29</td><td class="l">마이크로칩(MCHP) · 루멘텀(LITE)</td><td>10/10</td></tr>
+<tr><td>10/1</td><td class="l">아스테라 랩스(ALAB)</td><td>10/14</td></tr>
+<tr style="background:var(--infbg)"><td><b>10/6 오늘</b></td><td class="l">오늘 1차 추천 4종목 — 사서 체결에 적으면 내일부터 여기에 들어옴</td><td>10/17</td></tr>
+</table></div>
+<div class="mini" style="margin-bottom:8px">참고: 지난 10거래일 1차 신호가 났지만 사지 않은 종목 7개는 2차 대상이 아닙니다 (접기).</div>
+<div class="flow">
+<div class="step"><b>9</b><span>1차 보유 종목</span><div class="bar"><i style="width:100%;background:var(--a2)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>3</b><span>오늘 골든크로스</span><div class="bar"><i style="width:33%;background:var(--a2)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>2</b><span>금지 구간 통과</span><div class="bar"><i style="width:22%;background:var(--a2)"></i></div></div>
+</div>
+<div class="scroll"><table>
+<tr><th>순위</th><th class="l">종목</th><th>1차일 (경과)</th><th>골든크로스</th><th>RSI</th><th>등급</th><th>점수</th><th>결과</th></tr>
+<tr><td>1</td><td class="l">마이크로칩 <span class="mini">MCHP</span></td><td>9/29 (5일째)</td><td>발생</td><td>48.2</td><td>S</td><td class="score">80</td><td><span class="tag ok">2차 추천</span></td></tr>
+<tr><td>2</td><td class="l">엑셀 에너지 <span class="mini">XEL</span></td><td>9/26 (6일째)</td><td>발생</td><td>44.0</td><td>A</td><td class="score">50</td><td><span class="tag ok">2차 추천</span></td></tr>
+<tr><td>-</td><td class="l">컨스텔레이션 <span class="mini">CEG</span></td><td>9/24 (8일째)</td><td>발생</td><td>71.3</td><td>A</td><td class="score">40</td><td><span class="tag no">제외 · RSI 70 이상</span></td></tr>
+<tr><td>-</td><td class="l">아스테라 랩스 <span class="mini">ALAB</span></td><td>10/1 (3일째)</td><td>아직</td><td>41.5</td><td>-</td><td class="score">-</td><td><span class="tag inf">대기 · 10/14까지</span></td></tr>
+<tr><td>-</td><td class="l">…5종목 더 (접기)</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+</table></div></div>
+
+<div class="card lane a3">
+<div class="st s3">3차 확정 · 2차 보유 종목의 구름 4조건</div>
+<div class="flow">
+<div class="step"><b>3</b><span>2차 보유</span><div class="bar"><i style="width:100%;background:var(--a3)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>1</b><span>4조건 모두 충족 · 갭 통과</span><div class="bar"><i style="width:33%;background:var(--a3)"></i></div></div>
+</div>
+<div class="scroll"><table>
+<tr><th class="l">종목</th><th>구름 위</th><th>앞구름 양운</th><th>후행스팬 돌파</th><th>MACD·RSI≥50</th><th>갭&lt;4%</th><th>점수</th><th>결과</th></tr>
+<tr><td class="l">액슨 <span class="mini">AXON</span></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓ 1.2%</td><td class="score">55</td><td><span class="tag ok">3차 추천</span></td></tr>
+<tr><td class="l">ADP <span class="mini">ADP</span></td><td>✓</td><td>✓</td><td>✗</td><td>✓</td><td>✓</td><td class="score">-</td><td><span class="tag inf">3/4 · 대기</span></td></tr>
+<tr><td class="l">CSX <span class="mini">CSX</span></td><td>✗</td><td>✗</td><td>✗</td><td>✓</td><td>✓</td><td class="score">-</td><td><span class="tag inf">1/4 · 대기</span></td></tr>
+</table></div></div>
+
+<div class="card lane b">
+<div class="st sb">재진입 · 상승 추세 종목의 골든크로스</div>
+<div class="flow">
+<div class="step"><b>38</b><span>구름 위 추세 종목</span><div class="bar"><i style="width:100%;background:var(--b)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>2</b><span>0선 근처 골든크로스</span><div class="bar"><i style="width:5%;background:var(--b)"></i></div></div><div class="arrow">→</div>
+<div class="step"><b>1</b><span>RSI 50~70 · 금지 구간 통과</span><div class="bar"><i style="width:3%;background:var(--b)"></i></div></div>
+</div>
+<div class="scroll"><table>
+<tr><th>순위</th><th class="l">종목</th><th>정규화 MACD</th><th>RSI</th><th>등급</th><th>점수</th><th>결과</th></tr>
+<tr><td>1</td><td class="l">오라일리 <span class="mini">ORLY</span></td><td>+0.12%</td><td>57.4</td><td>S</td><td class="score">75</td><td><span class="tag ok">재진입 추천</span></td></tr>
+<tr><td>-</td><td class="l">ADP <span class="mini">ADP</span></td><td>−0.31%</td><td>49.1</td><td>S</td><td class="score">55</td><td><span class="tag no">제외 · RSI 50 미만</span></td></tr>
+</table></div></div>
+
+<div class="mini">점수 100점 = 등급(S40·A25·B10) + 거래량(1.5배 25·1.2배 15) + 구름두께(3% 이하 20·6% 이하 10) + 밴드폭 백분위(20% 이하 15). 1차·3차는 등급이 없어 0점.</div>
+</div></body></html>
