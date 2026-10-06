@@ -100,7 +100,7 @@ def _prev_close(df: pd.DataFrame, idx: int) -> float:
 def _ban_reasons(df: pd.DataFrame, date, row: pd.Series, stage: str, cfg: dict, earnings_date) -> list[str]:
     """core/filters.py의 매매 금지 구간(7장)을 이 종목·날짜·단계에 대해 확인한다."""
     idx = df.index.get_loc(date)
-    gc_count = filters.macd_cross_count(df, date) if stage in ("A2", "B") else 0
+    gc_count = filters.macd_cross_count(df, date, cfg=cfg) if stage in ("A2", "B") else 0
     return filters.ban_reasons(
         stage=stage, row=row, gc_count_20d=gc_count, prev_close=_prev_close(df, idx), cfg=cfg, earnings_date=earnings_date
     )
@@ -110,7 +110,7 @@ def _entry_score(df: pd.DataFrame, date, row: pd.Series, kind: str, cfg: dict) -
     """진입 이벤트의 등급(A2·B형만)과 우선순위 점수(7장)를 계산한다."""
     grade_letter = None
     if kind in ("A2", "B"):
-        gc_count = filters.macd_cross_count(df, date)
+        gc_count = filters.macd_cross_count(df, date, cfg=cfg)
         grade_letter = filters.grade(row.get("macd_norm"), gc_count, cfg)
     thickness = filters.cloud_thickness_pct(row.get("cloud_top"), row.get("cloud_bot"), row.get("close"))
     score = filters.priority_score(grade_letter, row.get("vol_ratio"), thickness, row.get("bb_width_pct"), cfg)
@@ -126,7 +126,7 @@ def _detect_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict) -> tuple[s
     prev_row = df.iloc[idx - 1] if idx > 0 else None
     prev_rsi = prev_row["rsi"] if prev_row is not None else float("nan")
 
-    if not _in_cooldown(state, date) and sig.check_a1(prev_rsi, row["rsi"]):
+    if not _in_cooldown(state, date) and sig.check_a1(prev_rsi, row["rsi"], cfg):
         return "A1", _UNIT_1
     if sig.check_b(row, cfg):
         return "B", _UNIT_B
@@ -361,7 +361,7 @@ def process_day(
                 _mark_sent(new_state, key)
 
         prev_rsi = prev_row["rsi"] if prev_row is not None else float("nan")
-        if sig.check_e2(prev_rsi, row["rsi"]):
+        if sig.check_e2(prev_rsi, row["rsi"], cfg):
             key = f"E2:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
                 sold_any = _sell_bundle(new_state, date, "2", "E2", events) or sold_any
@@ -413,7 +413,7 @@ def process_day(
     elif st == "정찰":
         # A2 판정은 당일 RSI 기준이다: A1 이후 중간에 RSI가 30 밑으로 다시 내려간
         # 날이 있어도 A1을 무효로 하지 않는다(손절 규칙이 관리) — P2.1 보완 2번.
-        if sig.check_a2(row):
+        if sig.check_a2(row, cfg):
             key = f"A2:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
                 grade_letter, score = _entry_score(df, date, row, "A2", cfg)

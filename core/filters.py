@@ -8,13 +8,18 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from core.signals import levels
 
-def macd_cross_count(df: pd.DataFrame, date, window: int = 20) -> int:
+
+def macd_cross_count(df: pd.DataFrame, date, window: int | None = None, cfg: dict | None = None) -> int:
     """date를 포함해 최근 window거래일 동안의 MACD 교차(gc 또는 dc) 횟수.
 
-    입력: gc·dc 열이 있는 DataFrame, date(df.index에 있는 값)
+    입력: gc·dc 열이 있는 DataFrame, date(df.index에 있는 값),
+         window(없으면 cfg strategy_levels.cross_window_days, 기본 20)
     출력: 교차 횟수 (정수)
     """
+    if window is None:
+        window = levels(cfg)["cross_window_days"]
     i = df.index.get_loc(date)
     start = max(0, i - window + 1)
     segment = df.iloc[start : i + 1]
@@ -33,7 +38,7 @@ def grade(macd_norm: float, gc_count_20d: int, cfg: dict) -> str | None:
     b_max = cfg["assumptions"]["b_grade_macd_norm_max_pct"]
     if macd_norm >= s_min:
         return "S"
-    if macd_norm >= b_max and gc_count_20d <= 1:
+    if macd_norm >= b_max and gc_count_20d <= levels(cfg)["grade_a_max_crosses"]:
         return "A"
     return "B"
 
@@ -81,7 +86,7 @@ def cloud_thickness_pct(cloud_top: float, cloud_bot: float, close: float) -> flo
     return (cloud_top - cloud_bot) / close * 100
 
 
-def is_earnings_within(date, earnings_date, trading_days: int = 3) -> bool:
+def is_earnings_within(date, earnings_date, trading_days: int | None = None, cfg: dict | None = None) -> bool:
     """오늘부터 earnings_date까지가 trading_days 거래일 이내(포함)인지 본다.
 
     실적일을 모르면(earnings_date=None) 필터링하지 않는다 — 호출부가
@@ -90,6 +95,8 @@ def is_earnings_within(date, earnings_date, trading_days: int = 3) -> bool:
     """
     if earnings_date is None:
         return False
+    if trading_days is None:
+        trading_days = levels(cfg)["earnings_filter_trading_days"]
     d = pd.Timestamp(date).normalize()
     e = pd.Timestamp(earnings_date).normalize()
     if e < d:
@@ -113,13 +120,14 @@ def ban_reasons(
     본다 — 데이터가 없다고 신호를 막지 않는다.
     """
     reasons: list[str] = []
+    lv = levels(cfg)
 
     if stage in ("A2", "B"):
         rsi = row.get("rsi")
-        if not pd.isna(rsi) and rsi >= 70:
-            reasons.append("골든크로스 당일 RSI 70 이상")
+        if not pd.isna(rsi) and rsi >= lv["rsi_overbought"]:
+            reasons.append(f"골든크로스 당일 RSI {lv['rsi_overbought']:g} 이상")
         if gc_count_20d >= cfg["assumptions"]["whipsaw_max_crosses_20d"]:
-            reasons.append(f"최근 20거래일 MACD 교차 {gc_count_20d}회 이상 (휩소)")
+            reasons.append(f"최근 {lv['cross_window_days']}거래일 MACD 교차 {gc_count_20d}회 이상 (휩소)")
 
     if stage in ("A3", "B"):
         close, cloud_top, cloud_bot = row.get("close"), row.get("cloud_top"), row.get("cloud_bot")
@@ -138,7 +146,7 @@ def ban_reasons(
                 reasons.append(f"당일 시가 갭 {gap_pct:.1f}% (필터 {cfg['assumptions']['gap_filter_pct']}% 이상)")
 
     date = row.name
-    if is_earnings_within(date, earnings_date):
-        reasons.append("실적 발표 3거래일 이내")
+    if is_earnings_within(date, earnings_date, cfg=cfg):
+        reasons.append(f"실적 발표 {lv['earnings_filter_trading_days']}거래일 이내")
 
     return reasons
