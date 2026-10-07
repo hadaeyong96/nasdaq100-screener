@@ -251,6 +251,54 @@ def _screening_ctx(summary: dict, cfg: dict) -> dict:
     return ctx
 
 
+# ── 자금 흐름 관찰 (F2, docs/design/flow_watch.md) — 참고용 표시 ─────────────────
+_FLOW_CAPTION = "참고용 · 매수 신호 아님 · 검증 중(2026-10 시작, 판정 2027-10)"
+_SECTOR_KO = {
+    "Technology": "기술", "Communication Services": "커뮤니케이션", "Consumer Cyclical": "경기소비재",
+    "Consumer Defensive": "필수소비재", "Healthcare": "헬스케어", "Industrials": "산업재", "Utilities": "유틸리티",
+    "Financial Services": "금융", "Energy": "에너지", "Basic Materials": "소재", "Real Estate": "부동산",
+}
+_FLOW_STATUS_CLS = {"유입": "ok", "투매": "no", "보통": ""}
+
+
+def _pct(v, digits: int = 1, sign: bool = True) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "-"
+    return f"{v * 100:+.{digits}f}%" if sign else f"{v * 100:.{digits}f}%"
+
+
+def _usd_compact(v) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "-"
+    return f"${v / 1e9:,.1f}B" if v >= 1e9 else f"${v / 1e6:,.0f}M"
+
+
+def _flow_watch_ctx(summary: dict) -> dict | None:
+    """summary["flow_watch"](engine.daily.build_flow_watch_view) -> 템플릿 context. 없으면 None."""
+    view = summary.get("flow_watch")
+    if not view:
+        return None
+    top = []
+    for r in view["top"]:
+        top.append({
+            "rank": r["rank"], "name": r["name"], "ticker": r["ticker"], "status": r["status"],
+            "status_cls": _FLOW_STATUS_CLS.get(r["status"], ""),
+            "share_ratio": f"{r['share_ratio']:.2f}배", "volume_ratio": "-" if pd.isna(r["volume_ratio"]) else f"{r['volume_ratio']:.2f}배",
+            "weekly": _pct(r["weekly_return"]), "up_ratio": _pct(r["up_volume_ratio"], 0, sign=False),
+            "dv5": _usd_compact(r["dollar_volume_5d"]), "high52": _pct(r["high_52w"]), "our_signal": r["our_signal"],
+        })
+    sectors = []
+    for x in view["sectors"]:
+        ch = round(x["change_pp"], 1) + 0.0  # 반올림 후 0이면 "-0.0" 대신 "0.0"
+        sectors.append({
+            "sector": _SECTOR_KO.get(x["sector"], x["sector"]), "count": x["count"],
+            "recent": f"{x['recent_share_pct']:.1f}%", "base": f"{x['base_share_pct']:.1f}%",
+            "change": f"{ch:+.1f}%p" if ch else "0.0%p", "change_cls": "up" if ch > 0 else ("down" if ch < 0 else ""),
+        })
+    return {"caption": _FLOW_CAPTION, "as_of_str": view["as_of_str"], "scan_count": view["scan_count"],
+            "top": top, "sectors": sectors, "excluded": view["excluded"]}
+
+
 def build_context(summary: dict, cfg: dict) -> dict:
     """summary dict(engine/daily.py) + cfg -> Jinja2 템플릿에 넘길 context."""
     as_of = summary.get("as_of")
@@ -451,6 +499,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
         "macro_disclaimer": macro_explain.DISCLAIMER,
         "screening": _screening_ctx(summary, cfg),
+        "flow_watch": _flow_watch_ctx(summary),
     }
 
 

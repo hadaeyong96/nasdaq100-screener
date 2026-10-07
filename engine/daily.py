@@ -59,6 +59,7 @@ for _stream in (sys.stdout, sys.stderr):  # 윈도우 콘솔 cp949 UnicodeEncode
 from core import auto_plan  # noqa: E402
 from core import explain as expl  # noqa: E402
 from core import filters as filt  # noqa: E402
+from core import flow_watch as fw  # noqa: E402
 from core import macro_status  # noqa: E402
 from core import screening_view as sview  # noqa: E402
 from core import sizing  # noqa: E402
@@ -67,6 +68,7 @@ from core import state as st  # noqa: E402
 from core.indicators import compute_indicators  # noqa: E402
 from data import fx  # noqa: E402
 from data import macro as macrodata  # noqa: E402
+from data import sectors as _sectors  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
 from data.fills import fill_key, load_fills, load_plan, summarize_cash_rows  # noqa: E402
 from data.market_calendar import latest_closed_trading_day, trading_days_between  # noqa: E402
@@ -1707,6 +1709,77 @@ def _screening_inputs(conn, indicator_map: dict, as_of_by_ticker: dict, today_ev
     return recent, future
 
 
+# ── F2 자금 흐름 관찰 (docs/design/flow_watch.md): 표시·주간 기록 전용 ─────────────
+# 신호·필터·상태·수량은 읽기만 하고 바꾸지 않는다. 계산은 core.flow_watch(순수 함수).
+_FLOW_BUCKET_LABEL = {"b1": "1차", "b2": "2차", "b3": "3차", "b9": "재진입"}
+_FLOW_HELD_LABEL = {"정찰": "1차", "확인": "2차", "확정": "3차", "추세보유": "재진입"}
+
+
+def _flow_sector_map() -> dict[str, str]:
+    """KJB-1에서 받아 둔 섹터 캐시(data/cache/sectors.parquet)를 읽기만 한다 — 새로 받지 않는다."""
+    if not _sectors.CACHE_PATH.exists():
+        return {}
+    cache = _sectors._load_cache(_sectors.CACHE_PATH)
+    return {t: s for t, s in cache["sector"].items() if isinstance(s, str) and s}
+
+
+def _flow_our_signal(ticker: str, buy_groups: dict, states: dict) -> str:
+    """오늘 매수 추천 차수 + 보유 차수 문구 (표시 전용, 구현 해석 13번)."""
+    parts = [f"오늘 {_FLOW_BUCKET_LABEL[k]} 신호" for k in ("b1", "b2", "b3", "b9") if any(r.get("ticker") == ticker for r in buy_groups.get(k, []))]
+    held = _FLOW_HELD_LABEL.get((states.get(ticker) or {}).get("state"))
+    if held:
+        parts.append(f"{held} 보유")
+    return " · ".join(parts) or "없음"
+
+
+def build_flow_watch_view(prices: dict, as_of, cfg: dict, name_map, buy_groups: dict, states: dict, sector_map: dict) -> dict:
+    """보고서용 자금 흐름 view: core.flow_watch.compute_flow + 종목명·우리 신호. flow(원본)도 같이 돌려준다."""
+    flow = fw.compute_flow(prices, sector_map, as_of, cfg)
+    top = [{**r, "name": name_map.get(r["ticker"], "") or r["ticker"], "our_signal": _flow_our_signal(r["ticker"], buy_groups, states)} for r in flow["top"]]
+    return {
+        "flow": flow, "top": top, "sectors": flow["sectors"], "excluded": flow["excluded"],
+        "scan_count": len(flow["metrics"]), "as_of_str": flow["as_of"].date().isoformat(),
+    }
+
+
+def _fetch_qqq_close_series(cfg: dict) -> pd.Series:
+    """QQQ 확정 종가(기존 가격 수집 함수, 구현 해석 18번). 실패하면 예외를 그대로 올린다."""
+    from data.prices import fetch_one
+
+    return fetch_one("QQQ", cfg)["close"]
+
+
+def record_flow_watch(conn, flow: dict, prices: dict, cfg: dict, as_of, warnings: list[str], qqq_fetch=None) -> dict:
+    """주간 기록(그 주 마지막 거래일만) + 지난 기록 5·20일 결과 채우기. live·dry-run 아님일 때만 부른다.
+
+    QQQ를 못 받으면 둘 다 하지 않고 warnings에 남긴다(조용히 넘기지 않음). 출력: {recorded, filled, is_week_end}
+    """
+    qqq_fetch = qqq_fetch or (lambda: _fetch_qqq_close_series(cfg))
+    as_of = pd.Timestamp(as_of).normalize()
+    nxt = trading_days_between((as_of + pd.Timedelta(days=1)).date(), (as_of + pd.Timedelta(days=15)).date())
+    week_end = bool(len(nxt)) and fw.is_last_trading_day_of_week(as_of, nxt[0])
+    base_iso = as_of.date().isoformat()
+    need_record = week_end and not flow["metrics"].empty and not db.flow_watch_has_base_date(conn, base_iso)
+    pending = db.flow_watch_pending(conn)
+    out = {"recorded": 0, "filled": 0, "is_week_end": week_end}
+    if not need_record and not pending:
+        return out
+    try:
+        qqq = qqq_fetch()
+    except Exception as exc:
+        warnings.append(f"자금 흐름 기록: QQQ 시세를 받지 못해 주간 기록·결과 채우기를 건너뜁니다 ({type(exc).__name__}: {exc})")
+        return out
+    if need_record:
+        if as_of in qqq.index:
+            out["recorded"] = db.record_flow_watch(conn, fw.weekly_record_rows(flow, float(qqq.loc[as_of]), cfg))
+        else:
+            warnings.append(f"자금 흐름 기록: QQQ에 기준일 {base_iso} 종가가 없어 이번 주 기록을 건너뜁니다")
+    if pending:
+        closes = {t: df["close"] for t, df in prices.items()}
+        out["filled"] = db.update_flow_watch_results(conn, fw.fill_results(pending, closes, qqq, as_of), base_iso)
+    return out
+
+
 def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None) -> dict:
     """엔진을 한 번 실행한다. 결과 요약 dict를 반환한다 (완료 보고·보고서·텔레그램용).
 
@@ -2004,6 +2077,16 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
     summary["rebuilt_from"] = str(rebuild_from.date()) if rebuild_from is not None else None
     as_of = summary["as_of"]
     funnel = summary["funnel"]
+
+    # ── F2 자금 흐름 관찰 (표시 전용 + 실전 DB 주간 기록, docs/design/flow_watch.md) ──
+    if as_of is not None:
+        flow_view = build_flow_watch_view(
+            price_result.prices, as_of, cfg, name_map, summary["buy_groups"], positions, _flow_sector_map(),
+        )
+        summary["flow_watch"] = flow_view
+        if mode == "live" and not dry_run:
+            fw_result = record_flow_watch(conn, flow_view["flow"], price_result.prices, cfg, as_of, run_warnings)
+            print(f"[daily] 자금 흐름 기록: 주 마지막 거래일={fw_result['is_week_end']}, 새 기록 {fw_result['recorded']}행, 결과 채움 {fw_result['filled']}칸")
 
     # ── 통과 현황(5단계 funnel): 보고서에는 안 쓰고 CSV·events에만 남긴다 ───────
     if as_of is not None:

@@ -166,6 +166,17 @@ report:
   short_title: "데이터브리핑" # 텔레그램 첫 줄, 첨부 파일 이름
   public_suffix: "투자클럽" # 공개용 표시
 
+# ── 자금 흐름 관찰 (F2, docs/design/flow_watch.md) ──────────────────────────
+# 표시·주간 기록 전용(참고용, 매수 신호 아님). 여기 값은 신호·필터·수량 계산에 쓰지 않는다.
+# 사전 등록(configs/f2_preregistration.yaml)과 같은 값 — 검증 기간(2026-10 ~ 2027-10)에는 바꾸지 않는다.
+flow_watch:
+  share_ratio_min: 1.5 # 점유율 배율 기준(이상)
+  up_volume_ratio_min: 0.5 # 유입: 상승일 거래량 비중 초과
+  recent_days: 5 # 최근 구간(거래일)
+  base_days: 60 # 직전 비교 구간(거래일)
+  top_n: 10 # TOP 표·주간 목록 크기
+  exclude_tickers: [QQQ, QQQM, TQQQ, QLD, SQQQ, PSQ] # 대상에서 뺄 ETF
+
 # ── 시장 온도 (P3.8) ────────────────────────────────────────────────────────
 # 표시 전용. 여기 값은 신호·필터·수량 계산에 쓰지 않는다.
 macro:

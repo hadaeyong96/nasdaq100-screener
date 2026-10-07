@@ -158,6 +158,31 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # F2 자금 흐름 관찰(docs/design/flow_watch.md): 주간 유입·투매·대상 목록과 5·20거래일 결과.
+    # 실전 DB에만 쓴다(engine/daily.py가 live일 때만 부름). 키 = (기준일, 목록, 티커).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS flow_watch (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            base_date TEXT,
+            list TEXT,
+            rank INTEGER,
+            ticker TEXT,
+            share_ratio REAL,
+            close REAL,
+            qqq_close REAL,
+            ret_5d REAL,
+            qqq_ret_5d REAL,
+            excess_5d REAL,
+            filled_5d_at TEXT,
+            ret_20d REAL,
+            qqq_ret_20d REAL,
+            excess_20d REAL,
+            filled_20d_at TEXT,
+            UNIQUE (base_date, list, ticker)
+        )
+        """
+    )
     conn.commit()
 
 
@@ -385,3 +410,60 @@ def get_daily_mark(conn: sqlite3.Connection, mode: str | None = None) -> list[di
             f"SELECT {', '.join(_DAILY_MARK_FIELDS)} FROM daily_mark WHERE mode = ? ORDER BY date, ticker", (mode,)
         )
     return [dict(zip(_DAILY_MARK_FIELDS, row)) for row in cur.fetchall()]
+
+
+# ── F2 자금 흐름 관찰 (docs/design/flow_watch.md) ─────────────────────────────
+
+
+def flow_watch_has_base_date(conn: sqlite3.Connection, base_date: str) -> bool:
+    """같은 기준일 기록이 이미 있는지 (재실행 안전)."""
+    return conn.execute("SELECT 1 FROM flow_watch WHERE base_date = ? LIMIT 1", (base_date,)).fetchone() is not None
+
+
+def record_flow_watch(conn: sqlite3.Connection, rows: list[dict]) -> int:
+    """주간 기록 행을 넣는다. 같은 기준일이 이미 있으면 아무것도 안 하고 0을 돌려준다.
+
+    입력: core.flow_watch.weekly_record_rows 결과 / 출력: 넣은 행 수
+    """
+    if not rows:
+        return 0
+    if flow_watch_has_base_date(conn, rows[0]["base_date"]):
+        return 0
+    conn.executemany(
+        "INSERT OR IGNORE INTO flow_watch (base_date, list, rank, ticker, share_ratio, close, qqq_close) "
+        "VALUES (:base_date, :list, :rank, :ticker, :share_ratio, :close, :qqq_close)",
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def flow_watch_pending(conn: sqlite3.Connection) -> list[dict]:
+    """5일 또는 20일 결과가 빈 기록 행. 출력: [{id, base_date, ticker, need_5d, need_20d}]"""
+    cur = conn.execute(
+        "SELECT id, base_date, ticker, filled_5d_at IS NULL, filled_20d_at IS NULL FROM flow_watch "
+        "WHERE filled_5d_at IS NULL OR filled_20d_at IS NULL"
+    )
+    return [{"id": r[0], "base_date": r[1], "ticker": r[2], "need_5d": bool(r[3]), "need_20d": bool(r[4])} for r in cur.fetchall()]
+
+
+def update_flow_watch_results(conn: sqlite3.Connection, results: list[dict], filled_at: str) -> int:
+    """core.flow_watch.fill_results 결과를 채운다(이미 채운 칸은 덮어쓰지 않음). 출력: 채운 칸 수"""
+    n = 0
+    for r in results:
+        h = int(r["horizon"])
+        if h not in (5, 20):
+            raise ValueError(f"알 수 없는 기간: {h}")
+        cur = conn.execute(
+            f"UPDATE flow_watch SET ret_{h}d = ?, qqq_ret_{h}d = ?, excess_{h}d = ?, filled_{h}d_at = ? "
+            f"WHERE id = ? AND filled_{h}d_at IS NULL",
+            (r["ret"], r["qqq_ret"], r["excess"], filled_at, r["id"]),
+        )
+        n += cur.rowcount
+    conn.commit()
+    return n
+
+
+def load_flow_watch(conn: sqlite3.Connection) -> pd.DataFrame:
+    """flow_watch 표 전체 (scripts/f2_review.py용)."""
+    return pd.read_sql_query("SELECT * FROM flow_watch ORDER BY base_date, list, rank, ticker", conn)

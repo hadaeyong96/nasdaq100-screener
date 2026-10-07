@@ -1,0 +1,87 @@
+# F2 자금 흐름 관찰 사전 등록 — docs/design/flow_watch.md의 설계를 기계가 읽을 수 있게 옮긴 것.
+# 코드를 쓰기 전에 커밋하고 git tag f2-prereg를 붙인다. 이후 수정하지 않는다.
+# scripts/f2_review.py는 시작할 때 이 파일과 docs/design/flow_watch.md의 sha256(LF 정규화)을 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-07"
+base_commit: "be4f387"
+trial: {series: F2, id: 1, label: "F2 시도 1 (앞으로 52주 기록)"}
+
+universe:
+  source: "engine/daily.py가 그날 받은 구성 종목 일봉 (새 데이터 없음)"
+  exclude_tickers: [QQQ, QQQM, TQQQ, QLD, SQQQ, PSQ]
+  fields: [close, volume]
+  rows_used: "기준일(as_of) 이하"
+
+indicators:
+  window_dates: 65            # 대상 종목 날짜 합집합 중 기준일 이하 최근 65개
+  recent_days: 5
+  base_days: 60
+  dollar_volume: "close * volume"
+  share: "종목 거래대금 / 같은 날 (제외 후) 대상 전체 거래대금 합"
+  share_ratio: "mean(share 최근 5) / mean(share 직전 60), 분모 0이면 결측"
+  volume_ratio: "mean(volume 최근 5) / mean(volume 직전 60), 분모 0이면 결측"
+  weekly_return: "close[t] / close[t-5] - 1"
+  up_volume_ratio: "최근 5일 중 close[d] > close[d-1]인 날 거래량 합 / 5일 거래량 합, 합 0이면 결측"
+  high_52w: "close[t] / max(종목 자기 행 최근 252행 close, 252 미만이면 있는 만큼) - 1"
+  exclusion: "창 65개 날짜 중 행 없음·종가/거래량 NaN·종가<=0·기준일 행 없음 → 제외(수·티커 표시)"
+
+states:
+  inflow: {share_ratio_min: 1.5, share_ratio_inclusive: true, weekly_return_gt: 0.0, up_volume_ratio_gt: 0.5}
+  dump: {share_ratio_min: 1.5, share_ratio_inclusive: true, weekly_return_lt: 0.0}
+  normal: "그 외 (결측 지표 포함)"
+
+report:
+  top_n: 10
+  top_sort: "share_ratio desc, ticker asc, 결측 제외"
+  sector_source: "data/cache/sectors.parquet 읽기만 (없으면 미분류)"
+  sector_sort: "change_pp desc, recent_share desc"
+  caption: "참고용 · 매수 신호 아님 · 검증 중(2026-10 시작, 판정 2027-10)"
+  position: "오늘의 스크리닝 구역 아래"
+  modes: [live, paper]
+  our_signal: "오늘 매수 추천 차수 + 보유 차수(정찰=1차, 확인=2차, 확정=3차, 추세보유=재진입), 없으면 없음"
+
+config_yaml_keys:  # config.yaml flow_watch 구역 (기본값 = 위 값)
+  share_ratio_min: 1.5
+  up_volume_ratio_min: 0.5
+  recent_days: 5
+  base_days: 60
+  top_n: 10
+
+weekly_record:
+  db: "실전 data/state.db, 표 flow_watch"
+  when: "live · dry-run 아님 · 정상 실행 · 기준일 다음 NYSE 거래일의 ISO 주가 다름(그 주 마지막 거래일)"
+  missed_week: "소급 기록 없음"
+  lists:
+    유입: {filter: "상태 유입", sort: "share_ratio desc", max: 10}
+    투매: {filter: "상태 투매", sort: "share_ratio desc", max: 10}
+    대상: {filter: "제외되지 않은 전 종목", rank: null, purpose: "판정 대조군 표본"}
+  columns: [base_date, list, rank, ticker, share_ratio, close, qqq_close,
+            ret_5d, qqq_ret_5d, excess_5d, filled_5d_at, ret_20d, qqq_ret_20d, excess_20d, filled_20d_at]
+  key: [base_date, list, ticker]
+  idempotent: "같은 base_date 행이 있으면 다시 쓰지 않음"
+  qqq_source: "data.prices.fetch_one('QQQ') — 기록·채우기 때만, 실패 시 기록·채우기 생략 + 경고"
+  fill: "매 live 실행, 종목·QQQ 각자 시리즈에서 base_date 뒤 h번째 행(h=5,20)이 기준일 이하로 있으면 채움. 두 종가 모두 현재 시리즈에서 읽음"
+
+review:
+  script: scripts/f2_review.py
+  verdict_not_before: "2027-10-01"
+  before_verdict_date: "기록 수·채움 수만 출력, 수익 평균 출력 안 함"
+  sample_base_dates: {from: "2026-10-01", to: "2027-09-30"}
+  metric: excess_20d
+  averaging: "행 단순 평균"
+  control:
+    source_list: 대상
+    per_base_date: 10
+    fewer_than_10: "전부"
+    replace: false
+    iterations: 1000
+    seed: 20261007
+  pass_if_all:
+    - "mean(유입 excess_20d) > 0"
+    - "mean(유입 excess_20d) >= percentile(대조군 평균 분포, 75, linear)"
+    - "mean(투매 excess_20d) < mean(유입 excess_20d)"
+  empty_inflow: fail
+  empty_dump: fail
+  on_pass: "신호로 쓰는 것을 새 사전 등록으로 검토"
+  on_fail: "참고 표시만 유지하거나 제거"
+  no_historical_backtest: true
