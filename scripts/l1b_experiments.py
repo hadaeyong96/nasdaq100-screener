@@ -520,7 +520,7 @@ def write_outputs(ctx, prereg, series_rows, checks, extra, full, subs, nbs, verd
             f"1 {mark(1)}(B0 대비 N {v['c1']['N']:+.2f}%p, U {v['c1']['U']:+.2f}%p) · "
             f"2 {mark(2)}(MDD 차이 N {v['c2']['N']:+.2f}%p, U {v['c2']['U']:+.2f}%p) · "
             f"3 {mark(3)}(하위 구간 N {v['c3']['N']}/2, U {v['c3']['U']}/3) · "
-            f"4 {mark(4)}(주변값 차이 N {[round(d, 2) for d in v['c4']['N']]}, U {[round(d, 2) for d in v['c4']['U']]})"
+            f"4 {mark(4)}(주변값 차이 N {[round(float(d), 2) for d in v['c4']['N']]}, U {[round(float(d), 2) for d in v['c4']['U']]})"
         )
     if passed:
         worst_mdd = {c: min(full["N"][c]["mdd"], full["U"][c]["mdd"]) for c in passed}
@@ -535,7 +535,7 @@ def write_outputs(ctx, prereg, series_rows, checks, extra, full, subs, nbs, verd
         mark = lambda k: "✓" if v["ok"][k] else "✗"  # noqa: E731
         mlines.append(f"- **{c}({ASSET_KO[MONTHLY_DEFENSE[c]]} 방어): {'충족' if v['pass'] else '미충족'}** — "
                       f"1 {mark(1)}(M0 대비 {v['c1']:+.2f}%p) · 2 {mark(2)}(MDD 차이 {v['c2']:+.2f}%p) · "
-                      f"4 {mark(4)}(9·11개월 차이 {[round(d, 2) for d in v['c4']]})")
+                      f"4 {mark(4)}(9·11개월 차이 {[round(float(d), 2) for d in v['c4']]})")
     if mpass:
         best = max(mpass, key=lambda c: mfull[c]["posttax"])
         mdecision = f"**방어 자산 후보: {ASSET_KO[MONTHLY_DEFENSE[best]]}** ({best}, 세후 {mfull[best]['posttax']:.2f}%)"
@@ -622,7 +622,8 @@ L1 엔진 규칙(다음 날 **시가** 체결, 원화 4,000만 원, 양도세 25
 {yearly_md}
 ## 결과를 본 뒤 바꾼 점
 
-- 없음 (사전 등록과 구현 해석 그대로 1회 실행).
+- 판정·계산 규칙 변경 없음 (사전 등록과 구현 해석 그대로).
+- 표시만 수정: 첫 실행 출력에서 판정 줄의 주변값 차이가 `np.float64(0.25)`처럼 찍혀 `float()`로 감싸 다시 실행했다. 숫자·판정은 첫 실행과 같다(결정적 계산).
 
 ## 한계
 
