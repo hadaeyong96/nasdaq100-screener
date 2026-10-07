@@ -294,6 +294,9 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 .scr details.more>summary{cursor:pointer;color:var(--info);font-size:12px;font-weight:700;margin:6px 0}
 .scr .empty2{color:var(--mute);font-size:13px;padding:6px 0}
 @media (max-width:640px){.scr-arrow{display:none}.scr-step{flex:1 1 40%}.scr-card{padding:10px 10px}}
+/* 자금 흐름 관찰 (F2, 참고용, docs/design/flow_watch.md) */
+.fw .cap{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--warn-bg);color:var(--warn);font-size:11px;font-weight:700;vertical-align:middle}
+.fw td.up{color:var(--buy);font-weight:700}.fw td.down{color:var(--sell);font-weight:700}
 /* "왜?" 4단 설명 (매수) */
 .whybox .ws{margin:0 0 8px}
 .whybox .ws h4{margin:0 0 4px;font-size:13px;font-weight:800}
@@ -444,6 +447,34 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <div class="mini">점수 100점 = 등급(S 40·A 25·B 10) + 거래량(1.5배 25·1.2배 15) + 구름두께(3% 이하 20·6% 이하 10) + 밴드폭 백분위(20% 이하 15). 1차·3차는 등급이 없어 등급 점수 0.</div>
   {% endif %}
 </section>
+
+{% if flow_watch %}
+<!-- 자금 흐름 관찰 (F2, docs/design/flow_watch.md) — 참고용, 매수 신호 아님 -->
+<section class="scr fw" aria-label="돈이 몰리는 종목">
+  <h2>돈이 몰리는 종목 TOP 10 <span class="cap">{{ flow_watch.caption }}</span></h2>
+  <div class="scr-sub">{{ flow_watch.as_of_str }} 미국장 마감 · {{ flow_watch.scan_count }}종목 · 점유율 배율 = 최근 5거래일 거래대금 점유율 평균 ÷ 직전 60거래일 평균 · 유입 = 배율 1.5 이상 + 주간 상승 + 상승일 거래량 50% 초과, 투매 = 배율 1.5 이상 + 주간 하락</div>
+  <div class="scr-card">
+  {% if flow_watch.top %}
+  <div class="scroll"><table>
+    <thead><tr><th class="nosort">순위</th><th class="nosort l">종목</th><th class="nosort">상태</th><th class="nosort">점유율 배율</th><th class="nosort">거래량 배율</th><th class="nosort">주간 수익률</th><th class="nosort">상승일 비중</th><th class="nosort">5일 거래대금</th><th class="nosort">52주 고점 대비</th><th class="nosort l">우리 신호</th></tr></thead>
+    <tbody>{% for r in flow_watch.top %}<tr><td>{{ r.rank }}</td><td class="l"><b>{{ r.name }}</b><span class="tkr">{{ r.ticker }}</span></td><td>{% if r.status_cls %}<span class="tag {{ r.status_cls }}">{{ r.status }}</span>{% else %}{{ r.status }}{% endif %}</td><td class="sc">{{ r.share_ratio }}</td><td>{{ r.volume_ratio }}</td><td>{{ r.weekly }}</td><td>{{ r.up_ratio }}</td><td>{{ r.dv5 }}</td><td>{{ r.high52 }}</td><td class="l">{{ r.our_signal }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">계산할 수 있는 종목이 없습니다 (데이터 65거래일 미만)</div>{% endif %}
+  <div class="mini">제외 {{ flow_watch.excluded|length }}종목 (데이터 65거래일 미만·결측){% if flow_watch.excluded %}: {{ flow_watch.excluded|join(', ') }}{% endif %}</div>
+  </div>
+
+  <h3>섹터별 자금 흐름 <span class="cap">{{ flow_watch.caption }}</span></h3>
+  <div class="scr-card">
+  {% if flow_watch.sectors %}
+  <div class="scroll"><table class="fit">
+    <thead><tr><th class="nosort l">업종</th><th class="nosort">종목 수</th><th class="nosort">최근 5거래일 점유율</th><th class="nosort">직전 60거래일 점유율</th><th class="nosort">변화</th></tr></thead>
+    <tbody>{% for x in flow_watch.sectors %}<tr><td class="l">{{ x.sector }}</td><td>{{ x.count }}</td><td>{{ x.recent }}</td><td>{{ x.base }}</td><td class="{{ x.change_cls }}">{{ x.change }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">섹터 표 없음</div>{% endif %}
+  <div class="mini">점유율 = 업종 거래대금 ÷ 대상 전체 거래대금. 업종은 저장해 둔 GICS 분류(없으면 미분류). 변화가 큰 순서.</div>
+  </div>
+</section>
+{% endif %}
 
 {% if macro_rows %}
 <section class="macro" aria-label="시장 온도">
