@@ -41,26 +41,29 @@ def signal_facts(close: pd.Series, sma_days: int = 200) -> pd.DataFrame:
     }, index=close.index)
 
 
-def buy_dates(days: pd.DatetimeIndex, months: list[pd.Period], rule: str = "first") -> list[pd.Timestamp]:
-    """달마다 매수일: first = 첫 거래일, mid = 15일 이후 첫 거래일, last = 마지막 거래일. 없는 달은 ValueError."""
+def month_table(days: pd.DatetimeIndex) -> pd.DataFrame:
+    """달마다 첫 거래일·15일 이후 첫 거래일·마지막 거래일 표(인덱스 = 월 Period, 없는 칸 NaT)."""
     days = pd.DatetimeIndex(days)
-    per = days.to_period("M")
+    s = pd.Series(days, index=days)
+    g = s.groupby(days.to_period("M"))
+    mid = s[days.day >= 15].groupby(days[days.day >= 15].to_period("M")).first()
+    return pd.DataFrame({"first": g.first(), "mid": mid, "last": g.last()})
+
+
+def buy_dates(days, months: list[pd.Period], rule: str = "first") -> list[pd.Timestamp]:
+    """달마다 매수일: first = 첫 거래일, mid = 15일 이후 첫 거래일, last = 마지막 거래일. 없는 달은 ValueError.
+
+    입력: days(거래일 DatetimeIndex) 또는 month_table 결과(구간을 많이 만들 때 한 번만 계산해 넘긴다)
+    """
+    if rule not in ("first", "mid", "last"):
+        raise ValueError(f"알 수 없는 매수일 규칙: {rule}")
+    table = days if isinstance(days, pd.DataFrame) else month_table(days)
     out = []
     for m in months:
-        in_m = days[per == m]
-        if not len(in_m):
-            raise ValueError(f"{m}에 거래일이 없습니다")
-        if rule == "first":
-            out.append(in_m[0])
-        elif rule == "mid":
-            later = in_m[in_m.day >= 15]
-            if not len(later):
-                raise ValueError(f"{m}에 15일 이후 거래일이 없습니다")
-            out.append(later[0])
-        elif rule == "last":
-            out.append(in_m[-1])
-        else:
-            raise ValueError(f"알 수 없는 매수일 규칙: {rule}")
+        v = table[rule].get(m, pd.NaT)
+        if pd.isna(v):
+            raise ValueError(f"{m}에 {'15일 이후 ' if rule == 'mid' else ''}거래일이 없습니다")
+        out.append(pd.Timestamp(v))
     return out
 
 
@@ -125,31 +128,42 @@ class Step:
 
 
 def build_steps(days: pd.DatetimeIndex, price: pd.Series, fx: pd.Series, rate: pd.Series, div: pd.Series,
-                facts: pd.DataFrame, dates: list[pd.Timestamp], valuation: pd.Timestamp) -> list[Step]:
-    """매수일 목록 + 평가일 → Step 목록(마지막 원소 = 평가일). 입력 Series는 모두 날짜 인덱스."""
-    days = pd.DatetimeIndex(days)
+                facts: pd.DataFrame, dates: list[pd.Timestamp], valuation: pd.Timestamp, *, prepared: dict | None = None) -> list[Step]:
+    """매수일 목록 + 평가일 → Step 목록(마지막 원소 = 평가일). 입력 Series는 모두 날짜 인덱스.
+
+    prepared: prepare_arrays 결과(구간을 많이 만들 때 한 번만 계산해 넘긴다, 결과는 같다).
+    """
+    p = prepared or prepare_arrays(days, price, fx, rate, div, facts)
     pts = list(dates) + [valuation]
-    log_g = np.log1p(rate.reindex(days).fillna(0.0)).cumsum()
-    div_cum = div.reindex(days).fillna(0.0).cumsum()
+    pos = p["days"].get_indexer(pts)
+    if (pos < 0).any():
+        raise ValueError("매수일·평가일이 거래일에 없습니다")
     steps = []
-    prev = None
-    for d in pts:
-        if prev is None:
+    for i, (d, k) in enumerate(zip(pts, pos)):
+        if i == 0:
             g, dv = 1.0, 0.0
         else:
-            g = float(np.exp(log_g.loc[d] - log_g.loc[prev]))  # (prev, d]
-            before = days[days < d][-1]
-            dv = float(div_cum.loc[before] - div_cum.loc[prev]) if before > prev else 0.0  # (prev, d)
-        f = facts.loc[d] if d in facts.index else None
+            j = pos[i - 1]
+            g = float(np.exp(p["log_g"][k] - p["log_g"][j]))  # (prev, d]
+            dv = float(p["div_cum"][k - 1] - p["div_cum"][j]) if k - 1 > j else 0.0  # (prev, d)
         steps.append(Step(
-            date=d, price=float(price.loc[d]), fx=float(fx.loc[d]) if fx is not None else 1.0, growth=g, div_per_share=dv,
-            month=d.month,
-            last_month_ret=float(f["last_month_ret"]) if f is not None else np.nan,
-            dd=float(f["dd"]) if f is not None else np.nan,
-            below=float(f["below"]) if f is not None else np.nan,
+            date=pd.Timestamp(d), price=float(p["price"][k]), fx=float(p["fx"][k]), growth=g, div_per_share=dv, month=d.month,
+            last_month_ret=float(p["lmr"][k]), dd=float(p["dd"][k]), below=float(p["below"][k]),
         ))
-        prev = d
     return steps
+
+
+def prepare_arrays(days, price, fx, rate, div, facts) -> dict:
+    """build_steps가 쓰는 배열(거래일 위치 기준)."""
+    days = pd.DatetimeIndex(days)
+    f = facts.reindex(days)
+    return {
+        "days": days, "price": price.reindex(days).to_numpy(dtype=float),
+        "fx": fx.reindex(days).to_numpy(dtype=float) if fx is not None else np.ones(len(days)),
+        "log_g": np.log1p(rate.reindex(days).fillna(0.0).to_numpy(dtype=float)).cumsum(),
+        "div_cum": div.reindex(days).fillna(0.0).to_numpy(dtype=float).cumsum(),
+        "lmr": f["last_month_ret"].to_numpy(dtype=float), "dd": f["dd"].to_numpy(dtype=float), "below": f["below"].to_numpy(dtype=float),
+    }
 
 
 def simulate(steps: list[Step], cand: str, base: float, *, buy_commission_pct: float = 0.07,

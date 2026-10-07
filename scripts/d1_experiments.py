@@ -96,12 +96,15 @@ def load_datasets(prereg: dict) -> dict:
 
 
 def window(d: dict, start: pd.Period, rule: str = "first"):
+    if "_table" not in d:  # 구간을 많이 만들므로 달력·배열은 한 번만 준비한다(결과 같음)
+        d["_table"] = dca.month_table(d["days"])
+        d["_arrays"] = dca.prepare_arrays(d["days"], d["price"], d["fx"], d["rate"], d["div"], d["facts"])
     months = [start + i for i in range(HORIZON)]
-    dates = dca.buy_dates(d["days"], months, rule)
-    valuation = dca.buy_dates(d["days"], [start + HORIZON], "first")[0]
+    valuation = dca.buy_dates(d["_table"], [start + HORIZON], "first")[0]
     if valuation > d["seal"]:
         raise SystemExit(f"[d1] 평가일 {valuation.date()}이 봉인일 뒤 — 멈춤")
-    return dca.build_steps(d["days"], d["price"], d["fx"], d["rate"], d["div"], d["facts"], dates, valuation)
+    dates = dca.buy_dates(d["_table"], months, rule)
+    return dca.build_steps(d["days"], d["price"], d["fx"], d["rate"], d["div"], d["facts"], dates, valuation, prepared=d["_arrays"])
 
 
 def sim(d: dict, steps, cand: str) -> dict:
