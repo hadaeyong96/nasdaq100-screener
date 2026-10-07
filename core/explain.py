@@ -217,7 +217,7 @@ def _rule_items(stage: str, ctx: dict, cfg: dict) -> list[dict]:
         exp = a["a1_to_a2_expiry_days"]
         items.append(_verdict(
             None if elapsed is None else elapsed <= exp,
-            f"1차 매수일 {_md(a1_date) or '?'} · 오늘 {_v(elapsed, '{}')}/{exp}거래일째 · 기준: 1차 당일 포함 {exp}거래일 안",
+            f"1차 매수일 {_md(a1_date) or '?'} · 오늘 {_v(elapsed, '{}')}/{exp}거래일째 · 기준: 1차 체결이 확정된 다음 거래일부터, 1차 당일 포함 {exp}거래일째까지",
         ))
         items.append(_gc_item(ctx))
         items.append(_verdict(None if rsi_now is None else lo <= rsi_now < hi, f"RSI {_v(rsi_now, '{:.1f}')} · 기준: {lo:g} 이상 {hi:g} 미만"))

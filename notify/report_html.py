@@ -18,6 +18,7 @@ import jinja2
 import pandas as pd
 
 from core import macro_status
+from core import screening_view as sview
 from notify import macro_explain
 from notify.briefing import PUBLIC_DISCLAIMER, report_titles
 from core.sizing import format_krw
@@ -176,75 +177,96 @@ def _live_judgment_row_ctx(r: dict) -> dict:
 
 # ── 오늘의 스크리닝 (보고서 맨 위, docs/design/screening_view.md) ─────────────────
 # 전략 카드 문구는 여기 상수로 두고, 기한·임계값 숫자는 모두 cfg(assumptions·strategy_levels·risk)에서 읽는다.
-_STRATEGY_NAME = "바닥 반전 3단 확인 매수법 (1:2:6 피라미딩)"
-_STRATEGY_LINE = (
-    "많이 떨어진 종목이 RSI → MACD → 일목 구름 순서로 반등을 증명할 때마다 1 → 2 → 6으로 늘려 산다. "
-    "떨어질 때 더 사는 물타기는 하지 않는다."
-)
+_STRATEGY_NAME = "바닥 반전 3단 확인 매수법"
+_STRATEGY_LINE = "많이 떨어진 종목이 반등을 세 번 증명할 때마다 조금씩 더 산다. 틀리면 작게 잃고, 맞으면 크게 싣는다."
 _STRATEGY_ROOT = (
     "뿌리: 후지모토 1:2:6(대본 MACD_11) + \"맞을 때만 더 산다\"(리버모어식 피라미딩). 유명 전략을 그대로 옮긴 것이 아니라, "
     "MACD·RSI·일목 대본을 모아 우리가 만든 전략이다(전략 v3)."
 )
+_NO_AVERAGING = "떨어질 때 더 사는 물타기는 하지 않는다 — 더 사는 것은 반등이 한 단계 더 증명됐을 때뿐이다."
 _CANSLIM_ROWS = [
     ("사는 자리", "신고가 근처 바닥 패턴(손잡이 컵 등) 돌파", "많이 떨어진 뒤 반등이 확인되는 자리"),
     ("종목 고르기", "실적·성장(펀더멘털) + 차트", "차트 지표만 (RSI·MACD·일목·거래량)"),
     ("비중 늘리기", "오를 때 추가 매수(피라미딩)", "신호가 겹칠 때만 1 → 2 → 6"),
-    ("손절", "매수가 −7~8%", "{swing}일 최저가 (차트 기준, 3차부터는 구름 하단과 비교)"),
+    ("손절", "매수가 −7~8%", "{swing}거래일 최저가 (차트 기준, 3차부터는 구름 하단과 비교)"),
 ]
 _LANE_COLOR = {"a1": "a1", "a2": "a2", "a3": "a3", "b": "b"}
+# 2차 기한 표현 (전략 문서 v3.0.1 ①과 같은 말)
+A2_WINDOW_TEXT = "1차 체결이 확정된 다음 거래일부터, 1차 당일 포함 {exp}거래일째까지"
+
+
+def _stage_fractions(parts: list[float]) -> list[str]:
+    """단계별 위험 예산(config risk.a1~a3_budget_pct) → 공통 분모 분수 문자열 (예: 1/9, 2/9, 6/9)."""
+    import math
+    from fractions import Fraction
+
+    total = sum(parts)
+    fr = [Fraction(x / total).limit_denominator(20) if total else Fraction(0) for x in parts]
+    den = math.lcm(*(f.denominator for f in fr)) if fr else 1
+    return [f"{f.numerator * den // f.denominator}/{den}" for f in fr]
 
 
 def _strategy_card(cfg: dict) -> dict:
-    """"우리 전략 한눈에" 고정 카드. 숫자는 cfg에서 읽는다."""
+    """"우리 전략 한눈에" 카드. 숫자는 모두 cfg(strategy_levels·assumptions·risk)에서 읽는다."""
     a, risk = cfg["assumptions"], cfg["risk"]
     lv = levels(cfg)
     lo, mid, hi = (f"{lv[k]:g}" for k in ("rsi_oversold", "rsi_mid", "rsi_overbought"))
     exp, swing, gap = a["a1_to_a2_expiry_days"], a["swing_low_period"], a["gap_filter_pct"]
-    total_risk = round(risk["a1_budget_pct"] + risk["a2_budget_pct"] + risk["a3_budget_pct"], 2)
+    parts = [risk["a1_budget_pct"], risk["a2_budget_pct"], risk["a3_budget_pct"]]
+    total_risk = round(sum(parts), 2)
+    w1, w2, w3 = _stage_fractions(parts)
+    window = A2_WINDOW_TEXT.format(exp=exp)
     stages = [
-        {"cls": "a1", "name": "1차 정찰", "weight": "1/9", "buy": f"RSI가 어제 {lo} 미만 → 오늘 {lo} 이상 (보유 중·재진입 대기 아님)",
-         "mean": "떨어지던 힘이 멈춤 (첫 신호)", "stop": f"{swing}일 최저가", "sell": "MACD 데드크로스 → 1차분"},
-        {"cls": "a2", "name": "2차 확인", "weight": "2/9",
-         "buy": f"1차 체결 다음 거래일부터, 1차일 포함 {exp}거래일 안에 MACD 골든크로스 · RSI {lo}~{hi}",
-         "mean": "방향이 진짜로 바뀜", "stop": f"{swing}일 최저가 (1차 기준)", "sell": f"RSI {mid} 이탈 → 2차분"},
-        {"cls": "a3", "name": "3차 확정", "weight": "6/9",
-         "buy": f"2차 보유 중 · 종가 > 구름 상단 · 앞구름 양운 · 종가 > {cfg['indicators']['ichimoku_shift']}일 전 고가 · MACD > 시그널 & RSI ≥ {mid}",
-         "mean": "상승 추세가 자리 잡음 (본 진입)", "stop": f"{swing}일 최저가·구름 하단 중 높은 값", "sell": "구름 이탈 → 남은 전량"},
-        {"cls": "b", "name": "재진입", "weight": "한 번에",
-         "buy": f"이미 구름 위(양운·후행스팬 돌파) · 골든크로스 · 정규화 MACD {a['s_grade_macd_norm_min_pct']:g}% 이상 · RSI {mid}~{hi} (쿨다운 없음)",
-         "mean": "쉬던 상승 추세가 다시 달림", "stop": f"진입일 {swing}일 최저가", "sell": "1·2·3차와 같은 순서"},
+        {"cls": "a1", "name": "1차 정찰", "buy": f"RSI가 {lo} 아래에서 위로 올라옴", "mean": "떨어지던 힘이 멈춤", "weight": w1,
+         "sell": f"MACD 데드크로스 → 1차분, 기한(1차 당일 포함 {exp}거래일째)까지 2차 없으면 만료"},
+        {"cls": "a2", "name": "2차 확인", "buy": f"{window} MACD 골든크로스", "mean": "방향이 진짜 바뀜", "weight": w2,
+         "sell": f"RSI {mid} 아래로 → 2차분"},
+        {"cls": "a3", "name": "3차 확정", "buy": "2차 보유 중 일목 구름 위 + 4조건", "mean": "상승 추세 자리 잡음", "weight": w3,
+         "sell": "구름 아래로 → 남은 전량"},
+        {"cls": "b", "name": "재진입", "buy": "이미 구름 위인 종목이 쉬었다 다시 골든크로스", "mean": "쉬던 상승 추세가 다시 달림", "weight": "1회",
+         "sell": "위와 같은 순서"},
     ]
+    rule_line = (
+        f"손절(최우선) 종가 < 최근 {swing}거래일 최저가면 전량 매도 · 안 사는 날: 실적 발표 {lv['earnings_filter_trading_days']}일 이내, "
+        f"RSI {hi} 이상, 교차가 잦은 횡보, 구름 안 · 한 종목 최대 손실 계좌의 {total_risk:g}%"
+    )
     bans = (
         f"공통 금지(신규 매수만): 실적 발표 {lv['earnings_filter_trading_days']}거래일 이내(모든 차수) · 골든크로스 날 RSI {hi} 이상(2차·재진입) · "
         f"최근 {lv['cross_window_days']}거래일 MACD 교차 {a['whipsaw_max_crosses_20d']}회 이상(2차·재진입) · 구름 안·앞구름 음운(3차·재진입) · "
         f"신호일 시가 갭 {gap:g}% 이상(3차). 매수일 시가가 {gap:g}% 이상 높게 시작하면 직접 보류(3차, 수동 규칙)."
+    )
+    a3_detail = (
+        f"3차 4조건: 종가 > 구름 상단 · 앞구름 양운 · 종가 > {cfg['indicators']['ichimoku_shift']}일 전 고가(후행스팬 돌파) · "
+        f"MACD > 시그널 & RSI ≥ {mid}. 재진입은 정규화 MACD {a['s_grade_macd_norm_min_pct']:g}% 이상 · RSI {mid}~{hi}, 재진입 손실 한도 계좌의 {risk['b_budget_pct']:g}%."
     )
     risk_line = (
         f"한 종목 최대 손실: 계좌의 {total_risk:g}% (1:2:6 단계 합) · 재진입은 {risk['b_budget_pct']:g}% · "
         f"매수는 다음 거래일 종가 × {cfg['entry']['limit_markup']:g} 이하 지정가 · 청산 후 {a['reentry_cooldown_days']}거래일은 새 1차 없음."
     )
     canslim = [(k, o, ours.format(swing=swing)) for k, o, ours in _CANSLIM_ROWS]
-    return {"name": _STRATEGY_NAME, "line": _STRATEGY_LINE, "root": _STRATEGY_ROOT, "stages": stages,
-            "bans": bans, "risk_line": risk_line, "canslim": canslim}
+    return {"name": _STRATEGY_NAME, "line": _STRATEGY_LINE, "root": _STRATEGY_ROOT, "no_averaging": _NO_AVERAGING,
+            "stages": stages, "rule_line": rule_line, "bans": bans, "a3_detail": a3_detail, "risk_line": risk_line,
+            "canslim": canslim}
 
 
 def _screening_ctx(summary: dict, cfg: dict) -> dict:
-    """summary["screening"](core.screening_view.build_screening_view) -> 템플릿 context.
+    """summary["screening"](core.screening_view.build_screening_view) -> 간결한 표 context.
 
-    단계 상자의 막대 폭은 그 레인 첫 단계 대비 비율(%)이다.
+    숫자·추천·제외 사유는 view 그대로이고(core.screening_view.compact_view가 다시 묶기만 함),
+    추천 종목의 "왜?"는 매수 탭과 같은 설명(buy_groups 행의 explain)을 key(티커-차수)로 이어 붙인다.
     """
     view = summary.get("screening")
-    ctx = {"strategy": _strategy_card(cfg), "lanes": [], "check": None, "scan_count": None, "as_of_str": None}
+    ctx = {"strategy": _strategy_card(cfg), "summary": [], "recommended": [], "others": [], "not_bought": [],
+           "check": None, "scan_count": None, "as_of_str": None, "a2_window": A2_WINDOW_TEXT.format(exp=cfg["assumptions"]["a1_to_a2_expiry_days"])}
     if not view:
         return ctx
-    for key in ("a1", "a2", "a3", "b"):
-        lane = view["lanes"][key]
-        first = lane["steps"][0]["count"] or 0
-        steps = [
-            {**st, "pct": (100.0 if i == 0 else (st["count"] / first * 100 if first else 0.0))}
-            for i, st in enumerate(lane["steps"])
-        ]
-        ctx["lanes"].append({**lane, "steps": steps, "color": _LANE_COLOR[key]})
+    compact = sview.compact_view(view, cfg)
+    explain_by_key = {r.get("key", f"{r['ticker']}-{r.get('stage', '')}"): r.get("explain")
+                      for rows in (summary.get("buy_groups") or {}).values() for r in rows}
+    ctx["summary"] = compact["summary"]
+    ctx["recommended"] = [{**r, "color": _LANE_COLOR[r["lane"]], "explain": explain_by_key.get(r["key"])} for r in compact["recommended"]]
+    ctx["others"] = compact["others"]
+    ctx["not_bought"] = compact["not_bought"]
     ctx["check"] = view["funnel_check"]
     ctx["scan_count"] = view["scan_count"]
     ctx["as_of_str"] = view.get("as_of_str")
