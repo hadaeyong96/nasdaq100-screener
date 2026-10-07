@@ -56,13 +56,20 @@ def align_rf(rf: pd.Series, days: pd.DatetimeIndex) -> pd.Series:
     return np.expm1(diff)
 
 
-def synthetic_2x_returns(r: pd.Series, rf: pd.Series, expense_annual_pct: float = 0.95, divisor: int = 252) -> pd.Series:
-    """합성 2배 일간 수익 = 2·r − RF − 보수/divisor (행마다, 매일 재조정). −100% 아래는 −100%로 자른다.
+def synthetic_leveraged_returns(r: pd.Series, rf: pd.Series, k: float = 2.0, expense_annual_pct: float = 0.95,
+                                divisor: int = 252) -> pd.Series:
+    """합성 k배 일간 수익 = k·r − (k−1)·RF − 보수/divisor (행마다, 매일 재조정). −100% 아래는 −100%로 자른다.
 
-    입력: r(지수 일간 수익), rf(같은 인덱스 RF) / 출력: Series
+    k=2이면 L1b의 2·r − RF − 보수와 같다(L1d에서 k=3으로 일반화).
+    입력: r(지수 일간 수익), rf(같은 인덱스 행당 금리), k(배수) / 출력: Series
     """
-    out = 2.0 * r - rf.reindex(r.index) - expense_annual_pct / 100.0 / divisor
+    out = k * r - (k - 1.0) * rf.reindex(r.index) - expense_annual_pct / 100.0 / divisor
     return out.clip(lower=-1.0)
+
+
+def synthetic_2x_returns(r: pd.Series, rf: pd.Series, expense_annual_pct: float = 0.95, divisor: int = 252) -> pd.Series:
+    """합성 2배 일간 수익 = 2·r − RF − 보수/divisor (synthetic_leveraged_returns k=2). 입력·출력은 위와 같다."""
+    return synthetic_leveraged_returns(r, rf, 2.0, expense_annual_pct, divisor)
 
 
 def compound_by_month(daily: pd.Series) -> pd.Series:
