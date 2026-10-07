@@ -1,0 +1,168 @@
+# L1b 사전 등록 — docs/l1b_plan.md의 계획을 기계가 읽을 수 있게 옮긴 것.
+# 어떤 결과도 계산하기 전에 커밋하고 git tag l1b-prereg를 붙인다. 이후 수정하지 않는다.
+# scripts/l1b_experiments.py는 시작할 때 이 파일과 docs/l1b_plan.md의 sha256(LF 정규화)을 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-07"
+base_commit: "be4f387"  # main, 이 위에서 분기
+trial:
+  series: L1b
+  id: 1
+  label: "L1b 시도 1"
+  history:
+    - {series: L1, id: 1, period: "1999-03-10~2021-12-31", result: "전 후보 불합격", reuse_for_verdict: false}
+  note: "같은 기간(N 1972~1998, U 1927~1998)은 결과와 관계없이 다시 판정에 쓰지 않는다."
+
+seal:
+  last_allowed_date: "1998-12-31"
+  rule: "로딩 직후 자르고, 1999-01-01 이후 행이 하나라도 남으면 SealError로 멈춘다"
+
+data:
+  N:
+    source: yfinance
+    ticker: "^IXIC"
+    price: "Close (auto_adjust=False)"
+    dividends: false
+    verdict_start: "1972-01-03"
+    end: "1998-12-31"
+    warmup: "1972-01-03 이전 야후 제공 행 전부(이동평균·최고가용). 210행 미만이면 판정 시작을 210일선 첫 산출일로 늦춘다"
+    rf_alignment: "직전 ^IXIC 거래일 다음 날 ~ 그날까지 프렌치 RF 복리, 없으면 0"
+  U:
+    source: "Kenneth French F-F_Research_Data_Factors_daily"
+    url: "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip"
+    daily_return: "(Mkt-RF + RF) / 100"
+    level: "1926-07-01부터 복리 누적 총수익 지수 (신호도 이 지수로)"
+    load_start: "1926-07-01"
+    verdict_start: "1927-07-01"
+    end: "1998-12-31"
+    trading_day: "프렌치 파일 행(1952년 이전 토요일 포함)"
+  cash:
+    source: "프렌치 일별 RF"
+    taxable_interest: true
+  high_dividend:
+    source: "Kenneth French Portfolios_Formed_on_D-P"
+    url: "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/Portfolios_Formed_on_D-P_CSV.zip"
+    section: "Value Weight Returns -- Monthly"
+    column: "Hi 30"
+    period: "1927-07 ~ 1998-12"
+    use: monthly_only
+    missing_values_stop: [-99.99, -999]
+  leveraged_2x:
+    formula: "2 * r - RF - 0.0095/252 (행마다, 매일 재조정)"
+    expense_annual_pct: 0.95
+    per_row_divisor: 252
+    hypothetical: true
+    wipeout: "r2 <= -1 이면 가치 0"
+  monthly_returns: "일별 수익(1배·합성 2배·RF)을 달마다 복리 합산"
+  checks:
+    french_mkt_annual: {"1931": -44.0, "1987": 2.0}
+    ixic_daily: {"1987-10-19": -11.0}
+    tolerance_pp: 5.0
+
+daily_candidates:
+  markets: [N, U]
+  B0: {role: "기준", rule: "1배 지수 보유"}
+  B1:
+    rule: "종가 > SMA(sma_days)면 2배, 아니면 국채"
+    params: {sma_days: 200}
+  B2:
+    rule: "평소 1배. 최고가 대비 낙폭 <= crash_pct면 표시. 표시 중 종가 > SMA면 2배, 아니면 1배. 종가 >= 직전 최고가면 표시 해제 → 1배"
+    params: {sma_days: 200, crash_pct: -30}
+  B3:
+    rule: "B1과 같은 자산. 위/아래 상태는 confirm_days행 연속 반대쪽일 때만 바뀐다"
+    params: {sma_days: 200, confirm_days: 3}
+  sma_equal_counts_as_below: true
+  peak: "워밍업 첫 행부터 그날까지 최고 종가"
+  execution:
+    signal: "t일 종가"
+    fill: "t+1 거래일 종가 (L1은 다음 날 시가)"
+    start_day: "S-1일 신호의 목표 자산을 S일 종가에 매수"
+    rebalance_within_same_asset: false
+
+monthly_candidates:
+  market: U
+  period: {start: "1927-07", end: "1998-12"}
+  signal: "월말 총수익 지수 > 그 달 포함 최근 avg_months개 월말 평균이면 다음 달 2배, 아니면 방어 자산"
+  fill: "신호 월말 종가"
+  M0: {role: "기준", hold: "1배 시장"}
+  M1: {attack: "2배", defense: "국채", params: {avg_months: 10}}
+  M2: {attack: "2배", defense: "고배당 Hi 30", params: {avg_months: 10}}
+  M3: {attack: "2배", defense: "1배 시장", params: {avg_months: 10}}
+  measure_frequency: monthly
+
+neighborhood_values:
+  one_at_a_time: true
+  sma_days: [190, 200, 210]      # B1, B2, B3
+  crash_pct: [-25, -30, -35]     # B2
+  confirm_days: [2, 3, 4]        # B3
+  avg_months: [9, 10, 11]        # M1~M3
+  stable_if_all_neighbors_within_pp: 1.0  # 전 기간 세후 연복리, 주 설정 대비
+  daily_markets_required: [N, U]
+
+costs_tax:
+  currency: USD
+  trade_cost_one_way_pct: 0.1
+  applies_to: "모든 매수·매도(국채 포함, 첫 매수·마지막 청산 포함)"
+  capital_gains_rate_pct: 22
+  taxable_base: "연간 실현손익 합 + 국채 이자 (순이익 > 0일 때만)"
+  deduction: 0
+  loss_carryforward: false
+  settlement: "그해 마지막 거래일(월별은 12월 말) 종가, 전환 거래 뒤. 납부용 매도 손익은 다음 해 장부"
+  cost_basis: moving_average
+  dividend_withholding: "미반영(한계)"
+  initial_usd: 100000
+  additional_contributions: none
+  posttax: "기간 끝 전량 청산(0.1%)·그해 세금 납부 후 연복리"
+  pretax: "세금만 끈 시뮬레이션의 기간 끝 평가액 연복리"
+  years: "(끝 - 시작) 일수 / 365.25"
+
+periods:
+  U_full: {start: "1927-07-01", end: "1998-12-31"}
+  U_sub:
+    - {name: "1927~49", start: "1927-07-01", end: "1949-12-31"}
+    - {name: "1950~74", start: "1950-01-01", end: "1974-12-31"}
+    - {name: "1975~98", start: "1975-01-01", end: "1998-12-31"}
+  N_full: {start: "1972-01-03", end: "1998-12-31"}
+  N_sub:
+    - {name: "1972~85", start: "1972-01-03", end: "1985-12-31"}
+    - {name: "1986~98", start: "1986-01-01", end: "1998-12-31"}
+  sub_period_restart_usd: 100000
+  majority: {U: 2, N: 2}
+
+criteria_daily:  # B1~B3, 모두 충족해야 합격
+  - {id: 1, key: excess_posttax_cagr_vs_B0_pp, period: full, min: 2.0, markets: [N, U]}
+  - {id: 2, key: mdd_minus_B0_mdd_pp, period: full, min: -2.0, markets: [N, U]}
+  - {id: 3, key: sub_periods_beating_B0_posttax, rule: "U 3개 중 2개 이상, N 2개 중 2개", strict_greater: true}
+  - {id: 4, key: neighborhood_stable, within_pp: 1.0, markets: [N, U]}
+compare_unrounded: true
+selection: "합격이 여럿이면 N·U 중 더 깊은 MDD가 가장 얕은 1개 → paper 기록 + 봉인 구간(2022~) 1회 개봉"
+on_fail: "그대로 기록, 같은 기간 다시 판정에 쓰지 않음"
+
+criteria_monthly:  # M1~M3, U에서
+  - {id: 1, key: excess_posttax_cagr_vs_M0_pp, min: 2.0}
+  - {id: 2, key: monthly_mdd_minus_M0_mdd_pp, min: -2.0}
+  - {id: 4, key: neighborhood_stable, values: [9, 11], within_pp: 1.0}
+monthly_record: "충족 후보 중 세후 연복리 최고의 방어 자산 = 방어 자산 후보. 없으면 '월별 10개월 평균 2배 전환 불합격'"
+
+reporting:
+  metrics: [posttax_cagr, pretax_cagr, mdd, longest_recovery, worst_year, yearly_returns, switch_count, total_tax_usd, lev2_time_share]
+  crash_windows:
+    U:
+      "1929~32": ["1929-09-01", "1932-07-31"]
+      "1937~38": ["1937-03-01", "1938-03-31"]
+      "1973~74": ["1973-01-01", "1974-12-31"]
+      "1987-10": ["1987-10-01", "1987-10-31"]
+      "1990": ["1990-07-01", "1990-10-31"]
+      "1998-08": ["1998-07-15", "1998-10-15"]
+    N:
+      "1973~74": ["1973-01-01", "1974-12-31"]
+      "1987-10": ["1987-10-01", "1987-10-31"]
+      "1990": ["1990-07-01", "1990-10-31"]
+      "1998-08": ["1998-07-15", "1998-10-15"]
+  reference_not_for_verdict:
+    what: "B2·B3 주 설정을 QQQ 1999-03-10~2021-12-31에 L1 엔진·세금 그대로"
+    engine: "engine/portfolio.simulate_target_weights (다음 날 시가 체결)"
+    mapping: {"1배": core, "2배": qld, "국채": reserve}
+    signal_index: "L1과 같은 ^NDX 접합 QQQ 종가"
+    baseline: "L0 = P6 P0"
+  limitations: ["가상 2배 상품", "배당세 미반영", "나스닥 배당 미포함", "다음 날 종가 체결", "U 신호가 총수익 지수 기준", "1952년 이전 토요일 행에도 보수 /252"]
+  outputs: ["docs/results/l1b.md", "outputs/l1b_*.csv", "outputs/l1b_*.png"]
