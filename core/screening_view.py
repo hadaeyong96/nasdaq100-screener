@@ -600,3 +600,70 @@ def buy_facts(
     if facts["swing_low"] is None and stage in ("A1", "B"):
         facts["swing_low"] = _num(row.get("swing_low"))
     return facts
+
+
+# ── 간결한 표 형식 (보고서 "오늘의 스크리닝" ②·③) — 표시용 정리만 ─────────────────
+# build_screening_view가 이미 계산한 레인 숫자·행을 다시 묶을 뿐, 새로 판정하지 않는다.
+
+STAGE_LABEL = {"a1": "1차", "a2": "2차", "a3": "3차", "b": "재진입"}
+STAGE_CODE = {"a1": "A1", "a2": "A2", "a3": "A3", "b": "B"}
+_CANDIDATE_NOTE = {"a1": "", "a2": "1차 보유", "a3": "2차 보유", "b": "구름 위"}
+WAIT_SHOW = 3  # 요약표 "대기" 종목을 이만큼만 이름으로 보여 주고 나머지는 "외 n종목"
+
+
+def _fmt(v, spec: str = "{}") -> str:
+    return "?" if v is None else spec.format(v)
+
+
+def row_basis(lane_key: str, r: dict, cfg: dict) -> str:
+    """추천 종목 한 줄의 핵심 근거(표시용). 값은 레인 행에 이미 있는 오늘 지표 값만 쓴다."""
+    if lane_key == "a1":
+        vr = r.get("vol_ratio")
+        weak = " (약함)" if vr is not None and vr < 1.0 else ""
+        return f"RSI {_fmt(r.get('rsi_prev'))} → {_fmt(r.get('rsi'))} · 거래량 {_fmt(vr)}배{weak}"
+    if lane_key == "a2":
+        grade = f" · {r['grade']}등급" if r.get("grade") else ""
+        elapsed = f" ({r['elapsed']}/{r['expiry_days']}일째)" if r.get("elapsed") else ""
+        return f"골든크로스 · RSI {_fmt(r.get('rsi'))}{grade} · 1차 {r.get('a1_date_str') or '?'}{elapsed}"
+    if lane_key == "a3":
+        gap = f" · 시가 갭 {r['gap_pct']:+.1f}%" if r.get("gap_pct") is not None else ""
+        return f"구름 위 · 앞구름 양운 · 후행스팬 돌파 · MACD>시그널{gap}"
+    grade = f" · {r['grade']}등급" if r.get("grade") else ""
+    return f"구름 위 · 골든크로스 · RSI {_fmt(r.get('rsi'))}{grade}"
+
+
+def compact_view(view: dict, cfg: dict) -> dict:
+    """build_screening_view 결과 → 요약표 4행, 추천 종목표, 제외·대기 목록 (숫자·결과는 그대로).
+
+    요약표 열: 후보(레인 첫 단계 수), 신호(둘째 단계 수), 통과(셋째 단계 수), 오늘 추천(추천 행 종목).
+    2차 대기 종목은 요약표 "오늘 추천" 칸에 기한·남은 거래일(기한 = 1차 당일 포함 n거래일째, 오늘이 elapsed일째)과 함께 적는다.
+    출력: {"summary": [...], "recommended": [...], "others": [...], "not_bought": [...], "signal_labels": {...}}
+    """
+    summary, recommended, others = [], [], []
+    for key in ("a1", "a2", "a3", "b"):
+        lane = view["lanes"][key]
+        steps = lane["steps"]
+        recs = [r for r in lane["rows"] if r["result"] == "추천"]
+        waiting = []
+        if key == "a2":
+            for r in lane["rows"]:
+                if r["result"] == "대기":
+                    left = (r["expiry_days"] - r["elapsed"]) if r.get("elapsed") is not None else None
+                    waiting.append({"ticker": r["ticker"], "kr": r["kr"], "deadline_str": r.get("deadline_str"), "days_left": left})
+        summary.append({
+            "key": key, "stage": STAGE_LABEL[key], "candidate_note": _CANDIDATE_NOTE[key],
+            "candidates": steps[0]["count"], "signal": steps[1]["count"], "passed": steps[2]["count"],
+            "signal_label": steps[1]["label"], "passed_label": steps[2]["label"],
+            "recs": [{"ticker": r["ticker"], "kr": r["kr"]} for r in sorted(recs, key=lambda r: r["rank"] or 0)],
+            "waiting": waiting[:WAIT_SHOW], "waiting_more": max(len(waiting) - WAIT_SHOW, 0),
+        })
+        for r in sorted(recs, key=lambda r: r["rank"] or 0):
+            recommended.append({"lane": key, "stage": STAGE_LABEL[key], "code": STAGE_CODE[key], "ticker": r["ticker"], "kr": r["kr"],
+                                "basis": row_basis(key, r, cfg), "score": r["score"], "rank": r["rank"],
+                                "key": f"{r['ticker']}-{STAGE_CODE[key]}"})
+        for r in lane["rows"]:
+            if r["result"] != "추천":
+                others.append({"stage": STAGE_LABEL[key], "ticker": r["ticker"], "kr": r["kr"], "result": r["result"],
+                               "reason": r.get("reason"), "tone": r.get("tone"), "score": r["score"]})
+    return {"summary": summary, "recommended": recommended, "others": others,
+            "not_bought": view["lanes"]["a2"].get("not_bought", [])}

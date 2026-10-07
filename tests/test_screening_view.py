@@ -273,9 +273,11 @@ def test_screening_section_renders_in_report(sample_summary):
     cfg_ = sample.sample_inputs()["cfg"]
     html = report_html._env.get_template("report.html.j2").render(**report_html.build_context(sample_summary, cfg_))
     assert "오늘의 스크리닝" in html and "바닥 반전 3단 확인 매수법" in html
-    for title in ("1차 정찰 · RSI 30 탈출", "2차 확인", "3차 확정", "재진입"):
+    for title in ("① 우리 전략 한눈에", "② 오늘의 깔때기", "③ 오늘 추천 종목", "1차 정찰", "2차 확인", "3차 확정", "재진입"):
         assert title in html
-    assert "참고: 2차 대상 아님" in html and "① 우리 규칙" in html
+    assert "제외·대기 종목 보기" in html and "2차 대상 아님" in html and "① 우리 규칙" in html
+    # 옛 숫자 상자·화살표·막대·레인별 표는 없다
+    assert 'class="scr-step"' not in html and 'class="scr-flow"' not in html and "scr-bar" not in html
 
 
 def test_report_without_screening_still_renders(cfg):
@@ -319,7 +321,8 @@ def test_strategy_levels_change_signals_and_filters(cfg):
     reasons = filters.ban_reasons(stage="A2", row=pd.Series({"rsi": 66.0}, name=d), gc_count_20d=0, prev_close=1.0, cfg=c)
     assert reasons == ["골든크로스 당일 RSI 65 이상"]
     card = __import__("notify.report_html", fromlist=["x"])._strategy_card(c)
-    assert "어제 25 미만" in card["stages"][0]["buy"] and "최근 5거래일" in card["bans"] and "실적 발표 1거래일" in card["bans"]
+    assert "RSI가 25 아래에서" in card["stages"][0]["buy"] and "최근 5거래일" in card["bans"] and "실적 발표 1거래일" in card["bans"]
+    assert "RSI 65 이상" in card["rule_line"] and "실적 발표 1일 이내" in card["rule_line"] and "RSI 55 아래로" in card["stages"][1]["sell"]
 
 
 def test_buy_badge_follows_mode_and_body_sits_under_rule(cfg, sample_summary):
@@ -329,3 +332,106 @@ def test_buy_badge_follows_mode_and_body_sits_under_rule(cfg, sample_summary):
     assert e["sections"][0]["text"] == e["body"] and e["body"] not in (e["sections"][1]["text"] or "")
     paper = expl.explain_buy("A1", {"kr": "X", "limit": 10.0, "stop": 9.0, "sizing": {"mode": "paper"}}, cfg)
     assert paper["badge"] == "슬롯의 1/9"
+
+
+# ── 간결한 표 형식 (feat/funnel-compact): 숫자·추천은 그대로, 보여 주는 방식만 ─────────────
+
+
+def _assert_compact_matches_view(view: dict, cfg) -> dict:
+    compact = sv.compact_view(view, cfg)
+    for row in compact["summary"]:
+        lane = view["lanes"][row["key"]]
+        assert [row["candidates"], row["signal"], row["passed"]] == [st_["count"] for st_ in lane["steps"][:3]]
+        assert {r["ticker"] for r in row["recs"]} == {r["ticker"] for r in lane["rows"] if r["result"] == "추천"}
+    # 추천표 + 제외·대기 목록 = 레인 행 전부 (빠지거나 겹치는 것 없음)
+    n_rows = sum(len(view["lanes"][k]["rows"]) for k in ("a1", "a2", "a3", "b"))
+    assert len(compact["recommended"]) + len(compact["others"]) == n_rows
+    return compact
+
+
+def test_compact_summary_equals_funnel_numbers_on_sample(sample_summary, cfg):
+    view = sample_summary["screening"]
+    compact = _assert_compact_matches_view(view, cfg)
+    sim = sample_summary["_sim"]
+    funnel = _compute_funnel(sim["today_events"], sample.sample_inputs()["im"], sim["as_of_by_ticker"])
+    by = {r["key"]: r for r in compact["summary"]}
+    assert by["a1"]["signal"] == funnel["1차 RSI 30 돌파"]
+    assert by["a3"]["signal"] == funnel["3차 일목구름 4요소"]
+    assert by["a1"]["candidates"] == view["scan_count"]
+
+
+@pytest.mark.parametrize("upto", [20, 70, 120, 149])
+def test_compact_summary_equals_funnel_numbers_on_synthetic(cfg, universe, upto):
+    sim, _ = _run_until(cfg, universe, upto)
+    view = sv.build_screening_view(universe, sim["as_of_by_ticker"], sim["states"], sim["today_events"], cfg)
+    compact = _assert_compact_matches_view(view, cfg)
+    events = {(e["ticker"], e["kind"]) for e in sim["today_events"] if e["kind"] in ("A1", "A2", "A3", "B")}
+    assert {(r["ticker"], r["code"]) for r in compact["recommended"]} == events
+
+
+def test_recommended_table_equals_buy_rows_and_reuses_explain(sample_summary, cfg):
+    from notify import report_html
+
+    ctx = report_html._screening_ctx(sample_summary, cfg)
+    buy_rows = [r for rows in sample_summary["buy_groups"].values() for r in rows]
+    assert {r["key"] for r in ctx["recommended"]} == {r["key"] for r in buy_rows}
+    by_key = {r["key"]: r for r in buy_rows}
+    for r in ctx["recommended"]:
+        assert r["explain"] is by_key[r["key"]]["explain"] and r["explain"]["sections"]
+        assert r["score"] == by_key[r["key"]]["score"]
+
+
+def test_basis_line_examples(cfg):
+    a1 = sv.row_basis("a1", {"rsi_prev": 27.8, "rsi": 31.6, "vol_ratio": 0.6}, cfg)
+    assert a1 == "RSI 27.8 → 31.6 · 거래량 0.6배 (약함)"
+    assert sv.row_basis("b", {"rsi": 64.3, "grade": "S"}, cfg) == "구름 위 · 골든크로스 · RSI 64.3 · S등급"
+    assert "(약함)" not in sv.row_basis("a1", {"rsi_prev": 29.0, "rsi": 31.0, "vol_ratio": 1.3}, cfg)
+
+
+def _fake_view(recs: bool, waiting: list[dict]):
+    steps3 = [{"label": "x", "count": 0}, {"label": "y", "count": 0}, {"label": "z", "count": 0}]
+    lanes = {k: {"key": k, "steps": list(steps3), "rows": [], "not_bought": []} for k in ("a1", "a2", "a3", "b")}
+    lanes["a1"]["steps"] = steps3 + [{"label": "오늘 추천", "count": 0}]
+    for w in waiting:
+        lanes["a2"]["rows"].append({"ticker": w[0], "kr": w[0], "result": "대기", "reason": "기한", "tone": "inf", "score": 10,
+                                    "deadline_str": w[1], "elapsed": w[2], "expiry_days": 10, "rank": None})
+    if recs:
+        lanes["b"]["rows"].append({"ticker": "AAA", "kr": "에이", "result": "추천", "tone": "ok", "score": 70, "rank": 1, "rsi": 60.0, "grade": "A"})
+    return {"lanes": lanes, "funnel_check": None, "scan_count": 100, "as_of_str": "10/06", "facts_by_key": {}}
+
+
+def test_summary_waiting_text_and_no_recommendation(cfg):
+    from engine.daily import _empty_run_summary
+    from notify import report_html
+
+    summary = _empty_run_summary("live", pd.Timestamp("2026-10-06"), [])
+    summary["screening"] = _fake_view(False, [("ODFL", "10/13", 6)])
+    html = report_html._env.get_template("report.html.j2").render(**report_html.build_context(summary, copy.deepcopy(cfg)))
+    assert "없음 · ODFL 대기 (기한 10/13, 4일 남음)" in html
+    assert "오늘 추천 종목 없음" in html
+    summary["screening"] = _fake_view(True, [("ODFL", "10/07", 10)] + [(f"W{i}", "10/20", 2) for i in range(4)])
+    html = report_html._env.get_template("report.html.j2").render(**report_html.build_context(summary, copy.deepcopy(cfg)))
+    assert "ODFL 대기 (기한 10/07, 오늘 마감)" in html and "외 2종목 대기" in html
+    assert '<span class="tag ok">에이 AAA</span>' in html and "오늘 추천 종목 없음" not in html
+
+
+def test_strategy_card_numbers_come_from_config(cfg):
+    from notify import report_html
+
+    card = report_html._strategy_card(cfg)
+    assert [s["weight"] for s in card["stages"]] == ["1/9", "2/9", "6/9", "1회"]
+    assert "최근 10거래일 최저가" in card["rule_line"] and "계좌의 2%" in card["rule_line"] and "실적 발표 3일 이내" in card["rule_line"]
+    assert card["stages"][1]["buy"].startswith("1차 체결이 확정된 다음 거래일부터, 1차 당일 포함 10거래일째까지")
+    c = copy.deepcopy(cfg)
+    c["assumptions"]["a1_to_a2_expiry_days"] = 7
+    c["assumptions"]["swing_low_period"] = 5
+    card2 = report_html._strategy_card(c)
+    assert "1차 당일 포함 7거래일째까지" in card2["stages"][1]["buy"] and "최근 5거래일 최저가" in card2["rule_line"]
+
+
+def test_old_a2_window_wording_gone(sample_summary, cfg):
+    from notify import report_html
+
+    html = report_html._env.get_template("report.html.j2").render(**report_html.build_context(sample_summary, copy.deepcopy(cfg)))
+    assert "1차 당일 포함 기한" not in html and "1차일 포함" not in html
+    assert "1차 체결이 확정된 다음 거래일부터, 1차 당일 포함 10거래일째까지" in html

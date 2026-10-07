@@ -258,11 +258,6 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 .scr>.scr-sub{color:var(--sub);font-size:12px;margin-bottom:8px}
 .scr h3{font-size:15px;font-weight:800;margin:14px 0 6px}
 .scr-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:8px 0;min-width:0}
-.scr-card>summary{cursor:pointer;list-style:none}
-.scr-card>summary::-webkit-details-marker{display:none}
-.scr-card>summary .nm2{font-size:16px;font-weight:800}
-.scr-card>summary .tg{float:right;color:var(--info);font-size:12px;font-weight:700}
-.scr-card[open]>summary .tg::after{content:"접기"}.scr-card:not([open])>summary .tg::after{content:"펼치기"}
 .scr .mini{font-size:12px;color:var(--sub);line-height:1.55}
 .scr .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .scr table{min-width:560px;width:100%;border-collapse:collapse;font-size:13px}
@@ -279,21 +274,14 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 .scr .yes{color:var(--buy);font-weight:800}.scr .nay{color:var(--sell);font-weight:800}.scr .unk{color:var(--mute)}
 .scr .tkr{color:var(--mute);font-size:11px;margin-left:3px}
 .scr .sc{font-weight:800}
-.lane{border-left:4px solid var(--line)}
-.lane.a1{border-left-color:var(--a1)}.lane.a2{border-left-color:var(--a2)}.lane.a3{border-left-color:var(--a3)}.lane.b{border-left-color:var(--lb)}
-.lane-t{font-weight:800;font-size:15px;margin-bottom:4px}
-.scr-flow{display:flex;flex-wrap:wrap;gap:6px;align-items:stretch;margin:6px 0 10px}
-.scr-step{flex:1 1 92px;min-width:0;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--paper)}
-.scr-step b{display:block;font-size:20px;line-height:1.2}
-.scr-step span{font-size:12px;color:var(--sub)}
-.scr-arrow{align-self:center;color:var(--mute);font-weight:800}
-.scr-bar{height:6px;border-radius:3px;background:var(--grid);margin-top:5px;overflow:hidden}
-.scr-bar i{display:block;height:100%;border-radius:3px}
-.scr-bar i.a1{background:var(--a1)}.scr-bar i.a2{background:var(--a2)}.scr-bar i.a3{background:var(--a3)}.scr-bar i.b{background:var(--lb)}
-.scr tr.today td{background:var(--warn-bg)}
+.scr .nm2{font-size:16px;font-weight:800}
+.scr h3 .h-sub{font-size:12px;font-weight:600;color:var(--sub);margin-left:6px}
+.scr .mean{color:var(--sub);font-size:12px;margin-top:2px}
+.scr .rs{color:var(--sub);font-size:12px}
+.scr tr.why td{white-space:normal;text-align:left}
+@media (max-width:640px){.scr-card{padding:10px 10px}}
 .scr details.more>summary{cursor:pointer;color:var(--info);font-size:12px;font-weight:700;margin:6px 0}
 .scr .empty2{color:var(--mute);font-size:13px;padding:6px 0}
-@media (max-width:640px){.scr-arrow{display:none}.scr-step{flex:1 1 40%}.scr-card{padding:10px 10px}}
 /* 자금 흐름 관찰 (F2, 참고용, docs/design/flow_watch.md) */
 .fw .cap{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--warn-bg);color:var(--warn);font-size:11px;font-weight:700;vertical-align:middle}
 .fw td.up{color:var(--buy);font-weight:700}.fw td.down{color:var(--sell);font-weight:700}
@@ -352,99 +340,88 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   </div>
 </header>
 
-{% macro scr_name(r) -%}{{ r.kr }}<span class="tkr">{{ r.ticker }}</span>{%- endmacro %}
-{% macro scr_result(r, ok_label) -%}
-{% if r.result == '추천' %}<span class="tag ok">{{ ok_label }}</span>{% elif r.result == '대기' %}<span class="tag inf">대기 · {{ r.reason }}</span>{% else %}<span class="tag {{ r.tone }}">{{ r.result }}{% if r.reason %} · {{ r.reason }}{% endif %}</span>{% endif %}
-{%- endmacro %}
-{% macro scr_flag(v) -%}{% if v is none %}<span class="unk">?</span>{% elif v %}<span class="yes">✓</span>{% else %}<span class="nay">✗</span>{% endif %}{%- endmacro %}
-{% macro a2row(r) -%}<tr><td>{{ r.rank or '-' }}</td><td class="l">{{ scr_name(r) }}</td><td>{{ r.a1_date_str or '?' }}{% if r.elapsed %} ({{ r.elapsed }}/{{ r.expiry_days }}일째){% endif %}</td><td>{{ '발생' if r.gc else '아직' }}</td><td>{{ r.rsi if r.rsi is not none else '?' }}</td><td>{{ r.grade or '-' }}</td><td class="sc">{{ r.score }}</td><td>{{ scr_result(r, '2차 추천') }}</td></tr>{%- endmacro %}
-{% macro scr_flow(lane) -%}
-<div class="scr-flow">
-{% for st in lane.steps %}<div class="scr-step"><b>{{ st.count }}</b><span>{{ st.label }}</span><div class="scr-bar"><i class="{{ lane.color }}" style="width:{{ '%.1f'|format(st.pct) }}%"></i></div></div>{% if not loop.last %}<div class="scr-arrow" aria-hidden="true">→</div>{% endif %}{% endfor %}
-</div>
-{%- endmacro %}
+{% macro scr_name(r) -%}<b>{{ r.kr }}</b><span class="tkr">{{ r.ticker }}</span>{%- endmacro %}
+{% macro scr_status(r) -%}<span class="tag {{ 'inf' if r.result == '대기' else r.tone }}">{{ r.result }}</span>{% if r.reason %} <span class="rs">{{ r.reason }}</span>{% endif %}{%- endmacro %}
 
-<!-- 오늘의 스크리닝 (docs/design/screening_view.md) -->
+<!-- 오늘의 스크리닝 (docs/design/screening_view.md · 간결한 표 형식) -->
 <section class="scr" aria-label="오늘의 스크리닝">
   <h2>오늘의 스크리닝</h2>
-  <div class="scr-sub">{% if screening.as_of_str %}{{ screening.as_of_str }} 미국장 마감 · {{ screening.scan_count }}종목 스캔 · {% endif %}점수는 추천·제외·대기 모두 같은 우선순위 점수(100점)로 계산, 순위는 추천 종목에만</div>
 
   {% set sg = screening.strategy %}
-  <details class="scr-card" open>
-    <summary><span class="nm2">{{ sg.name }}</span><span class="tg"></span></summary>
-    <div class="mini" style="margin:6px 0 4px"><b>{{ sg.line }}</b></div>
-    <div class="mini" style="margin:0 0 10px">{{ sg.root }}</div>
+  <h3>① 우리 전략 한눈에</h3>
+  <div class="scr-card">
+    <div class="nm2">{{ sg.name }}</div>
+    <div class="mini" style="margin:4px 0 8px"><b>{{ sg.line }}</b></div>
     <div class="scroll"><table>
-      <thead><tr><th class="nosort">차수</th><th class="nosort">비중</th><th class="nosort l">사는 조건 (모두 충족)</th><th class="nosort l">뜻</th><th class="nosort">손절</th><th class="nosort">파는 신호</th></tr></thead>
+      <thead><tr><th class="nosort">단계</th><th class="nosort l">살 때 (신호)</th><th class="nosort">얼마나</th><th class="nosort l">팔 때</th></tr></thead>
       <tbody>
-      {% for s in sg.stages %}<tr><td class="stn c-{{ s.cls }}">{{ s.name }}</td><td>{{ s.weight }}</td><td class="l w">{{ s.buy }}</td><td class="l w">{{ s.mean }}</td><td>{{ s.stop }}</td><td>{{ s.sell }}</td></tr>{% endfor %}
+      {% for s in sg.stages %}<tr><td class="stn c-{{ s.cls }}">{{ s.name }}</td><td class="l w">{{ s.buy }}<div class="mean">= {{ s.mean }}</div></td><td>{{ s.weight }}</td><td class="l w">{{ s.sell }}</td></tr>{% endfor %}
       </tbody>
     </table></div>
-    <div class="mini" style="margin-top:8px">{{ sg.bans }}</div>
-    <div class="mini">{{ sg.risk_line }}</div>
-    <h3>윌리엄 오닐 CAN SLIM과 비교</h3>
-    <div class="scroll"><table class="fit">
-      <thead><tr><th class="nosort l">비교</th><th class="nosort l">CAN SLIM</th><th class="nosort l">우리 전략</th></tr></thead>
-      <tbody>{% for k, o, ours in sg.canslim %}<tr><td class="l">{{ k }}</td><td class="l w">{{ o }}</td><td class="l w">{{ ours }}</td></tr>{% endfor %}</tbody>
-    </table></div>
-  </details>
-
-  {% if screening.lanes %}
-  <h3>오늘의 깔때기</h3>
-  {% for lane in screening.lanes %}
-  <div class="scr-card lane {{ lane.color }}">
-    <div class="lane-t c-{{ lane.color }}">{{ lane.title }}</div>
-
-    {% if lane.key == 'a2' %}
-    <div class="mini" style="margin-bottom:6px">2차는 1차 물량에 더 사는 것이라, <b>1차를 실제로 사서 체결 탭에 적은 종목(정찰 단계)</b>만 후보입니다. 1차 당일 포함 기한 안에 골든크로스가 안 나오면 1차 만료로 빠집니다.</div>
-    <div class="scroll"><table class="fit">
-      <thead><tr><th class="nosort">1차 매수일</th><th class="nosort l">1차 보유 종목</th><th class="nosort">2차 기한</th></tr></thead>
-      <tbody>
-      {% for g in lane.roster %}<tr><td>{{ g.a1_date_str }}</td><td class="l w">{{ g.names|join(' · ') }}</td><td>{{ g.deadline_str or '-' }}</td></tr>{% endfor %}
-      <tr class="today"><td><b>{{ lane.as_of_str }} 오늘</b></td><td class="l w">오늘 1차 추천 {{ lane.today_a1_count }}종목 — 사서 체결에 적으면 내일부터 여기에 들어옴</td><td>{{ lane.today_a1_deadline_str or '-' }}</td></tr>
-      </tbody>
-    </table></div>
-    {% if lane.not_bought %}
-    <details class="more"><summary>참고: 2차 대상 아님 {{ lane.not_bought|length }}종목 (최근 1차 신호가 났지만 지금 1차 보유가 아님)</summary>
-      <div class="scroll"><table class="fit"><thead><tr><th class="nosort">1차 신호일</th><th class="nosort l">종목</th><th class="nosort l">지금</th></tr></thead>
-      <tbody>{% for x in lane.not_bought %}<tr><td>{{ x.a1_date_str }}</td><td class="l">{{ scr_name(x) }}</td><td class="l">{{ x.why }}</td></tr>{% endfor %}</tbody></table></div>
+    <div class="mini" style="margin-top:8px">{{ sg.rule_line }}</div>
+    <details class="more"><summary>이 전략의 뿌리와 다른 전략과의 차이</summary>
+      <div class="mini">{{ sg.root }}</div>
+      <div class="mini">{{ sg.no_averaging }}</div>
+      <div class="mini">{{ sg.a3_detail }}</div>
+      <div class="mini">{{ sg.bans }}</div>
+      <div class="mini">{{ sg.risk_line }}</div>
+      <div class="mini" style="margin-top:6px"><b>윌리엄 오닐 CAN SLIM과 비교</b></div>
+      <div class="scroll"><table class="fit">
+        <thead><tr><th class="nosort l">비교</th><th class="nosort l">CAN SLIM</th><th class="nosort l">우리 전략</th></tr></thead>
+        <tbody>{% for k, o, ours in sg.canslim %}<tr><td class="l">{{ k }}</td><td class="l w">{{ o }}</td><td class="l w">{{ ours }}</td></tr>{% endfor %}</tbody>
+      </table></div>
     </details>
-    {% endif %}
-    {% endif %}
+  </div>
 
-    {{ scr_flow(lane) }}
-
-    {% if not lane.rows %}
-    <div class="empty2">오늘 해당 종목 없음</div>
-    {% elif lane.key == 'a1' %}
+  {% if screening.summary %}
+  <h3>② 오늘의 깔때기 <span class="h-sub">{{ screening.as_of_str }} 종가 · {{ screening.scan_count }}종목 스캔</span></h3>
+  <div class="scr-card">
     <div class="scroll"><table>
-      <thead><tr><th class="nosort">순위</th><th class="nosort l">종목</th><th class="nosort">RSI 어제→오늘</th><th class="nosort">거래량</th><th class="nosort">구름두께</th><th class="nosort">점수</th><th class="nosort">결과</th></tr></thead>
-      <tbody>{% for r in lane.rows %}<tr><td>{{ r.rank or '-' }}</td><td class="l">{{ scr_name(r) }}</td><td>{{ r.rsi_prev if r.rsi_prev is not none else '?' }} → {{ r.rsi if r.rsi is not none else '?' }}</td><td>{{ (r.vol_ratio ~ '배') if r.vol_ratio is not none else '-' }}</td><td>{{ (r.cloud_thickness_pct ~ '%') if r.cloud_thickness_pct is not none else '-' }}</td><td class="sc">{{ r.score }}</td><td>{{ scr_result(r, '추천') }}</td></tr>{% endfor %}</tbody>
+      <thead><tr><th class="nosort">단계</th><th class="nosort">후보</th><th class="nosort">신호</th><th class="nosort">통과</th><th class="nosort l">오늘 추천</th></tr></thead>
+      <tbody>
+      {% for s in screening.summary %}<tr>
+        <td class="stn c-{{ s.key }}">{{ s.stage }}</td>
+        <td>{{ s.candidates }}{% if s.candidate_note %} <span class="tkr">({{ s.candidate_note }})</span>{% endif %}</td>
+        <td title="{{ s.signal_label }}">{{ s.signal }}</td>
+        <td title="{{ s.passed_label }}">{{ s.passed }}</td>
+        <td class="l w">{% if s.recs %}{% for r in s.recs %}<span class="tag ok">{{ r.kr }} {{ r.ticker }}</span> {% endfor %}{% else %}없음{% endif %}{% for w in s.waiting %} · {{ w.ticker }} 대기 (기한 {{ w.deadline_str or '?' }}, {% if w.days_left is none %}남은 날 ?{% elif w.days_left <= 0 %}오늘 마감{% else %}{{ w.days_left }}일 남음{% endif %}){% endfor %}{% if s.waiting_more %} · 외 {{ s.waiting_more }}종목 대기{% endif %}</td>
+      </tr>{% endfor %}
+      </tbody>
     </table></div>
-    {% elif lane.key == 'a2' %}
-    {% set shown = lane.rows|rejectattr('folded')|list %}{% set hidden = lane.rows|selectattr('folded')|list %}
-    <div class="scroll"><table>
-      <thead><tr><th class="nosort">순위</th><th class="nosort l">종목</th><th class="nosort">1차일 (경과)</th><th class="nosort">골든크로스</th><th class="nosort">RSI</th><th class="nosort">등급</th><th class="nosort">점수</th><th class="nosort">결과</th></tr></thead>
-      <tbody>{% for r in shown %}{{ a2row(r) }}{% endfor %}</tbody>
-    </table></div>
-    {% if hidden %}<details class="more"><summary>대기 {{ hidden|length }}종목 더</summary><div class="scroll"><table><tbody>{% for r in hidden %}{{ a2row(r) }}{% endfor %}</tbody></table></div></details>{% endif %}
-    {% elif lane.key == 'a3' %}
-    <div class="scroll"><table>
-      <thead><tr><th class="nosort">순위</th><th class="nosort l">종목</th><th class="nosort">구름 위</th><th class="nosort">앞구름 양운</th><th class="nosort">후행스팬 돌파</th><th class="nosort">MACD&gt;시그널 &amp; RSI≥50</th><th class="nosort">시가 갭</th><th class="nosort">점수</th><th class="nosort">결과</th></tr></thead>
-      <tbody>{% for r in lane.rows %}<tr><td>{{ r.rank or '-' }}</td><td class="l">{{ scr_name(r) }}</td><td>{{ scr_flag(r.cloud) }}</td><td>{{ scr_flag(r.yang) }}</td><td>{{ scr_flag(r.chikou) }}</td><td>{{ scr_flag(r.momentum) }}</td><td>{{ scr_flag(r.gap_ok) }} {{ ('%+.1f%%'|format(r.gap_pct)) if r.gap_pct is not none else '' }}</td><td class="sc">{{ r.score }}</td><td>{{ scr_result(r, '3차 추천') }}</td></tr>{% endfor %}</tbody>
-    </table></div>
-    {% else %}
-    <div class="scroll"><table>
-      <thead><tr><th class="nosort">순위</th><th class="nosort l">종목</th><th class="nosort">정규화 MACD</th><th class="nosort">RSI</th><th class="nosort">등급</th><th class="nosort">점수</th><th class="nosort">결과</th></tr></thead>
-      <tbody>{% for r in lane.rows %}<tr><td>{{ r.rank or '-' }}</td><td class="l">{{ scr_name(r) }}</td><td>{{ ('%+.2f%%'|format(r.macd_norm)) if r.macd_norm is not none else '?' }}</td><td>{{ r.rsi if r.rsi is not none else '?' }}</td><td>{{ r.grade or '-' }}</td><td class="sc">{{ r.score }}</td><td>{{ scr_result(r, '재진입 추천') }}</td></tr>{% endfor %}</tbody>
-    </table></div>
+    <div class="mini" style="margin-top:6px">신호 = {% for s in screening.summary %}{{ s.stage }} {{ s.signal_label }}{% if not loop.last %} · {% endif %}{% endfor %}. 통과 = {% for s in screening.summary %}{{ s.stage }} {{ s.passed_label }}{% if not loop.last %} · {% endif %}{% endfor %}.</div>
+    {% if screening.check %}
+    <div class="mini">오늘 골든크로스 전체 {{ screening.check.gc_total }}종목 = 2차 후보 {{ screening.check.gc_a2 }} + 재진입 후보 {{ screening.check.gc_b }} + 그 밖 {{ screening.check.gc_other }}(보유 중·구름 아래 등) · 매매 금지로 막힘 {{ screening.check.ban_total }} · 동시 보유 한도로 막힘 {{ screening.check.limit_total }}</div>
     {% endif %}
   </div>
-  {% endfor %}
-  {% if screening.check %}
-  <div class="mini">오늘 골든크로스 전체 {{ screening.check.gc_total }}종목 = 2차 후보 {{ screening.check.gc_a2 }} + 재진입 후보 {{ screening.check.gc_b }} + 그 밖 {{ screening.check.gc_other }}(보유 중·구름 아래 등) · 매매 금지로 막힘 {{ screening.check.ban_total }} · 동시 보유 한도로 막힘 {{ screening.check.limit_total }}</div>
-  {% endif %}
-  <div class="mini">점수 100점 = 등급(S 40·A 25·B 10) + 거래량(1.5배 25·1.2배 15) + 구름두께(3% 이하 20·6% 이하 10) + 밴드폭 백분위(20% 이하 15). 1차·3차는 등급이 없어 등급 점수 0.</div>
+
+  <h3>③ 오늘 추천 종목</h3>
+  <div class="scr-card">
+    {% if screening.recommended %}
+    <div class="scroll"><table>
+      <thead><tr><th class="nosort">단계</th><th class="nosort l">종목</th><th class="nosort l">핵심 근거</th><th class="nosort">점수</th><th class="nosort">설명</th></tr></thead>
+      <tbody>
+      {% for r in screening.recommended %}<tr><td class="stn c-{{ r.color }}">{{ r.stage }}</td><td class="l">{{ scr_name(r) }}</td><td class="l w">{{ r.basis }}</td><td class="sc">{{ r.score }}</td>{{ explain_cell(r.explain) }}</tr>
+      {{ why_row(r.explain, 5) }}{% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+    <div class="empty2">오늘 추천 종목 없음</div>
+    {% endif %}
+    <details class="more"><summary>제외·대기 종목 보기 ({{ screening.others|length }}개 + 2차 대상 아님 {{ screening.not_bought|length }}개)</summary>
+      {% if screening.others %}
+      <div class="scroll"><table>
+        <thead><tr><th class="nosort">단계</th><th class="nosort l">종목</th><th class="nosort l">상태</th><th class="nosort">점수</th></tr></thead>
+        <tbody>{% for r in screening.others %}<tr><td>{{ r.stage }}</td><td class="l">{{ scr_name(r) }}</td><td class="l w">{{ scr_status(r) }}</td><td class="sc">{{ r.score }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+      {% endif %}
+      <div class="mini" style="margin-top:6px"><b>2차 대상 아님</b>: 최근 1차 신호가 났지만 지금 1차 보유가 아닌 종목입니다. 2차는 1차를 실제로 사서 체결 탭에 적은 종목(정찰 단계)만 후보이고, {{ screening.a2_window }} 골든크로스가 안 나오면 1차 만료로 빠집니다.</div>
+      {% if screening.not_bought %}
+      <div class="scroll"><table class="fit"><thead><tr><th class="nosort">1차 신호일</th><th class="nosort l">종목</th><th class="nosort l">지금</th></tr></thead>
+      <tbody>{% for x in screening.not_bought %}<tr><td>{{ x.a1_date_str }}</td><td class="l">{{ scr_name(x) }}</td><td class="l">{{ x.why }}</td></tr>{% endfor %}</tbody></table></div>
+      {% endif %}
+    </details>
+    <div class="mini">점수 100점 = 등급(S 40·A 25·B 10) + 거래량(1.5배 25·1.2배 15) + 구름두께(3% 이하 20·6% 이하 10) + 밴드폭 백분위(20% 이하 15). 1차·3차는 등급이 없어 등급 점수 0.</div>
+  </div>
   {% endif %}
 </section>
 
@@ -854,7 +831,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <div class="card"><h3>MACD · 방향 확인기</h3><div class="en">Moving Average Convergence Divergence · {{ guide.macd_fast }}, {{ guide.macd_slow }}, {{ guide.macd_signal }}</div>
       <dl><dt>무엇</dt><dd>짧은 평균({{ guide.macd_fast }}일)과 긴 평균({{ guide.macd_slow }}일)의 차이. 오르는 힘이 세지는지 약해지는지 보여 주는 속도계</dd>
       <dt>읽는 법</dt><dd>MACD선이 신호선을 아래→위로 뚫으면 <b>골든크로스</b>(상승 전환), 위→아래면 <b>데드크로스</b>(힘 약화)</dd>
-      <dt>우리 규칙</dt><dd>1차 후 {{ guide.a1_to_a2_expiry_days }}거래일 안에 골든크로스면 <b>2차 매수</b> · 데드크로스면 <b>1차분 매도(E1)</b></dd></dl></div>
+      <dt>우리 규칙</dt><dd>1차 체결이 확정된 다음 거래일부터, 1차 당일 포함 {{ guide.a1_to_a2_expiry_days }}거래일째까지 골든크로스면 <b>2차 매수</b> · 데드크로스면 <b>1차분 매도(E1)</b></dd></dl></div>
     <div class="card"><h3>일목 구름 · 추세 판정기</h3><div class="en">Ichimoku Cloud · {{ guide.ichimoku_tenkan }}, {{ guide.ichimoku_kijun }}, {{ guide.ichimoku_senkou_b }}</div>
       <dl><dt>무엇</dt><dd>과거 가격으로 그린 띠(구름). 주가가 구름 위면 상승 추세, 아래면 하락 추세</dd>
       <dt>읽는 법</dt><dd>구름 위 · 앞 구름이 양운(상승 구름) · 후행스팬이 {{ guide.ichimoku_shift }}일 전 가격 위 · RSI 50 위 = 추세 확정 4조건</dd>
@@ -870,7 +847,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
   <div class="flow">
     <div class="fs"><small>1차 정찰 · 슬롯의 1/9</small><b>RSI 30 돌파</b>떨어지던 주가가 멈춤. 반등 시작의 첫 신호</div>
     <div class="ar">→</div>
-    <div class="fs"><small>2차 확인 · 2/9</small><b>MACD 골든크로스</b>{{ guide.a1_to_a2_expiry_days }}거래일 안에. 방향이 정말 바뀜</div>
+    <div class="fs"><small>2차 확인 · 2/9</small><b>MACD 골든크로스</b>1차 당일 포함 {{ guide.a1_to_a2_expiry_days }}거래일째까지. 방향이 정말 바뀜</div>
     <div class="ar">→</div>
     <div class="fs"><small>3차 확정 · 6/9</small><b>일목 구름 4조건</b>상승 추세가 자리 잡음</div>
   </div>
@@ -888,7 +865,7 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
     <div class="ar">→</div>
     <div class="fs"><small>E3 · 남은 전량</small><b>구름 아래로 이탈</b>상승 추세가 무너짐</div>
   </div>
-  <p class="lead2" style="margin-top:8px">1차만 사고 {{ guide.a1_to_a2_expiry_days }}거래일 안에 골든크로스가 안 나오면 1차분을 팔아요(만료). 판 종목은 {{ guide.reentry_cooldown_days }}거래일 동안 다시 사지 않아요(쿨다운).</p>
+  <p class="lead2" style="margin-top:8px">1차만 사고 1차 체결 다음 거래일부터 1차 당일 포함 {{ guide.a1_to_a2_expiry_days }}거래일째까지 골든크로스가 안 나오면 1차분을 팔아요(만료). 판 종목은 {{ guide.reentry_cooldown_days }}거래일 동안 다시 사지 않아요(쿨다운).</p>
 
   <h2>조건이 맞아도 사지 않는 경우</h2>
   <div class="sheet"><table>
