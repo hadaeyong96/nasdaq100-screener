@@ -1,0 +1,79 @@
+# D1 사전 등록 — docs/d1_plan.md의 계획을 기계가 읽을 수 있게 옮긴 것.
+# 어떤 결과도 계산하기 전에 커밋하고 git tag d1-prereg를 붙인다. 이후 수정하지 않는다.
+# scripts/d1_experiments.py는 시작할 때 이 파일과 docs/d1_plan.md의 sha256(LF 정규화)을 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-07"
+base_commit: "c05a6ef"
+trial: {series: D1, id: 1, label: "D1 시도 1"}
+
+base_amount: {QQQ: 300000, NASDAQ: 300, US: 300}   # QQQ는 원화, 달러 데이터는 달러(비율 지표라 금액 무관)
+
+candidates:
+  D0: {rule: fixed, multiple: 1.0}
+  D1: {rule: last_month_down, down_multiple: 1.5, up_multiple: 0.5, zero_counts_as: up}
+  D2: {rule: drawdown_tiers, tiers: [{dd_gt: -10, multiple: 0.7}, {dd_gt: -20, multiple: 1.5}, {dd_gt: -30, multiple: 2.0}, {else: true, multiple: 3.0}],
+       boundary: "경계값은 더 깊은 칸 (dd = -10%면 1.5)", peak: "신호 지수 데이터 첫 행부터 매수일까지 최고 종가"}
+  D3: {rule: value_averaging, target: "B * (t+1), t = 0부터", buy: "max(0, 목표 - 매수 직전 주식 평가액)", sell: false, qqq_currency: KRW}
+  D4: {rule: below_sma, sma_days: 200, below_multiple: 2.0, above_multiple: 0.5, equal_counts_as: above}
+  D5: {rule: season, high_months: [11, 12, 1, 2, 3, 4], high_multiple: 1.5, low_multiple: 0.5}
+  D6: {rule: fixed, multiple: 1.0, buy_days: [first_trading_day, first_on_or_after_15th, last_trading_day], reference_only: true}
+  buy_day_D0_D5: first_trading_day
+  cash_cap: "실제 매수 = min(규칙 금액, 현금)"
+
+datasets:
+  QQQ:
+    source: "engine.portfolio.prepare_data (C2·P6와 같은 함수, L1 체크포인트)"
+    period: ["1999-03-10", "2021-12-31"]
+    instrument: "QQQM (상장 전 QQQ 접합 core_df)"
+    dividends: {source: core_dividends, withholding_pct: 15, to: "달러 현금"}
+    fx: "fx_by_date (KRW=X + DEXKOUS 보완)"
+    cash_rate: "reserve_daily_rate (DTB3, 360일 기준)"
+    signal_index: "sma_source_df (^NDX 접합 QQQ)"
+    window_starts: ["1999-03", "2011-12"]
+    seal: "2021-12-31"
+    contribution: "원화 B를 그날 환율로 달러로(환전 0.1%), 달러 현금"
+    costs: {buy_commission_pct: 0.07, sell_commission_pct: 0.07, fx_spread_pct: 0.1}
+    tax: {when: "평가일 일괄 매도", rate_pct: 22, deduction_krw: 2500000, basis: "매수마다 달러 × 그날 환율 합", interest_taxed: false}
+  NASDAQ:
+    source: "L1b ^IXIC 로더 (가격만)"
+    data_period: ["1971-02-05", "1998-12-31"]
+    cash_rate: "프렌치 RF를 ^IXIC 거래일에 맞춤 (L1b align_rf)"
+    window_starts: ["1972-01", "1988-12"]
+    seal: "1998-12-31"
+    costs: {buy_commission_pct: 0.07}
+    tax: none_pretax
+  US:
+    source: "L1b 프렌치 일별 Mkt-RF + RF 총수익 지수"
+    data_period: ["1926-07-01", "1998-12-31"]
+    cash_rate: "프렌치 RF"
+    window_starts: ["1927-07", "1988-12"]
+    seal: "1998-12-31"
+    costs: {buy_commission_pct: 0.07}
+    tax: none_pretax
+
+window:
+  months_contributed: 120
+  valuation: "120번째 달(M+120)의 첫 거래일 종가"
+  roll: monthly
+  seal_violation: stop
+cash_interest: "매수일 다음 거래일 ~ 다음 매수일(포함) 거래일마다 복리"
+
+metrics:
+  percentiles: "numpy.median, numpy.percentile 10/90 (linear)"
+  win_rate: "Dk > D0 (같은 시작 월, 같으면 아님)"
+  cash_ratio: "구간마다 120번 매수 직후 현금/(현금+주식) 평균 → 구간 평균"
+  worst: {QQQ: "2000-03 시작", NASDAQ: "D0 최종/총납입 최저 시작월", US: "D0 최종/총납입 최저 시작월"}
+
+criteria:   # Dk가 D0보다 낫다 = 세 데이터 모두에서 아래 모두
+  - {id: 1, key: median_vs_D0_pct, min: 1.0}
+  - {id: 2, key: p10_minus_D0_p10, min: 0.0}
+  - {id: 3, key: win_rate_pct, min: 60.0}
+criteria_datasets: [QQQ, NASDAQ, US]
+compare_unrounded: true
+none_pass: "매달 그대로 사기(D0)가 가장 좋다"
+many_pass: "세 데이터 하위 10%의 D0 대비 비율 평균이 가장 높은 1개"
+d6:
+  reference_only: true
+  same_if_all_abs_diff_pct_lt: 0.3
+checks: ["총 납입 동일(120 × B)", "현금 음수 없음"]
+outputs: ["docs/results/d1.md", "outputs/d1_*.csv", "outputs/d1_*.png"]
