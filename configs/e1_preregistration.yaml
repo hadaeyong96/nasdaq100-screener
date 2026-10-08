@@ -1,0 +1,107 @@
+# E1 사전 등록 — docs/e1_plan.md의 계획을 기계가 읽을 수 있게 옮긴 것.
+# 어떤 결과도 계산하기 전에 커밋하고 git tag e1-prereg를 붙인다. 이후 수정하지 않는다.
+# scripts/e1_experiments.py는 시작할 때 이 파일과 docs/e1_plan.md의 sha256(LF 정규화)을 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-07"
+base_commit: "c05a6ef"
+trial: {series: E1, id: 1, label: "E1 시도 1"}
+
+monthly_krw: 300000
+period:
+  full: {first_buy_month: "2012-01", valuation: "2021-12-31"}
+  subs:
+    - {name: "2012~2015", first_buy_month: "2012-01", valuation: "2015-12-31"}
+    - {name: "2016~2021", first_buy_month: "2016-01", valuation: "2021-12-31"}
+seal: {prices_last: "2021-12-31", filings_last: "2021-12-31"}
+
+candidates:
+  E0: {hold: "QQQM (D1 접합 core_df, core_dividends)", buy: "매수일 달러 현금 전부"}
+  E1a: {top_n: 1}
+  E1b: {top_n: 5}
+  E1c: {top_n: 10}
+  allocation: "매수일 달러 현금 전부를 상위 min(N, 대상 수)개에 똑같이"
+  buy_existing: true
+  random:
+    for: [E1a, E1b, E1c]
+    iterations: 1000
+    seed: 20261007
+    rng: "random.Random(seed) 하나를 N마다 새로 만들어 1,000회 차례로"
+    draw: "core.moat_backtest.draw_random_portfolio(sorted(대상), min(N, 대상 수), rng)"
+    pool: "성장 조건 전 대상"
+    metric: posttax_final_only
+
+eps:
+  taxonomy: us-gaap
+  tag: EarningsPerShareDiluted
+  unit: "USD/shares"
+  forms: ["10-Q", "10-K", "10-Q/A", "10-K/A"]
+  durations_days: {quarter: [80, 100], nine_months: [260, 290], annual: [350, 380]}
+  q4: "연간 − 9개월 누계(start ±7일), 없으면 연간 − 같은 회계연도 3개월 값 3개 합"
+  duplicates: "같은 (start, end)면 판단일까지 가장 최근 filed"
+  consecutive_quarters: {needed_for_growth_rule: 16, needed_for_sell_rule: 8, gap_days: [80, 100]}
+  split_adjust: "사실 filed 다음 날 ~ 판단일 분할 비율 곱으로 나눔 (yfinance 분할, 판단일 이후 안 씀)"
+  growth_rule: "TTM(t) > TTM(t-4) > TTM(t-8) > TTM(t-12) 그리고 TTM(t-4) > 0"
+  growth_rate: "TTM(t) / TTM(t-4) - 1"
+  rank: "growth desc, ticker asc"
+  sell_rule: "보유 종목 증가율 < 0 또는 계산 불가(TTM(t-4) <= 0, 분기 부족)이면 전량 매도"
+revenue_reference:
+  tags_priority: [Revenues, RevenueFromContractWithCustomerExcludingAssessedTax, SalesRevenueNet]
+  merge: "분기말마다 값이 있는 첫 태그"
+  split_adjust: false
+  used_for_verdict: false
+
+universe:
+  function: "data.universe_history.point_in_time_universe(판단일, current_tickers)"
+  current_tickers: "data/universe_fallback.csv (2026-09-23 스냅샷)"
+  changes: "data/cache/nasdaq100_changes.json (2026-09-26), 실행 중 새로 받지 않음"
+  alias_mapping: none
+  cik: "SEC company_tickers.json, 없으면 EDGAR 실패"
+  foreign: "form 20-F/40-F 사실이 있거나 us-gaap EarningsPerShareDiluted 10-Q 사실이 없음"
+  target: "명단 ∩ 미국 공시 ∩ 가격 있음(판단일·매수일 종가) ∩ 분기 16개 연속"
+
+prices:
+  source: yfinance
+  field: "Close (auto_adjust=False)"
+  request: {start: "2011-06-01", end_exclusive: "2022-01-01"}
+  dividends: {withholding_pct: 15, to: "달러 현금"}
+  calendar: "QQQ 거래일 (L1 체크포인트 core_df)"
+  decision_day: "매수일 전 거래일"
+  buy_day: "매달 첫 거래일 종가"
+  gap: "매수일 종가 없음 + 마지막 종가가 그 전 → 그 매수일에 마지막 종가로 매도, 일시 결측이면 매매 안 함"
+  fx_qqqm: "D1과 같은 L1 체크포인트(engine.portfolio.prepare_data)"
+
+money:
+  order: ["전년 세금 납부(그해 첫 매수일)", "매도", "납입", "매수"]
+  contribution: "30만 원 → 그날 환율, 환전 0.1%, 달러 현금"
+  cash_interest: none
+  fractional_shares: true
+  costs: {buy_pct: 0.07, sell_pct: 0.07, fx_spread_pct: 0.1}
+  tax:
+    rate_pct: 22
+    deduction_krw: 2500000
+    basis: "이동평균, 원화(매수 달러 × 매수일 환율)"
+    realized: "순매도 달러 × 매도일 환율 − 원가"
+    payment: "다음 해 첫 매수일, 원화 ÷ (환율 × 0.999) 달러, 모자라면 평가액 비율로 매도"
+    carryforward: false
+  valuation: "평가일 종가 전량 매도(0.07%) → 그해 세금 → 원화 환전(0.1%)"
+  pretax: "세금을 모두 끈 같은 시뮬레이션"
+  unit_value: "일별 원화 계좌 가치, 납입은 직전 단위 가치로 단위 매수, 세금은 손실"
+
+criteria:   # E1a·E1b·E1c 각각, 모두 충족
+  - {id: 1, key: posttax_full_vs_E0, min_ratio: 1.10}
+  - {id: 2, key: random_percentile_rank, min: 75}
+  - {id: 3, key: posttax_each_sub_vs_E0, min_ratio: 1.0}
+  - {id: 4, key: mdd_minus_E0_mdd_pp, min: -10.0}
+compare_unrounded: true
+selection: "합격 여럿이면 MDD가 가장 얕은 1개 → 봉인 구간 1회 개봉 후보로 기록(개봉 안 함)"
+none_pass: "이익 성장 골라 담기는 QQQM 적립을 못 이김"
+
+data_checks:
+  known_values:
+    - {ticker: AAPL, kind: annual_eps, start: "2014-09-28", end: "2015-09-26", value: 9.22, tol: 0.01}
+    - {ticker: MSFT, kind: annual_eps, start: "2020-07-01", end: "2021-06-30", value: 8.05, tol: 0.01}
+    - {ticker: NVDA, kind: ttm_continuity, decision_days: ["2021-05-28", "2021-06-30", "2021-07-30", "2021-08-31", "2021-09-30"], ratio_range: [0.6, 1.6]}
+  stop_on_failure: true
+  report: ["EDGAR 성공·실패 수와 실패 목록", "외국 기업 수", "가격 못 받은 종목 수", "2022 이후 가격 행 0개"]
+
+outputs: ["docs/results/e1.md", "outputs/e1_*.csv", "outputs/e1_*.png"]
