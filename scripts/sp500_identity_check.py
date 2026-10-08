@@ -161,7 +161,7 @@ def step_cik() -> None:
     rows = []
     for i, (t, r) in enumerate(pool.iterrows()):
         start = r["first_month"] - pd.offsets.MonthBegin(1) - pd.Timedelta(days=120)
-        end = r["last_month"] + pd.Timedelta(days=31)
+        end = r["last_month"] + pd.Timedelta(days=120)  # 편입 1~2달 종목도 10-Q·10-K 2건 이상 잡히게
         expect = wiki.loc[t, "name"] if t in wiki.index else (reasons.loc[t, "removed_name"] if t in reasons.index else "")
         cands: list[tuple[str, int]] = []
         if t in wiki.index:
@@ -185,9 +185,11 @@ def step_cik() -> None:
         ok = [s for s in scored if s["filings"] >= 2]
         pick = None
         if ok:
-            # 출처 우선(위키 표 → SEC 목록 → 이름 검색), 이름 검색은 유사도 0.6 이상만
+            # 출처 우선(위키 표 → SEC 목록 → 이름 검색). SEC 목록·이름 검색은 기대 이름을 알면 유사도 0.6 이상만
+            # (SEC 목록은 지금 티커 주인이라, 티커가 다른 회사로 넘어간 경우 그 회사가 걸린다: BBT → Beacon Financial)
             pref = {"위키 현재 표": 0, "SEC 티커 목록": 1, "이름 검색": 2}
-            ok = [s for s in ok if s["src"] != "이름 검색" or (s["sim"] or 0) >= 0.6]
+            ok = [s for s in ok if s["src"] == "위키 현재 표" or (s["src"] == "SEC 티커 목록" and not expect)
+                  or (s["sim"] if s["sim"] == s["sim"] else 0) >= 0.6]
             ok.sort(key=lambda s: (pref[s["src"]], -(s["sim"] if s["sim"] == s["sim"] else 0)))
             pick = ok[0] if ok else None
         sec_cand = next((s for s in scored if s["src"] == "SEC 티커 목록"), None)
@@ -244,15 +246,24 @@ def step_renames() -> None:
             same = False
         rows.append({"old": g, "new": n, "date": d, "old_cik": gc, "new_cik": nc, "same_cik": same})
     df = pd.DataFrame(rows)
-    # 옛 티커의 CIK를 못 정한 경우: 새 티커 CIK가 옛 티커 편입 기간에 공시가 있으면 같은 회사로 본다
+    # 옛 티커의 CIK를 못 정한 경우만: 새 티커 CIK가 옛 티커 편입 기간에 공시가 있고, 옛 회사 이름을 알면
+    # 새 CIK의 현재·옛 이름과도 맞아야 같은 회사로 본다 (대형사는 어느 기간에나 공시가 있어 공시만으로는 지수 교체를 못 거름)
     pool = pd.read_csv(tc.YF_RESULT, index_col=0, parse_dates=["first_month", "last_month"])
     for i, r in df[~df["same_cik"]].iterrows():
-        if r["old"] in pool.index and r["new_cik"] is not None and not pd.isna(r["new_cik"]):
-            sub = submissions(int(r["new_cik"]))
-            p = pool.loc[r["old"]]
-            if sub and filed_in_period(sub, p["first_month"] - pd.offsets.MonthBegin(1), p["last_month"]) >= 2 \
-                    and len([x for x in pairs if x[0] == r["old"]]) == 1:
-                df.loc[i, "same_cik"] = True
+        old_known = r["old"] in ident.index and not pd.isna(ident.loc[r["old"], "cik"])
+        if old_known or r["old"] not in pool.index or r["new_cik"] is None or pd.isna(r["new_cik"]):
+            continue
+        sub = submissions(int(r["new_cik"]))
+        p = pool.loc[r["old"]]
+        if not sub or filed_in_period(sub, p["first_month"] - pd.offsets.MonthBegin(1), p["last_month"]) < 2 \
+                or len([x for x in pairs if x[0] == r["old"]]) != 1:
+            continue
+        expect = ident.loc[r["old"], "expected_name"] if r["old"] in ident.index else None
+        if isinstance(expect, str) and expect:
+            names = [sub["name"]] + [f.get("name", "") for f in sub["formerNames"]]
+            if max(name_sim(expect, n) for n in names) < 0.6:
+                continue
+        df.loc[i, "same_cik"] = True
     conf = df[df["same_cik"]].drop_duplicates("old")
     # 연쇄(HCP→PEAK→DOC) 따라가기
     chain = dict(zip(conf["old"], conf["new"]))
@@ -316,13 +327,22 @@ def raw_price_series(t: str, price_ticker: str, source: str, splits: dict) -> pd
 
 
 def shares_series(cik: int) -> pd.Series:
-    """EDGAR dei:EntityCommonStockSharesOutstanding (표지 기준일 → 주식 수). 여러 종류 주식은 같은 날 합산."""
+    """EDGAR 주식 수 (기준일 → 주식 수). 여러 종류 주식은 같은 날 합산.
+
+    dei:EntityCommonStockSharesOutstanding(표지)을 먼저 쓰고, 4건 미만이면(HRL처럼 표지 태그가 없는 회사)
+    us-gaap CommonStockSharesOutstanding(재무상태표) → WeightedAverageNumberOfSharesOutstandingBasic 순으로 쓴다.
+    """
     from data import edgar
 
     f = edgar.fetch_company_facts(int(cik))
-    ents = edgar.extract_fact_entries(f, "dei", "EntityCommonStockSharesOutstanding")
+    ents = []
+    for tax, tag in (("dei", "EntityCommonStockSharesOutstanding"), ("us-gaap", "CommonStockSharesOutstanding"),
+                     ("us-gaap", "WeightedAverageNumberOfSharesOutstandingBasic")):
+        ents = [e for e in edgar.extract_fact_entries(f, tax, tag) if e.get("unit") == "shares"]
+        if len({e["end"] for e in ents}) >= 4:
+            break
     if not ents:
-        return pd.Series(dtype=float)
+        return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
     df = pd.DataFrame(ents).drop_duplicates(subset=["end", "val", "accn"])
     # 한 공시 안에서는 종류별 주식을 합하고, 같은 기준일을 여러 공시가 보고하면 나중 공시 하나만 쓴다
     per = df.groupby(["end", "accn"]).agg(val=("val", "sum"), filed=("filed", "max")).reset_index()
@@ -382,6 +402,9 @@ def step_check() -> None:
     rows = []
     for t, r in pool.iterrows():
         rr = reasons.loc[t] if t in reasons.index else None
+        # 편입 전 편출 기록은 같은 티커를 쓰던 옛 회사 것이다 (T: 2005년 AT&T Corp 편출) → 쓰지 않는다
+        if rr is not None and not pd.isna(rr["date"]) and rr["date"] < r["first_month"] - pd.Timedelta(days=62):
+            rr = None
         removed_on = rr["date"] if rr is not None else None
         cik = ident.loc[t, "cik"] if t in ident.index else None
         row = {"ticker": t, "first_month": r["first_month"].date(), "last_month": r["last_month"].date(),
@@ -389,8 +412,11 @@ def step_check() -> None:
                "wiki_reason": rr["category"] if rr is not None else "", "removed_on": removed_on.date() if removed_on is not None and not pd.isna(removed_on) else None,
                "price_source": src.get(t, ("없음", None))[0]}
         if cik is not None and not pd.isna(cik):
-            b = bankruptcy_dates(int(cik))
-            row["bankruptcy_8k_103"] = ";".join(b)
+            # 편입 기간 시작 ~ 편출일(없으면 편입 마지막 달) + 1년 안의 1.03만 (AAL: 2011년 AMR 파산은 편입 전)
+            b_end = (removed_on if removed_on is not None and not pd.isna(removed_on) else r["last_month"]) + pd.Timedelta(days=365)
+            b_start = r["first_month"] - pd.Timedelta(days=62)
+            row["bankruptcy_8k_103_all"] = ";".join(bankruptcy_dates(int(cik)))
+            row["bankruptcy_8k_103"] = ";".join(d for d in bankruptcy_dates(int(cik)) if b_start <= pd.Timestamp(d) <= b_end)
         px = None
         if t in src:
             px = raw_price_series(t, src[t][1], "tiingo" if src[t][0] == "tiingo" else "yf", splits)
@@ -455,13 +481,57 @@ def step_check() -> None:
     print(f"[check] 저장 {FINAL.name}: {len(out)}행")
 
 
+def gap_status(price_source: str, date_check) -> str:
+    """종목 하나의 가격 상태 (순수 함수): 있음 | 공백(가격 없음) | 공백(다른 회사 제외) | 공백(일부만)."""
+    if price_source == "없음":
+        return "공백(가격 없음)"
+    if date_check == "다른 회사 의심":
+        return "공백(다른 회사 제외)"
+    if date_check in ("앞이 빔", "끝이 이름"):
+        return "공백(일부만)"
+    return "있음"
+
+
+def gap_reason(why_gone: str) -> str:
+    """공백 종목의 사라진 이유를 지시문 4분류(+ 보조 2분류)로 (순수 함수)."""
+    return {"인수·합병": "인수·합병", "지수 편출만": "지수 편출만", "파산": "파산",
+            "지금도 S&P": "지금도 S&P(티커 문제)", "이름 변경": "이름 변경(새 티커도 실패)"}.get(why_gone, "불명")
+
+
+def step_summary() -> None:
+    """final.csv → 최종 공백 표 (네트워크 없음) → final_gap.csv와 요약 출력."""
+    d = pd.read_csv(FINAL, index_col=0)
+    d["status"] = [gap_status(s, c) for s, c in zip(d["price_source"], d["date_check"])]
+    d["gap_reason"] = d["why_gone"].map(gap_reason)
+    d.to_csv(CACHE / "final_gap.csv", encoding="utf-8-sig")
+    n = len(d)
+    print(f"[summary] 전체 {n}")
+    print(d["price_source"].value_counts().to_string())
+    vc = d["status"].value_counts()
+    print(vc.to_string())
+    gap = d[d["status"] != "있음"]
+    print(f"[summary] 공백 {len(gap)} ({len(gap) / n:.1%})")
+    print(pd.crosstab(gap["gap_reason"], gap["status"], margins=True).to_string())
+    with pd.option_context("display.width", 250, "display.max_colwidth", 50, "display.max_rows", 500):
+        cols = ["price_source", "edgar_name", "wiki_reason", "removed_on", "price_first", "price_last",
+                "date_check", "mcap_median_b", "bankruptcy_8k_103", "suspect"]
+        print("── 같은 회사 의심 (날짜 판정이 맞음이 아니거나 시가총액 1B 미만) ──")
+        sus = d[(d["price_source"] != "없음") & ((d["date_check"] != "맞음") | (d["mcap_median_b"] < 1))]
+        print(sus[cols].to_string())
+        print("── 공백 전체 ──")
+        print(gap[["status", "gap_reason", "wiki_reason", "removed_on", "edgar_name", "bankruptcy_8k_103"]].to_string())
+        print("── 파산 표시 (편입 기간 + 1년 안 8-K 1.03) ──")
+        b = d[d["bankruptcy_8k_103"].fillna("") != ""]
+        print(b[["status", "in_sp500_now", "why_gone", "bankruptcy_8k_103"]].to_string())
+
+
 def main() -> None:
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["cik", "renames", "check"], required=True)
+    ap.add_argument("--step", choices=["cik", "renames", "check", "summary"], required=True)
     a = ap.parse_args()
-    {"cik": step_cik, "renames": step_renames, "check": step_check}[a.step]()
+    {"cik": step_cik, "renames": step_renames, "check": step_check, "summary": step_summary}[a.step]()
 
 
 if __name__ == "__main__":
