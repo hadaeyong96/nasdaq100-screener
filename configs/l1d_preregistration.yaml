@@ -1,0 +1,122 @@
+# L1d 사전 등록 — docs/l1d_plan.md의 계획을 기계가 읽을 수 있게 옮긴 것.
+# 어떤 결과도 계산하기 전에 커밋하고 git tag l1d-prereg를 붙인다. 이후 수정하지 않는다.
+# scripts/l1d_experiments.py는 시작할 때 이 파일과 docs/l1d_plan.md의 sha256(LF 정규화)을 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-07"
+base_commit: "c05a6ef"
+trial:
+  series: L1d
+  id: 1
+  label: "L1d 시도 1"
+  history:
+    - {series: L1, id: 1, period: "QQQ 1999-03-10~2021-12-31", result: "전 후보 불합격"}
+    - {series: L1b, id: 1, period: "U 1927-07~1998-12, N 1972~1998", result: "B1 합격"}
+  note: "5개 시장(각 시리즈 시작~2021-12-31)은 결과와 관계없이 다시 판정에 쓰지 않는다."
+
+seal:
+  last_allowed_date: "2021-12-31"
+  rule: "로딩 직후 자르고, 2022-01-01 이후 행이 하나라도 남으면 SealError로 멈춘다"
+
+markets:
+  JP: {ticker: "^N225", name: "일본 닛케이 225", currency: JPY}
+  DE: {ticker: "^GDAXI", name: "독일 DAX", currency: EUR, note: "배당 재투자 지수"}
+  GB: {ticker: "^FTSE", name: "영국 FTSE 100", currency: GBP}
+  HK: {ticker: "^HSI", name: "홍콩 항셍", currency: HKD}
+  KR: {ticker: "^KS11", name: "한국 코스피", currency: KRW}
+
+data:
+  index:
+    source: yfinance
+    price: "Close (auto_adjust=False)"
+    request: {start: "1950-01-01", end_exclusive: "2022-01-01"}
+    start: "받은 첫 행"
+    drop: ["종가 NaN", "종가 <= 0"]
+    duplicate_dates: keep_last
+    other_cleaning: none
+  warmup_rows: 210          # 0~209행 제외, 210번째 행부터 판정 (190/200/210 모두 정의)
+  bad_tick_guard: {abs_daily_return_ge: 0.25, allowed: [{market: HK, date: "1987-10-26"}], on_violation: stop}
+  known_values:
+    - {market: JP, check: close, date: "1989-12-29", value: 38916, tol_pct: 1.0}
+    - {market: HK, check: daily_return, date: "1987-10-26", value_pct: -33.0, tol_pp: 5.0}
+    - {market: KR, check: month_min_close, month: "1998-06", range: [250, 350]}
+    - {market: GB, check: two_day_return, dates: ["1987-10-19", "1987-10-20"], value_pct: -22.0, tol_pp: 5.0}
+    - {market: DE, check: annual_return, year: 2008, value_pct: -40.0, tol_pp: 5.0}
+  rates:
+    unit: "월별 연율 %"
+    principle: "같은 나라 OECD/FRED 단기 금리를 먼저(3개월 → 짧은 만기 → 중앙은행), 그 나라 시리즈가 모두 없을 때만 DTB3. 홍콩만 페그 근거로 DTB3 허용"
+    priority:   # 달마다 처음 값이 있는 시리즈
+      JP: [IR3TIB01JPM156N, IR3TCD01JPM156N, IRSTCI01JPM156N, IRSTCB01JPM156N, DTB3]
+      DE: [IR3TIB01DEM156N, IRSTCI01DEM156N, DTB3]
+      GB: [IR3TIB01GBM156N, IRSTCI01GBM156N, DTB3]
+      KR: [IR3TIB01KRM156N, IR3TCD01KRM156N, IRSTCI01KRM156N, DTB3]
+      HK: [DTB3]   # FRED에 홍콩 단기 금리 없음(검색 확인), HKD 미국달러 고정(1983-10~)
+    confirmed_starts: {IR3TIB01JPM156N: "2002-04", IR3TCD01JPM156N: "1979-05", IRSTCI01JPM156N: "1985-07", IRSTCB01JPM156N: "1960-01",
+                       IR3TIB01DEM156N: "1960-01", IRSTCI01DEM156N: "1960-01", IR3TIB01GBM156N: "1957-01", IRSTCI01GBM156N: "1978-01",
+                       IR3TIB01KRM156N: "1991-01", IR3TCD01KRM156N: "1991-01", IRSTCI01KRM156N: "1991-01"}
+    dtb3_monthly: "그달 DTB3 일별 평균"
+    daily: "그달 값을 그달 모든 지수 거래일에, 연율/100/252"
+    negative_rates: as_is
+    report_sources_by_period: true
+  leverage:
+    formula: "k*r - (k-1)*rf - 0.0095/252"
+    k: [2, 3]
+    expense_annual_pct: 0.95
+    clip: "r_k <= -1 이면 -1"
+    wipeout: "보유 중 0이 되면 기간 끝까지 0"
+    hypothetical: true
+
+candidates:
+  G0: {role: "기준", hold: "1배"}
+  G1: {above: "2배", below: "국채", params: {sma_days: 200}}
+  G2: {above: "3배", below: "국채", params: {sma_days: 200}}
+  signal: "종가 > SMA (같으면 아래), core.l1b.target_b1과 같은 규칙"
+  execution: {signal: "t일 종가", fill: "t+1 거래일 종가", start_day: "S-1일 신호 자산을 S일 종가에 매수"}
+  neighbors: {sma_days: [190, 200, 210]}
+
+costs_tax:
+  engine: "core.l1b.simulate (L1b 그대로)"
+  trade_cost_one_way_pct: 0.1
+  capital_gains_rate_pct: 22
+  taxable_base: "연간 실현손익 + 국채 이자 (양수일 때만), 공제·이월 없음"
+  settlement: "그해 마지막 거래일 종가, 납부용 매도 손익은 다음 해"
+  dividend_tax: "미반영"
+  initial: 100000
+  currency: local
+  additional_contributions: none
+
+criteria_market:   # 시장별, 모두 충족
+  - {id: 1, key: posttax_minus_G0_pp, min: 2.0}
+  - {id: 2, key: mdd_minus_G0_mdd_pp, min: -2.0}
+  - {id: 3, key: neighbors_190_210_within_pp, max_abs: 1.0}
+compare_unrounded: true
+criteria_candidate:
+  min_markets_passed: 4
+  of_markets: 5
+  every_market_posttax_minus_G0_pp_min: -2.0
+selection:
+  both_pass: "5개 시장 MDD 최악값이 더 얕은 후보"
+  only_G2: "참고 보고 미국 3배를 함께 적고 봉인 개봉 후보로 기록"
+  fail: "그대로 기록, 같은 기간 다시 판정에 쓰지 않음"
+
+regression_check:
+  what: "일반화 레버리지 함수 k=2로 L1b B1 주 설정 재실행"
+  expected: {U: {posttax_pct: 13.40, mdd_pct: -69.62}, N: {posttax_pct: 14.37, mdd_pct: -46.50}}
+  tolerance_pp: 0.005
+  on_mismatch: stop
+
+reporting:
+  metrics: [posttax_cagr, pretax_cagr, mdd, longest_recovery, worst_year, switch_count, total_tax, leverage_time_share]
+  crash_windows:
+    JP: {"1990~92": ["1990-01-01", "1992-12-31"], "2000~03": ["2000-01-01", "2003-04-30"], "2008": ["2008-01-01", "2009-03-31"], "2020-03": ["2020-02-19", "2020-04-30"]}
+    HK: {"1987-10": ["1987-10-01", "1987-10-31"], "1997": ["1997-08-01", "1998-08-31"], "2008": ["2008-01-01", "2009-03-31"], "2020-03": ["2020-02-19", "2020-04-30"]}
+    KR: {"1997": ["1997-07-01", "1998-06-30"], "2008": ["2008-01-01", "2009-03-31"], "2020-03": ["2020-02-19", "2020-04-30"]}
+    DE: {"2000~03": ["2000-01-01", "2003-03-31"], "2008": ["2008-01-01", "2009-03-31"], "2020-03": ["2020-02-19", "2020-04-30"]}
+    GB: {"2000~03": ["2000-01-01", "2003-03-31"], "2008": ["2008-01-01", "2009-03-31"], "2020-03": ["2020-02-19", "2020-04-30"]}
+  window_before_verdict_start: "판정 구간 밖으로 표시, 지수 하루 수익만"
+  worst_days: {n: 5, extra: ["3배 하루 <= -30% 날 수", "G2 계좌 하루 -30% 이상 손실 날 수", "G1·G2 계좌 0 도달 여부"]}
+  reference_not_for_verdict:
+    US_french: {period: ["1927-07-01", "1998-12-31"], data: "L1b", rf: "프렌치 RF"}
+    NASDAQ: {period: ["1972-01-03", "1998-12-31"], data: "L1b ^IXIC"}
+    QQQ_L1_engine: {period: ["1999-03-10", "2021-12-31"], lev3: "3*QQQ - 2*DTB3일율 - 0.95%/252 합성, 시가=종가, 배당 없음", signal: "^NDX 접합 QQQ 200일선", baseline: "L0 = P6 P0"}
+  limitations: ["가상 레버리지 상품", "가격 지수(DAX 제외) 배당 미포함", "현지 금리 대체(같은 나라 다른 시리즈, 홍콩 전 기간 DTB3)", "다음 날 종가 체결", "음수 금리 그대로"]
+  outputs: ["docs/results/l1d.md", "outputs/l1d_*.csv", "outputs/l1d_*.png"]
