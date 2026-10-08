@@ -1,0 +1,125 @@
+# L1 사전 등록 — docs/l1_plan.md의 계획을 기계가 읽을 수 있게 옮긴 것.
+# 어떤 결과도 계산하기 전에 커밋하고 git tag l1-prereg를 붙인다. 이후 수정하지 않는다.
+# scripts/l1_experiments.py는 시작할 때 이 파일과 docs/l1_plan.md의 sha256을 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-06"
+base_commit: "be4f387"  # main, 이 위에서 분기
+trial:
+  id: 1
+  series: L1
+  note: "저장소에 기존 시도 로그 없음 — L1 첫 시도. 불합격이면 같은 기간(1999-03~2021-12)을 다시 돌리지 않는다."
+
+question: >
+  추세(200일선)와 거시 지표(실업률)로 국면을 나눠, 좋은 국면에는 QLD, 나쁜 국면에는 단기 국채로 옮기면
+  세후로 QQQM 보유를 크게 이기면서 최대 낙폭을 −50% 안에 둘 수 있는가?
+
+candidates:
+  L0: {role: "기준", attack: {core: 1.0}, defense: null, rule: "QQQM 100% 보유"}
+  L1: {attack: {qld: 1.0}, defense: null, rule: "QLD 100% 보유"}
+  L2:
+    rule: "QQQ 종가 > SMA(sma_days)면 공격, 아니면 방어"
+    attack: {qld: 1.0}
+    defense: {reserve: 1.0}
+    params: {sma_days: 200}
+  L3:
+    rule: "QQQ 종가 < SMA(sma_days) 그리고 실업률 > 실업률 unrate_avg_months개월 평균일 때만 방어, 그 외 공격"
+    attack: {qld: 1.0}
+    defense: {reserve: 1.0}
+    params: {sma_days: 200, unrate_avg_months: 12}
+  L4:
+    rule: "L3와 같은 국면 규칙"
+    attack: {qld: 0.5, core: 0.5}
+    defense: {reserve: 1.0}
+    params: {sma_days: 200, unrate_avg_months: 12}
+  asset_names: {core: "QQQM(상장 전 QQQ 접합)", qld: "QLD(2006-06 전 합성)", reserve: "단기 국채(DTB3 일율)"}
+
+execution:
+  signal: "그날 확정 종가"
+  fill: "다음 거래일 시가"
+  trade_only_on_target_change: true  # 같은 국면 안에서는 재조정하지 않는다(L4 50:50 포함)
+  day0: "첫날 신호로 정한 비중을 그날 종가에 매수"
+  sma_equal_counts_as_below: true
+  sma_warmup: "^NDX 접합(P6와 같음)"
+  tax_settlement_source: "보유 위험자산(QQQM·QLD) 평가액 비율로 매도, 없으면 국채"
+  reserve_taxed: false  # P6 가정 그대로(이자소득세 미반영)
+
+neighborhood_values:
+  sma_days: [190, 200, 210]
+  unrate_avg_months: [10, 12, 14]
+  one_at_a_time: true
+  applies_to: {L2: [sma_days], L3: [sma_days, unrate_avg_months], L4: [sma_days, unrate_avg_months]}
+  stable_if_all_neighbors_within_pp: 1.0  # 전 기간 세후 (a), 주 설정 대비
+  no_params_counts_as_stable: [L0, L1]
+
+data:
+  qqq: {ticker: QQQ, from: "1999-03-10", dividends: true}
+  core: {ticker: QQQM, pre_inception: "QQQ 접합(P6)"}
+  qld:
+    ticker: QLD
+    real_from: "2006-06"
+    synthetic_before: "QQQ 일간수익 × 2 − 0.95%/252 − DTB3 일율 (core/synthetic_assets.py)"
+    synthetic_open_equals_close: true
+    report_overlap_check: {from: "2006-06", to: "2021-12-31", metrics: [annual_return_diff_pp, tracking_error_daily_std_pct]}
+  reserve: {fred: DTB3, day_count: 360}
+  fx: {primary: "KRW=X", fallback_fred: DEXKOUS}
+  unemployment:
+    fred: UNRATE
+    release_lag_rule: "M월 값은 M+2월 첫 거래일부터 사용"
+    limitation: "현재 수정치(revised) 사용 — 당시 발표치(vintage)와 다를 수 있다"
+  regime_analysis_only:
+    T10Y2Y: {use: "역전(<0) 여부", lag_trading_days: 1}
+    BAA10Y: {use: "1년(252거래일) 평균 위/아래", lag_trading_days: 1}
+  seal:
+    last_allowed_date: "2021-12-31"
+    rule: "로딩 단계에서 끝 날짜로 자르고, 2022-01-01 이후 행이 하나라도 남으면 에러로 멈춘다"
+
+periods:
+  full: {start: "1999-03-10", end: "2021-12-31"}
+  sub_1999_2007: {start: "1999-03-10", end: "2007-12-31"}
+  sub_2008_2015: {start: "2008-01-01", end: "2015-12-31"}
+  sub_2016_2021: {start: "2016-01-01", end: "2021-12-31"}
+  sub_period_restart_krw: 40000000
+
+costs_tax:
+  commission_pct: 0.07
+  fx_spread_pct: 0.1
+  capital_gains_rate_pct: 22
+  capital_gains_deduction_krw: 2500000
+  cost_basis: moving_average
+  dividend_withholding_pct: 15
+  initial_krw: 40000000
+  additional_contributions: none
+  posttax_a: "기간 끝 전량 매도·그해 양도세 납부 후 연복리 (P6 compute_posttax_a)"
+  posttax_b: "미청산 평가 연복리 (P6 compute_equity_metrics)"
+
+criteria:  # 모두 충족해야 합격
+  - {id: 1, key: excess_posttax_a_vs_L0_pp, period: full, min: 2.0}
+  - {id: 2, key: daily_mdd_pct, period: full, min: -50.0}
+  - {id: 3, key: sub_periods_beating_L0_posttax_a, min_count: 2, of: [sub_1999_2007, sub_2008_2015, sub_2016_2021]}
+  - {id: 4, key: neighborhood_stable}
+selection: "합격이 여럿이면 |MDD|가 가장 작은 1개만 다음 단계"
+on_fail: "그대로 기록, 같은 기간 재실행 금지"
+
+reproduction_check:
+  description: "새 코드에서 P6-1 P0(전 기간)가 그대로 재현되는지 먼저 확인, 다르면 멈춤"
+  reference: {candidate: P0, period: full, posttax_a_pct: 8.88, mdd_pct: -80.91}
+  tolerance_pp: 0.01
+
+reporting:
+  metrics: [posttax_a, posttax_b, mdd, longest_recovery_days, worst_year, yearly_returns, switch_count, total_tax_krw, regime_time_share]
+  crash_windows:
+    "2000": ["2000-03-01", "2000-12-31"]
+    "2002": ["2002-01-01", "2002-10-31"]
+    "2008": ["2008-06-01", "2009-03-31"]
+    "2011": ["2011-07-01", "2011-10-31"]
+    "2018Q4": ["2018-10-01", "2018-12-31"]
+    "2020-03": ["2020-02-19", "2020-04-30"]
+  crash_exit_lookback_trading_days: 60
+  regime_analysis:
+    used_for_verdict: false
+    split: "SMA200 위/아래 × 실업률 > 12개월 평균(상승)/아님(하락) = 4국면"
+    reference_splits: [T10Y2Y_inverted, BAA10Y_above_1y_avg]
+    forward_horizons_trading_days: {"1m": 21, "3m": 63, "6m": 126}
+    stats: [time_share, fwd_mean, fwd_median, fwd_p10, ann_volatility, max_drawdown_within_regime]
+    assets: [QQQ, QLD]
+    new_ideas: "새 판 후보 목록으로만 적는다(새 규칙 금지)"
