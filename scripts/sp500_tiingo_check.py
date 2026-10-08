@@ -40,6 +40,7 @@ CACHE = su.CACHE
 YF_RESULT = CACHE / "yf_all.csv"
 TIINGO_DIR = CACHE / "tiingo"
 TIINGO_LOG = CACHE / "tiingo_log.json"
+TIINGO_PROGRESS = CACHE / "tiingo_progress.json"
 SUPPORTED_ZIP_URL = "https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip"
 SUPPORTED_PATH = CACHE / "tiingo_supported_tickers.csv"
 FETCH_START, FETCH_END = date(2011, 6, 1), date(2021, 12, 31)  # E1 가격 구간과 같게, 봉인 2022 이전
@@ -182,26 +183,53 @@ def step_meta() -> None:
     print(f"[meta] 지원 티커 {len(s)}행, 열 {list(s.columns)}")
 
 
-def step_tiingo(order: list[str]) -> None:
-    """order 순서로 Tiingo 가격을 받는다. 한도에 걸리면 멈추고 진행률을 남긴다."""
+def next_hour_wait_seconds(now: float, margin_sec: int = 120) -> int:
+    """다음 정시 + margin까지 남은 초 (순수 함수). Tiingo 무료 시간당 한도가 정시에 풀린다고 보고 기다린다."""
+    return int(3600 - (now % 3600) + margin_sec)
+
+
+def _write_progress(order: list[str], log: dict, state: str, **extra) -> None:
+    """진행 상황 파일(tiingo_progress.json). PC가 꺼져도 tiingo_log.json으로 이어 가고, 이 파일은 사람이 보는 용도."""
+    TIINGO_PROGRESS.write_text(json.dumps({
+        "updated": time.strftime("%Y-%m-%d %H:%M:%S"), "state": state,
+        "done": len([t for t in order if t in log]), "total": len(order), **extra,
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def step_tiingo(order: list[str], wait_on_limit: bool = False, max_waits: int = 30) -> None:
+    """order 순서로 Tiingo 가격을 받는다.
+
+    한도에 걸리면 wait_on_limit=False면 멈추고, True면 다음 정시까지 기다렸다 같은 종목부터 이어 간다
+    (최대 max_waits번). 종목마다 결과를 tiingo_log.json에 바로 써서, 중간에 꺼져도 다시 실행하면 이어 간다.
+    """
     from dotenv import load_dotenv
 
     load_dotenv(ROOT / ".env")
     api_key = (os.environ.get("TIINGO_API_KEY") or "").strip()
-    print(f"[tiingo] TIINGO_API_KEY 있음: {bool(api_key)}")
+    print(f"[tiingo] TIINGO_API_KEY 있음: {bool(api_key)}", flush=True)
     if not api_key:
         raise SystemExit("TIINGO_API_KEY 없음")
     TIINGO_DIR.mkdir(parents=True, exist_ok=True)
     log = json.loads(TIINGO_LOG.read_text(encoding="utf-8")) if TIINGO_LOG.exists() else {}
     todo = [t for t in order if t not in log]
-    print(f"[tiingo] 대상 {len(order)} · 이미 처리 {len(order) - len(todo)} · 이번에 {len(todo)}")
-    done = 0
-    for t in todo:
+    print(f"[tiingo] 대상 {len(order)} · 이미 처리 {len(order) - len(todo)} · 이번에 {len(todo)}", flush=True)
+    done, waits, i = 0, 0, 0
+    while i < len(todo):
+        t = todo[i]
         try:
             recs = fetch_tiingo_daily(t, FETCH_START, FETCH_END, api_key)
         except TiingoLimitError as exc:
-            print(f"[tiingo] 한도에 걸려 멈춤: {exc}")
-            break
+            if not wait_on_limit or waits >= max_waits:
+                print(f"[tiingo] 한도에 걸려 멈춤: {exc}", flush=True)
+                _write_progress(order, log, "한도로 멈춤", next_ticker=t)
+                break
+            sec = next_hour_wait_seconds(time.time())
+            waits += 1
+            resume = time.strftime("%H:%M:%S", time.localtime(time.time() + sec))
+            print(f"[tiingo] 한도 — {sec}초 대기 후 {t}부터 재개 (예정 {resume}, 대기 {waits}회째, 누적 {len([x for x in order if x in log])}/{len(order)})", flush=True)
+            _write_progress(order, log, "한도 대기", next_ticker=t, resume_at=resume, waits=waits)
+            time.sleep(sec)
+            continue
         except TiingoFetchError as exc:
             log[t] = {"status": "실패", "error": str(exc)}
         else:
@@ -209,9 +237,13 @@ def step_tiingo(order: list[str]) -> None:
             df.to_csv(TIINGO_DIR / f"{t}.csv")
             log[t] = {"status": "있음" if len(df) else "빈 응답", "rows": len(df)}
         done += 1
+        i += 1
         TIINGO_LOG.write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")
+        _write_progress(order, log, "진행 중", last_ticker=t)
         time.sleep(0.5)
-    print(f"[tiingo] 이번 실행 처리 {done} · 누적 {len([t for t in order if t in log])}/{len(order)}")
+    else:
+        _write_progress(order, log, "완료")
+    print(f"[tiingo] 이번 실행 처리 {done} · 누적 {len([t for t in order if t in log])}/{len(order)}", flush=True)
 
 
 def tiingo_order() -> list[str]:
@@ -296,13 +328,16 @@ def main() -> None:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--step", choices=["yf", "meta", "tiingo", "report"], required=True)
+    ap.add_argument("--wait-on-limit", action="store_true", help="Tiingo 한도에 걸리면 다음 정시까지 기다렸다 이어 간다")
+    ap.add_argument("--tickers", help="tiingo 단계에서 기본 순서 대신 요청할 티커 목록 파일(한 줄에 하나)")
     a = ap.parse_args()
     if a.step == "yf":
         step_yf()
     elif a.step == "meta":
         step_meta()
     elif a.step == "tiingo":
-        step_tiingo(tiingo_order())
+        order = Path(a.tickers).read_text(encoding="utf-8").split() if a.tickers else tiingo_order()
+        step_tiingo(order, wait_on_limit=a.wait_on_limit)
     else:
         step_report()
 
