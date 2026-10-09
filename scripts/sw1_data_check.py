@@ -4,6 +4,8 @@
   --step sp100   위키 "S&P 100" 옛 판으로 2011-12~2021-12 매달 명단 → data/cache/sw1/sp100_monthly.csv
   --step events  나스닥 100(시점별) + S&P 100 합집합의 EDGAR 제출 기록 → 8-K 2.02·10-Q·10-K 날짜와 acceptance 시각
   --step prices  거래량 있는 일봉 (data/cache/backtest에 없는 종목만 yfinance로 받음)
+  --step tiingo  CIK는 있는데 가격이 없는 종목만 Tiingo → 날짜·시가총액으로 같은 회사 확인 (price_check.csv)
+  --step accepted  실적 발표마다 EDGAR 공시 색인 페이지의 Accepted(동부시간)
   --step check   표본 20종목 EPS 계산 가능 비율, acceptance 대조, 연도별 신호 건수 (발표 반응일까지만 본다)
 
 신호 판정은 반응일(발표 뒤 첫 거래 세션)의 종가 변화·거래량까지만 쓰고, 그 뒤 가격은 읽지 않는다.
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
 import sys
@@ -37,6 +40,19 @@ SP500_RENAMES = ROOT / "data" / "cache" / "sp500" / "renames.csv"
 SP500_TIINGO = ROOT / "data" / "cache" / "sp500" / "tiingo"
 # 같은 회사(같은 CIK)의 티커 변경 중 S&P 500 점검 renames.csv에 없는 나스닥 100 쪽 것
 EXTRA_RENAMES = {"PCLN": "BKNG", "KFT": "MDLZ", "WAG": "WBA"}
+SP500_FINAL_GAP = ROOT / "data" / "cache" / "sp500" / "final_gap.csv"
+NDX_WIKITEXT = ROOT / "data" / "cache" / "nasdaq100_changes_wikitext.txt"
+SEARCH_CACHE = CACHE / "edgar_search"
+TIINGO_CACHE = CACHE / "tiingo"
+PRICE_CHECK = CACHE / "price_check.csv"
+NAME_SIM_MIN = 0.6  # S&P 500 점검과 같은 기준
+# 이름 검색을 쓰지 않는 종목 (사람 확인). CA: 검색 상위 10개에 CA, Inc.가 없고, 'Technologies'만 겹친
+# 다른 회사(Data Call Technologies 0.81, Cavitation Technologies 0.79)가 유사도 기준을 넘었다
+NAME_SEARCH_SKIP = {"CA": "검색 결과에 CA, Inc. 없음 — 다른 회사만 걸림"}
+# 시가총액 확인만 못 넘었지만 사람이 같은 회사로 확인한 가격 (S&P 500 점검 WBA와 같은 경우):
+# WAG Tiingo 가격 = Walgreen (2012-06 29.93, 2014-06 72.01). 시총 0은 2014년 새 CIK라 그 전 주식 수가 없어서
+PRICE_KEEP = {"WAG": "Walgreen 가격 확인, 시총 0은 새 CIK 주식 수 문제"}
+MCAP_MIN_USD = 1e9  # S&P 500 점검과 같은 기준 (시가총액 중앙값이 이보다 작으면 다른 회사 의심)
 
 FIRST_MONTH, LAST_MONTH = "2011-12", "2021-12"
 START, SEAL = pd.Timestamp("2012-01-01"), pd.Timestamp("2021-12-31")
@@ -89,9 +105,9 @@ def session_of(et: pd.Timestamp) -> str:
 
 
 def reaction_day(et: pd.Timestamp, days: pd.DatetimeIndex) -> pd.Timestamp | None:
-    """발표 시각 → 그 발표가 처음 반영되는 거래일. 장전·장중이면 그날(휴장이면 다음 거래일), 장후면 다음 거래일."""
+    """발표 시각 → 반응일 (2026-10-09 결정 1). 장전이면 그날(휴장이면 다음 거래일), 장중·장후면 다음 거래일."""
     d = et.normalize()
-    pos = days.searchsorted(d, side="right" if session_of(et) == "장후" else "left")
+    pos = days.searchsorted(d, side="left" if session_of(et) == "장전" else "right")
     return days[pos] if pos < len(days) else None
 
 
@@ -145,6 +161,74 @@ def pick_events(rows: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
     r = r[is202 | isq].copy()
     r["kind"] = r["form"].where(isq, "8-K 2.02")
     return r
+
+
+_STOP = {"inc", "corp", "corporation", "co", "company", "the", "plc", "ltd", "limited", "group", "holdings",
+         "holding", "incorporated", "class", "a", "b", "c", "de", "new", "sa", "nv", "lp", "llc", "trust"}
+
+
+def norm_name(x: str) -> str:
+    """회사 이름 비교용: 소문자, 기호·흔한 꼬리(inc, corp 등) 제거 (S&P 500 점검과 같음)."""
+    x = re.sub(r"\(.*?\)", " ", str(x).lower()).replace("&", " and ")
+    return " ".join(w for w in re.findall(r"[a-z0-9]+", x) if w not in _STOP)
+
+
+def name_sim(a: str, b: str) -> float:
+    """두 회사 이름 유사도 0~1 (S&P 500 점검과 같음)."""
+    import difflib
+
+    a, b = norm_name(a), norm_name(b)
+    if not a or not b:
+        return 0.0
+    if a == b or a.startswith(b + " ") or b.startswith(a + " "):
+        return 1.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _link_text(cell: str) -> str:
+    """'[[A|B]]' → 'B', '[[A]]' → 'A', 그 밖은 그대로."""
+    m = re.search(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", cell)
+    return (m.group(2) or m.group(1)).strip() if m else cell.strip()
+
+
+def parse_ticker_names(txt: str) -> dict[str, set[str]]:
+    """위키 표 원문에서 '| 티커' 줄 바로 다음 칸의 회사 이름 (나스닥 100 변경 표·S&P 100 명단 표 공통)."""
+    out: dict[str, set[str]] = {}
+    lines = txt.splitlines()
+    for i, line in enumerate(lines[:-1]):
+        m = re.fullmatch(r"\|\s*([A-Z]{1,5}(?:[.\-][A-Z]{1,2})?)\s*", line)
+        nxt = lines[i + 1]
+        if m and nxt.startswith("|") and not nxt.startswith(("|-", "|}")):
+            name = _link_text(nxt[1:])
+            if name and not re.fullmatch(r"[A-Z]{1,5}", name):
+                out.setdefault(m.group(1).replace(".", "-"), set()).add(name)
+    return out
+
+
+def judge_period(first: pd.Timestamp, last: pd.Timestamp, p_first, p_last, tol_days: int = 10) -> str:
+    """가격 기간이 명단 기간과 맞는지 (S&P 500 점검 judge_period와 같은 기준, 편출일 대신 명단 마지막 달).
+
+    출력: "맞음" | "앞이 빔" | "끝이 이름" | "다른 회사 의심" | "가격 없음"
+    """
+    if p_first is None or pd.isna(p_first):
+        return "가격 없음"
+    p_first, p_last = pd.Timestamp(p_first), pd.Timestamp(p_last)
+    month_start = first - pd.offsets.MonthBegin(1)
+    if p_first > last or p_last < month_start:
+        return "다른 회사 의심"
+    if p_first > max(month_start, pd.Timestamp("2011-06-01")) + pd.Timedelta(days=tol_days):
+        return "앞이 빔"
+    if p_last < min(last, SEAL) - pd.Timedelta(days=tol_days + 31):
+        return "끝이 이름"
+    return "맞음"
+
+
+def split_adjust(raw: pd.DataFrame) -> pd.DataFrame:
+    """Tiingo raw_close·volume·split_factor → 분할 반영 close·volume (마지막 날 기준, 순수 함수)."""
+    f = raw["split_factor"].fillna(1.0).replace(0, 1.0).astype(float)
+    cum = f.cumprod()
+    k = cum / cum.iloc[-1]
+    return pd.DataFrame({"close": raw["raw_close"] * k, "volume": raw["volume"] / k}, index=raw.index)
 
 
 def earnings_dates(ev: pd.DataFrame) -> pd.DataFrame:
@@ -263,6 +347,52 @@ def member_periods(m: dict[pd.Timestamp, set[str]]) -> dict[str, tuple[pd.Timest
     return {t: (a, b) for t, (a, b) in out.items()}
 
 
+def expected_names() -> dict[str, set[str]]:
+    """티커 → 기대 회사 이름들: 나스닥 100 변경 표 + S&P 100 옛 판 명단 표 + S&P 500 점검 identity.csv."""
+    out: dict[str, set[str]] = {}
+
+    def add(d):
+        for t, ns in d.items():
+            out.setdefault(t, set()).update(ns)
+
+    if NDX_WIKITEXT.exists():
+        add(parse_ticker_names(NDX_WIKITEXT.read_text(encoding="utf-8")))
+    for f in sorted(WIKI_CACHE.glob("*.txt")):
+        add(parse_ticker_names(f.read_text(encoding="utf-8")))
+    if SP500_IDENTITY.exists():
+        i = pd.read_csv(SP500_IDENTITY, index_col=0)
+        add({t: {n} for t, n in i["expected_name"].dropna().items()})
+    return out
+
+
+SEARCH_FAILED: list[str] = []
+
+
+def name_search(name: str, ua: str) -> list[tuple[int, str]]:
+    """EDGAR 회사 이름 검색(efts 자동완성, S&P 500 점검과 같은 방법). 출력 [(cik, 이름)] 상위 10. 캐시."""
+    import requests
+
+    key = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:80]
+    path = SEARCH_CACHE / f"{key}.json"
+    if path.exists():
+        return [(int(c), n) for c, n in json.loads(path.read_text(encoding="utf-8"))]
+    d = None
+    for q in (name, re.sub(r"[^A-Za-z0-9 ]+", " ", name).strip()):
+        r = requests.get("https://efts.sec.gov/LATEST/search-index", params={"keysTyped": q},
+                         headers={"User-Agent": ua}, timeout=30)
+        time.sleep(0.12)
+        if r.status_code == 200:
+            d = r.json()
+            break
+    if d is None:
+        SEARCH_FAILED.append(name)  # 실패는 모아 보고 (캐시하지 않음)
+        return []
+    hits = [(int(h["_id"]), h["_source"]["entity"]) for h in d.get("hits", {}).get("hits", [])][:10]
+    SEARCH_CACHE.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(hits), encoding="utf-8")
+    return hits
+
+
 def fetch_submissions(cik: int, ua: str) -> list[dict]:
     """submissions 본문 + 추가 파일. 캐시 data/cache/edgar/submissions/."""
     import requests
@@ -302,6 +432,8 @@ def step_events() -> None:
     cmap = edgar.fetch_ticker_to_cik()
     ident = pd.read_csv(SP500_IDENTITY, index_col=0) if SP500_IDENTITY.exists() else pd.DataFrame()
     rn = renames()
+    names = expected_names()
+    searched: dict[str, tuple[float, str]] = {}
     rows, ev, failed = [], [], []
     for i, t in enumerate(tickers):
         a = min(p[0] for p in (ndx.get(t), sp.get(t)) if p)
@@ -330,9 +462,33 @@ def step_events() -> None:
             if n_in >= 2:  # 명단 기간에 10-Q·10-K가 2건 이상이어야 같은 회사로 본다
                 pick = (cik, src, ev_rows)
                 break
+        if pick is None and t in names and t not in NAME_SEARCH_SKIP:
+            # 이름 검색 (S&P 500 점검과 같은 확인: 명단 기간 10-Q·10-K 2건 이상 + 이름 유사도 0.6 이상)
+            best = None
+            for nm in sorted(names[t]):
+                for cik, _ in name_search(nm, ua):
+                    if any(cik == x for x, _ in cands):
+                        continue
+                    try:
+                        js = fetch_submissions(cik, ua)
+                    except Exception:  # noqa: BLE001 — 후보 하나 실패는 건너뜀
+                        continue
+                    er = pick_events(submissions_rows(js), "2011-07-01", "2022-04-30")
+                    q = er[er["kind"].isin(["10-Q", "10-K"])]
+                    n_in = ((q["filing_date"] >= (a - pd.Timedelta(days=150)).strftime("%Y-%m-%d"))
+                            & (q["filing_date"] <= (b + pd.Timedelta(days=120)).strftime("%Y-%m-%d"))).sum()
+                    ed = [js[0].get("name", "")] + [f.get("name", "") for f in js[0].get("formerNames", [])]
+                    sim = max(name_sim(nm, x) for x in ed)
+                    if n_in >= 2 and sim >= NAME_SIM_MIN and (best is None or sim > best[3]):
+                        best = (cik, f"이름 검색({nm})", er, sim, js[0].get("name", ""))
+            if best:
+                pick = best[:3]
+                searched[t] = (best[3], best[4])
         if pick is None:
-            if not cands:
-                failed.append((t, "CIK 없음"))
+            if not cands and t not in names:
+                failed.append((t, "CIK 없음(기대 이름도 없음)"))
+            elif not cands:
+                failed.append((t, f"CIK 없음({NAME_SEARCH_SKIP.get(t, '이름 검색도 실패')})"))
             elif not any(f[0] == t for f in failed):
                 failed.append((t, "명단 기간에 10-Q·10-K 없음(외국 기업이거나 티커 재사용)"))
             rows.append({"ticker": t, "cik": None, "cik_source": "", "first": a.date(), "last": b.date(),
@@ -340,7 +496,9 @@ def step_events() -> None:
             continue
         cik, src, er = pick
         rows.append({"ticker": t, "cik": cik, "cik_source": src, "first": a.date(), "last": b.date(),
-                     "in_ndx": t in ndx, "in_sp100": t in sp})
+                     "in_ndx": t in ndx, "in_sp100": t in sp,
+                     "name_sim": searched[t][0] if t in searched else None,
+                     "edgar_name": searched[t][1] if t in searched else None})
         ev.append(er.assign(ticker=t, cik=cik))
         if (i + 1) % 50 == 0:
             print(f"[events] {i + 1}/{len(tickers)}", flush=True)
@@ -352,6 +510,11 @@ def step_events() -> None:
     print(f"[events] CIK 확정 {sum(r['cik'] is not None for r in rows)} · 실패 {len(failed)}")
     for t, why in failed:
         print(f"  실패 {t}: {why}")
+    print(f"[events] 이름 검색으로 찾음 {len(searched)}")
+    for t, (sim, nm) in sorted(searched.items()):
+        print(f"  {t}: {nm} (유사도 {sim:.2f})")
+    if SEARCH_FAILED:
+        print(f"[events] 이름 검색 요청 실패 {len(SEARCH_FAILED)}: {SEARCH_FAILED}")
     print(allev["kind"].value_counts().to_string())
 
 
@@ -390,15 +553,25 @@ def load_px(t: str) -> tuple[pd.DataFrame | None, str]:
         d = _px_one(new)
         if d is not None:
             return d, f"yfinance({new})"
-    f = SP500_TIINGO / f"{t}.csv"
-    if f.exists():
+    # Tiingo: S&P 500 점검 캐시는 그 점검의 최종 판정이 "있음"인 것만, SW1 캐시는 price_check가 통과한 것만
+    ok500 = set()
+    if SP500_FINAL_GAP.exists():
+        g = pd.read_csv(SP500_FINAL_GAP, index_col=0)
+        ok500 = set(g.index[(g["status"] == "있음") & (g["price_source"] == "tiingo")])
+    oksw = set()
+    if PRICE_CHECK.exists():
+        c = pd.read_csv(PRICE_CHECK)
+        oksw = set(c.loc[c["use"], "ticker"])
+    for f, src, ok in ((SP500_TIINGO / f"{t}.csv", "tiingo", t in ok500), (TIINGO_CACHE / f"{t}.csv", "tiingo(SW1)", t in oksw)):
+        if not ok or not f.exists():
+            continue
         d = pd.read_csv(f, index_col=0, parse_dates=True)
         if len(d) and "raw_close" in d:
-            d = d.rename(columns={"raw_close": "close"})[["close", "volume"]]
             d.index = pd.DatetimeIndex(d.index).tz_localize(None).normalize()
+            d = split_adjust(d.sort_index())
             d = d[d.index <= SEAL].dropna(subset=["close"])
             if len(d):
-                return d, "tiingo"
+                return d, src
     return None, "없음"
 
 
@@ -428,6 +601,94 @@ def step_prices() -> None:
     src = {t: load_px(t)[1] for t in cik["ticker"]}
     print(pd.Series(src).value_counts().to_string())
     print("[prices] 최종 없음:", ", ".join(t for t, v in src.items() if v == "없음"))
+
+
+def shares_median_mcap(cik: int, px: pd.DataFrame) -> float | None:
+    """EDGAR 표지 주식 수(dei) × 그날 분할 반영 종가의 중앙값 (USD). 자료 없으면 None."""
+    from data import edgar
+
+    f = edgar.fetch_company_facts(int(cik))
+    ents = []
+    for tax, tag in (("dei", "EntityCommonStockSharesOutstanding"), ("us-gaap", "CommonStockSharesOutstanding")):
+        ents = [e for e in edgar.extract_fact_entries(f, tax, tag) if e.get("unit") == "shares"]
+        if len({e["end"] for e in ents}) >= 4:
+            break
+    if not ents:
+        return None
+    df = pd.DataFrame(ents)
+    per = df.groupby(["end", "accn"]).agg(val=("val", "sum"), filed=("filed", "max")).reset_index()
+    per = per.sort_values("filed").drop_duplicates("end", keep="last")
+    sh = pd.Series(per["val"].values, index=pd.to_datetime(per["end"])).sort_index()
+    sh = sh[(sh.index >= px.index.min()) & (sh.index <= px.index.max())]
+    if sh.empty:
+        return None
+    # 표지 주식 수는 그날 기준이라 분할 반영 전 원본 가격(raw)과 곱한다 (호출부가 raw를 넘긴다)
+    c = px["close"].reindex(sh.index, method="ffill")
+    return float((sh * c).median())
+
+
+def step_tiingo() -> None:
+    """CIK는 있는데 가격이 없는 종목만 Tiingo(raw) → 날짜·시가총액 같은 회사 확인 → price_check.csv.
+
+    Tiingo 키는 환경변수 TIINGO_API_KEY (값은 출력하지 않는다). 한도(429)면 멈추고 남은 목록을 보고한다.
+    """
+    import requests
+    from dotenv import load_dotenv
+
+    load_dotenv(ROOT / ".env")
+    key = os.environ.get("TIINGO_API_KEY", "").strip()
+    print(f"[tiingo] TIINGO_API_KEY 있음: {bool(key)}")
+    cik = pd.read_csv(CACHE / "cik.csv").dropna(subset=["cik"])
+    TIINGO_CACHE.mkdir(parents=True, exist_ok=True)
+    rows, stopped = [], None
+    # 이미 판정한 것은 다시 판정하되 (네트워크 없음), 받는 건 캐시에 없을 때만
+    prev_use = PRICE_CHECK.exists()
+    if prev_use:
+        PRICE_CHECK.unlink()  # load_px가 옛 판정을 쓰지 않게
+    for _, r in cik.iterrows():
+        t = r["ticker"]
+        if load_px(t)[0] is not None:
+            continue
+        path = TIINGO_CACHE / f"{t}.csv"
+        if not path.exists() and stopped is None:
+            resp = requests.get(f"https://api.tiingo.com/tiingo/daily/{t}/prices",
+                                params={"startDate": "2011-06-01", "endDate": "2021-12-31", "token": key, "format": "json"},
+                                timeout=30)
+            time.sleep(0.5)
+            if resp.status_code == 429:
+                stopped = t
+            elif resp.status_code == 200 and isinstance(resp.json(), list):
+                recs = resp.json()
+                pd.DataFrame([{"date": x["date"][:10], "raw_close": x["close"], "volume": x["volume"],
+                               "split_factor": x.get("splitFactor", 1.0)} for x in recs],
+                             columns=["date", "raw_close", "volume", "split_factor"]).to_csv(path, index=False)
+            else:
+                pd.DataFrame(columns=["date", "raw_close", "volume", "split_factor"]).to_csv(path, index=False)
+        row = {"ticker": t, "cik": int(r["cik"]), "first": r["first"], "last": r["last"]}
+        if not path.exists():
+            row.update(status="한도로 못 받음", use=False)
+            rows.append(row)
+            continue
+        raw = pd.read_csv(path, index_col=0, parse_dates=True).sort_index()
+        if raw.empty:
+            row.update(status="Tiingo 자료 없음", use=False)
+            rows.append(row)
+            continue
+        real = raw.index[raw["volume"].fillna(0) > 0]
+        p_first, p_last = raw.index.min(), (real[-1] if len(real) else raw.index[-1])
+        dc = judge_period(pd.Timestamp(r["first"]), pd.Timestamp(r["last"]), p_first, p_last)
+        mc = shares_median_mcap(int(r["cik"]), raw.rename(columns={"raw_close": "close"}))
+        use = dc != "다른 회사 의심" and (mc is None or mc >= MCAP_MIN_USD or t in PRICE_KEEP)
+        row.update(price_first=p_first.date(), price_last=p_last.date(), date_check=dc,
+                   mcap_median_b=round(mc / 1e9, 2) if mc else None, status="판정", use=use)
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    out.to_csv(PRICE_CHECK, index=False, encoding="utf-8-sig")
+    print(f"[tiingo] 대상 {len(out)} · 사용 {int(out['use'].sum()) if len(out) else 0}")
+    if len(out):
+        print(out.to_string(index=False))
+    if stopped:
+        print(f"[tiingo] 한도(429)로 {stopped}부터 못 받음 — 다시 실행하면 이어 받는다")
 
 
 # ── 점검 ────────────────────────────────────────────────────────────────────
@@ -651,6 +912,35 @@ def step_check() -> None:
         print(f"── {name} ──")
         print(tab.to_string())
 
+    # 3-b) 10-Q 확인판 (참고, 결정 3: 주 규칙에는 넣지 않음). 신호마다 그 분기 10-Q·10-K 제출일 기준 EPS 전년 같은 분기 대비
+    from core import e1
+    from data import edgar
+
+    sig = k[k["signal"]].copy()
+    eps_rows = []
+    facts_by: dict[int, list] = {}
+    for _, r in sig.iterrows():
+        c = int(r["cik"])
+        if c not in facts_by:
+            try:
+                facts_by[c] = edgar.extract_fact_entries(edgar.fetch_company_facts(c), "us-gaap", "EarningsPerShareDiluted")
+            except Exception:  # noqa: BLE001 — 실패는 '계산 못 함'으로 센다
+                facts_by[c] = []
+        vals = e1.quarterly_values(facts_by[c], pd.Timestamp(r["q_filing_date"]), None)
+        qe = pd.Timestamp(r["report_date"])
+        cur = vals[abs((vals.index - qe).days) <= 7] if len(vals) else vals
+        old = vals[abs((vals.index - (qe - pd.Timedelta(days=364))).days) <= 7] if len(vals) else vals
+        ok = len(cur) > 0 and len(old) > 0
+        eps_rows.append({"eps_ok": ok, "eps_up": bool(ok and cur.iloc[-1] > old.iloc[-1]),
+                         "q_lag": (pd.Timestamp(r["q_filing_date"]) - pd.Timestamp(r["d0"])).days})
+    sig = pd.concat([sig.reset_index(drop=True), pd.DataFrame(eps_rows)], axis=1)
+    sig.to_csv(CACHE / "signals_eps_ref.csv", index=False, encoding="utf-8-sig")
+    print("[check] 10-Q 확인판 (참고)")
+    for name, sel in (("나스닥100", sig["in_ndx"]), ("S&P100", sig["in_sp100"]), ("합집합", sig["in_ndx"] | sig["in_sp100"])):
+        x = sig[sel]
+        print(f"  {name}: 신호 {len(x)} · EPS 증감 계산 가능 {int(x['eps_ok'].sum())} · 그중 증가 {int(x['eps_up'].sum())}"
+              f" · 반응일→10-Q 지연 중앙 {x['q_lag'].median():.0f}일 · 반응일에 이미 10-Q {int((x['q_lag'] <= 0).sum())}")
+
     # 4) 명단 대비 덮은 비율 (종목·달 기준): CIK와 가격이 둘 다 있는 비율
     ok = set(cik.dropna(subset=["cik"])["ticker"])
     for name, m in (("나스닥100", ndx), ("S&P100", sp)):
@@ -662,11 +952,11 @@ def step_check() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", choices=["sp100", "events", "prices", "accepted", "check"], required=True)
+    ap.add_argument("--step", choices=["sp100", "events", "prices", "tiingo", "accepted", "check"], required=True)
     a = ap.parse_args()
     CACHE.mkdir(parents=True, exist_ok=True)
-    {"sp100": step_sp100, "events": step_events, "prices": step_prices, "accepted": step_accepted,
-     "check": step_check}[a.step]()
+    {"sp100": step_sp100, "events": step_events, "prices": step_prices, "tiingo": step_tiingo,
+     "accepted": step_accepted, "check": step_check}[a.step]()
 
 
 if __name__ == "__main__":

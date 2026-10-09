@@ -104,3 +104,35 @@ def test_parse_index_accepted():
     html = '<div class="infoHead">Accepted</div>\n<div class="info">2021-10-28 16:30:23</div>'
     assert sw.parse_index_accepted(html) == "2021-10-28 16:30:23"
     assert sw.parse_index_accepted("<html></html>") is None
+
+
+def test_reaction_day_intraday_is_next_day():
+    # 2026-10-09 결정 1: 장중 발표도 다음 거래일
+    days = pd.DatetimeIndex(["2021-10-28", "2021-10-29"])
+    assert sw.reaction_day(pd.Timestamp("2021-10-28 12:00"), days) == pd.Timestamp("2021-10-29")
+    assert sw.reaction_day(pd.Timestamp("2021-10-28 09:29"), days) == pd.Timestamp("2021-10-28")
+    assert sw.reaction_day(pd.Timestamp("2021-10-28 09:30"), days) == pd.Timestamp("2021-10-29")
+
+
+def test_name_sim_and_wiki_names():
+    assert sw.name_sim("Alexion Pharmaceuticals", "ALEXION PHARMACEUTICALS INC") == 1.0
+    assert sw.name_sim("Yahoo!", "Altaba Inc.") < 0.6
+    txt = "|-\n|ALXN\n|[[Alexion Pharmaceuticals]]\n|-\n| HNZ\n| [[H. J. Heinz Company|Heinz]]\n|-\n|AAPL\n|AAPL\n"
+    assert sw.parse_ticker_names(txt) == {"ALXN": {"Alexion Pharmaceuticals"}, "HNZ": {"Heinz"}}
+
+
+def test_judge_period():
+    f, l = pd.Timestamp("2014-01-31"), pd.Timestamp("2016-06-30")
+    assert sw.judge_period(f, l, pd.Timestamp("2011-06-01"), pd.Timestamp("2016-06-20")) == "맞음"
+    assert sw.judge_period(f, l, pd.Timestamp("2017-01-03"), pd.Timestamp("2021-12-31")) == "다른 회사 의심"
+    assert sw.judge_period(f, l, pd.Timestamp("2015-01-02"), pd.Timestamp("2016-06-20")) == "앞이 빔"
+    assert sw.judge_period(f, l, None, None) == "가격 없음"
+
+
+def test_split_adjust_removes_split_jump():
+    idx = pd.bdate_range("2020-01-01", periods=4)
+    raw = pd.DataFrame({"raw_close": [100.0, 102.0, 51.0, 52.0], "volume": [10.0, 10.0, 20.0, 20.0],
+                        "split_factor": [1.0, 1.0, 2.0, 1.0]}, index=idx)
+    adj = sw.split_adjust(raw)
+    assert adj["close"].tolist() == [50.0, 51.0, 51.0, 52.0]
+    assert adj["volume"].tolist() == [20.0, 20.0, 20.0, 20.0]
