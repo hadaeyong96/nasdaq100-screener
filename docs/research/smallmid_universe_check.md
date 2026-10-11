@@ -263,3 +263,79 @@ Gerber Scientific Escrow·CVR(600, 2011-09 ~ 2018-05), J. Crew Group Escrow(400,
 - 다음 단계 후보 (수익 계산 없음):
   1. 활동 창 규칙 보강(기준일 뒤 200일 안에도 10-K·10-Q) → 오매칭 11쌍 제거 확인, 11장 "매칭 실패" 수작업 대조표(이름 → CIK) 추가
   2. 그다음 가격(yfinance + Tiingo, 같은 회사 날짜 대조) 확보율, 상장폐지 사유 분포, EDGAR 8-K 발표 시각 확보율, 2017~2021 신호 건수
+
+---
+
+# 3차 (2026-10-11): 활동 창 보강·매칭 실패 대조표
+
+**이 장의 숫자가 최신이다.** 7~12장의 매칭·CUSIP·구간 숫자는 이 장 숫자로 바뀐다(11장 공백 목록의 A·B·C 분류는 그대로 유효).
+
+## 13) 판정 규칙 (최종)
+
+±400일 활동 창이 합병으로 사라진 회사를 살려 두던 문제(9장)를 고치면서, 합병·재편 앞뒤 기준일을 하나씩 대조해 규칙을 다듬었다. 후보 CIK(엄격 키 → 단어 정렬 키)마다 그 기준일에 대해:
+
+| 순서 | 규칙 | 상태 | 이유가 된 사례 |
+| --- | --- | --- | --- |
+| 0 | 수작업 대조표(`data/smallmid_cik_overrides.csv`, 26줄)에 맞으면 그 CIK | 확정(대조표) | 아래 표 |
+| 1 | 그 시점 이름이 맞고, 마지막 10-K·10-Q가 기준일 전 120일 안이며 뒤에는 없고, **아직 상장폐지 서류(Form 15·25, 8-K 2.01·3.01)를 안 낸** 후보가 하나 → 합병 완료 전의 옛 회사 | 확정(인수 직전) | Xperi 2020-05-31(2.01·3.01은 06-01), Caesars 2020-06-30(25-NSE 07-20), Dime 2020-12-31(25-NSE 2021-01-29), Aaron's 2020-09-30, SEACOR 2021-02·03 |
+| 1-예외 | 살아 있는 후보가 전체 이름(Holdings·Group 포함)까지 맞으면 1을 쓰지 않음 | — | Owens-Illinois Inc ↔ 자회사 Owens-Illinois Group (2019-11) |
+| 2 | **살아 있음** = 기준일 뒤 200일 안에 10-K·10-Q. 하나면 확정 | 확정 | Dime 2021-02-28 이후는 새 회사(846617) |
+| 3 | 살아 있는 후보가 여럿: 그 시점 등록 이름(formerNames 기간) → 전체 이름(Holdings·Group 유지) → 운영 조합(L.P.·LLC) 제외 | 확정(이름 기간)·(전체 이름)·(운영 조합 제외) | CONSOL·Gannett / Graham Holdings·Graham Corp, Select Medical·Leidos·Southwest Gas·Xerox Holdings / Corporate Office Properties·Mack-Cali·Realogy·Urban Edge·Physicians Realty |
+| 4 | 1~3로 못 찾으면 EDGAR 이름 검색(유사도 ≥ 0.85) — **그 시점 이름이 맞는 후보만** | (위 상태) | SEACOR Holdings → SEACOR Marine 오매칭 차단 |
+| 5 | 그래도 없으면 인수 직전(운영 조합 제외) → ±400일 안 공시가 있고 상장폐지 서류가 없는 후보 | 확정(인수 직전)·(공시 지연) | 재작성으로 공시가 늦은 같은 회사(Super Micro·MiMedx 등은 400일도 넘어 미확정으로 남음) |
+| 6 | NPORT 기간: 이름으로 못 찾은 줄은 같은 CUSIP에 이름으로 확정된 CIK가 하나면 그것 | 확정(CUSIP) | Vanguard가 새 Gannett 주식을 "Gannett Media Corp"로 적은 줄 |
+
+이름 정리도 고쳤다: 주 등록지 꼬리는 2~4자 약어(WV·DEL·U.S.)·The·"지명 + 주 코드"(New York NY)·Puerto Rico·United States만 자른다(전에는 M/I Homes를 "M", Korn/Ferry를 "Korn"으로 자름). EDGAR "VERTEX PHARMACEUTICALS INC / MA"(슬래시 뒤 공백), "UNIVERSAL DISPLAY CORP \PA\"(역슬래시), "Travel + Leisure"(+ ↔ &). 속도: CIK별 제출일 정렬 배열 검색으로 매칭 1회 약 40분 → 약 2분(원래 함수와 900건 대조 불일치 0).
+
+## 14) 결과
+
+| | 2차 (12장) | **3차** |
+| --- | --- | --- |
+| (이름, 기준일) 확정 | 81,958 / 83,156 (98.6%) | **82,792 / 83,156 (99.6%)** |
+| 상태별 | — | 확정 78,608 · 이름 기간 1,468 · 대조표 1,219 · 인수 직전 552 · 운영 조합 제외 438 · 전체 이름 387 · 공시 지연 83 · CUSIP 37 |
+| 미확정 | 1,198 | 364 = 활동 없음 296 · 후보 없음 54 · 모호 14 |
+| CUSIP 독립 검증 (1,209개, CUSIP 보완 행 제외) | 일치 1,171 · **갈림 3** | 일치 **1,189 (98.3%)** · 일부 미확정 11 · 전 기간 미확정 9 · **갈림 0** |
+| 기준일 전에 10-K·10-Q가 끝난 CIK에 붙은 확정 | 567쌍, 120일 초과 31쌍(오매칭 11) | 549쌍, 120일 초과 **3쌍**: Progenics 2(인수 뒤 CVR 줄 — 11장 C), SunEdison 1(파산 전 공시 지연 — 11장 B) |
+
+**편입·편출 범위 (`membership_intervals.csv` 재생성)**
+
+| | S&P 400 | S&P 600 |
+| --- | --- | --- |
+| 종목 / 구간 | 897 / 930 | 1,273 / 1,310 |
+| CIK 미확정 구간 | 17 | 47 |
+| 보고 1번만 보인 구간 (정책상 제외) | 31 | 46 |
+| 범위 폭 중앙값 / 최대 (일) | 58 / 152 | 59 / 152 |
+
+- 보고 1번만 보인 구간은 매칭이 바뀌며 72 → **77**개가 됐다(정책 규칙은 n_reports = 1 그대로).
+
+**대형 겹침 제외 뒤 종목 수 (확정 CIK)**: 2012-01 **992** (400: 399 → 393, 600: 599) · 2017-01 **996** (397 + 599) · 2021-12 **997** (398 + 599). CIK 미확정은 시점마다 4~5개.
+
+## 15) 매칭 실패 대조표 (`data/smallmid_cik_overrides.csv`, 26줄)
+
+이름 키가 아니라 **원래 이름의 정규식**으로 맞춘다("First BanCorp"(PR)와 "First Bancorp/Southern Pines NC"는 다른 회사). 모두 EDGAR submissions에서 이름·옛 이름·10-K/10-Q 기간을 확인했고, 같은 이름의 두 회사가 모두 공시 중인 경우는 **펀드 보고의 내재 가격(금액 ÷ 주식 수)을 후보의 그날 종가와 대조**했다.
+
+| 펀드 이름 | CIK | 근거 |
+| --- | --- | --- |
+| Independent Bank Corp | 776901 (MA, INDB) | 내재 가격 27.29·70.45·81.53 = INDB 종가 (MI의 IBCP는 1.33·21.70·23.87) |
+| First BanCorp (PR) | 1057706 (FBP) | 내재 가격 3.49·6.61·13.78 = FBP 종가 |
+| First Bancorp/Southern Pines NC | 811589 (FBNC) | 내재 가격 45.72 = FBNC 2021-12-31 종가 |
+| Sterling Bancorp(/DE), 2013-11 ~ 2022-01 | 1070154 | DE 설립·NY(펀드 이름 "/DE"), 같은 이름 1680379는 MI 설립 소형 은행. 2021-11·12가 1680379로 잘못 붙던 것 |
+| Noble Corp plc, 2013-11 ~ 2020-11 | 1458891 | 옛 이름 Noble Corp plc 기간, 합본 10-K 내는 자회사와 모호하던 것 |
+| Westamerica BanCorp | 311094 | WESTAMERICA BANCORPORATION |
+| Cadence BanCorp (~2021-10) | 1614184 | Cadence Bancorporation (2021-10 합병 뒤는 Cadence Bank = 공백 A) |
+| U.S. Steel / CoreLogic / Pennsylvania REIT / Sabra / ManTech / Phibro / Bio-Reference / Helen of Troy / PCTEL / O'Charley's / Washington REIT / Communications Sales & Leasing / NutriSystem / M.D.C. Holdings | 각 1163302 / 36047 / 77281 / 1492298 / 892537 / 1069899 / 792641 / 916789 / 1057083 / 864233 / 104894 / 1620280 / 1096376 / 773141 | 표기 차이 (U.S. ↔ UNITED STATES, PC-TEL ↔ PC TEL 등). 그 기간 10-K/10-Q 확인 |
+| Jos. A. Bank / America's Car-Mart / John B. Sanfilippo | 920033 / 799850 / 880117 | 같은 이름의 다른 CIK(814675·1175908·889867)는 13G만 내는 등록인 |
+| Liz Claiborne·Fifth & Pacific | 352363 | Kate Spade & Co의 옛 이름 기간 |
+| OPNET | 1108924 | OPNET TECHNOLOGIES INC (펀드가 "OPNET"만 적어 10-K 없는 OPNET INC에 걸리던 것) |
+
+## 16) 남은 미확정 (364쌍)
+
+- **11장 알려진 공백 A(은행 직접 상장)·B(공시 중단)·C(주식 아닌 줄)** 그대로. B에 Super Micro(2017-09~2018-06), MiMedx(2018), Synchronoss(2017), WageWorks(2018), Avid(2013), Veeco(2012~13), Tech Data(2013), Akorn(2015), Archrock·Exterran Corp(2016), Hain Celestial(2016), Diamond Foods(2011~12), Stein Mart(2012)가 더해졌다 — 재작성 등으로 ±400일 안에도 10-K·10-Q가 없던 기간.
+- 모호 9개 이름(14쌍, 모두 1~2개 기준일): Alexander & Baldwin 2012(분사), Biglari 2017, C&J 2014, CONSOL 2017-08·09(분사 직후), Cardtronics 2016(재편), Gannett 2019-09, Pentair 2012, Pinnacle Entertainment 2015, STERIS 2018-11·12(재편).
+- 후보 없음 6개: 파싱 잔여 1줄, 주식 아닌 줄, Parkway Properties/Md(2015~16, 7개 기준일), Designer Brand(이름 오기), ILG·Ixia·Lender Processing·ProPetro·SWS 등 1개 기준일.
+- 트러스트코(Trustco Bank Corp, 2011-05 1개 기준일)는 "은행"으로 분류됐지만 10-K를 내는 지주회사라 매칭 실패다.
+
+## 17) 3차 결론
+
+- 확정 99.6%, CUSIP 독립 검증 갈림 0, 마지막 공시 뒤 120일 넘은 확정 3쌍(모두 설명됨). **명단은 다음 단계(가격·발표 시각·신호 건수)에 쓸 수 있다.**
+- 이 명단의 한계는 그대로: 분기 정밀도(범위 폭 중앙값 약 2개월), 2019년 이전은 CUSIP이 없어 이름·공시 기록으로만 확인.

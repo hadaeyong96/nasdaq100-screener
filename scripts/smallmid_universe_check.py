@@ -26,6 +26,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -380,7 +381,12 @@ def clean_fund_name(name: str) -> str:
     - 약어 Cos → Companies (Carlisle Cos. ↔ CARLISLE COMPANIES INC)
     """
     x = str(name)
-    x = re.sub(r"/[A-Za-z .]{1,12}/?$", " ", x)            # United Bankshares Inc/WV, Kroger Co/The
+    # 주 등록지·The 꼬리: Inc/WV, Co/The, Bank/New York NY, Corp/DE/ (M/I Homes의 '/I Homes'는 꼬리가 아님)
+    # 꼬리로 보는 것: 2~4자 약어(WV, DEL, U.S.), The, '지명 + 주 코드'(New York NY), Puerto Rico·United States.
+    # Korn/Ferry International, Cullen/Frost Bankers Inc 같은 이름 안의 '/'는 건드리지 않는다.
+    x = re.sub(r"\s*/\s?(?:The|[A-Z](?:\.?[A-Z]){1,3}\.?|(?:[A-Z][a-z]+ )+[A-Z]{2}|Puerto Rico|United States)/?\s*$", " ", x)
+    x = re.sub(r"\s*\\[A-Z]{2}\\\s*$", " ", x)  # EDGAR 'UNIVERSAL DISPLAY CORP \PA\'
+    x = x.replace("+", "&")  # Travel + Leisure ↔ Travel & Leisure
     x = re.sub(r"[,\s-]+(?:class|cl)\.?\s+[a-z]\b.*$", " ", x, flags=re.I)
     x = re.sub(r"\s+-\s+[a-z]$", " ", x, flags=re.I)
     x = re.sub(r"['’`]", "", x)
@@ -395,6 +401,16 @@ def clean_fund_name(name: str) -> str:
 def match_key(name: str) -> str:
     """엄격 키 = 정리 뒤 SW1·S&P 500 점검과 같은 norm_name (순수)."""
     return _sw().norm_name(clean_fund_name(name))
+
+
+_LEGAL = {"inc", "corp", "corporation", "co", "company", "the", "plc", "ltd", "limited", "class", "a", "b", "c",
+          "de", "nv", "sa", "lp", "llc", "incorporated"}
+
+
+def full_key(name: str) -> str:
+    """전체 이름 키: 법인 형태만 빼고 Holdings·Group·Trust는 남긴다 (지주회사·자회사 가르기용) (순수)."""
+    x = re.sub(r"\(.*?\)", " ", clean_fund_name(name).lower()).replace("&", " and ")
+    return " ".join(w for w in re.findall(r"[a-z0-9]+", x) if w not in _LEGAL)
 
 
 def loose_key(name: str) -> str:
@@ -438,15 +454,84 @@ def active_near(rows: pd.DataFrame, rep_date: str, days: int = 400) -> bool:
     return bool(((d >= r - pd.Timedelta(days=days)) & (d <= r + pd.Timedelta(days=days))).any())
 
 
-def resolve(cands: set[int], rep_date: str, active, same_name_then=None) -> tuple[int | None, str]:
+ALIVE_AFTER_DAYS = 200   # 살아 있는 회사: 기준일 뒤 이 기간 안에 10-K·10-Q
+ENDING_BEFORE_DAYS = 120  # 인수 직전: 기준일 뒤 공시는 없지만 마지막 10-K·10-Q가 기준일 전 이 기간 안
+
+
+def alive_at(rows: pd.DataFrame, rep_date: str, after: int = ALIVE_AFTER_DAYS) -> bool:
+    """그 기준일에 살아 있는 등록인인지: 기준일 다음 날 ~ after일 안에 10-K·10-Q 제출 (순수).
+
+    ±400일 창은 합병으로 사라진 회사(옛 Dime·옛 Gannett)를 살려 둬서 바꿨다 (문서 9장).
+    """
+    if rows.empty:
+        return False
+    d = pd.to_datetime(rows.loc[rows["form"].isin(ACTIVE_FORMS), "filing_date"])
+    r = pd.Timestamp(rep_date)
+    return bool(((d > r) & (d <= r + pd.Timedelta(days=after))).any())
+
+
+def ending_at(rows: pd.DataFrame, rep_date: str, before: int = ENDING_BEFORE_DAYS) -> bool:
+    """인수·상장폐지 직전: 기준일 뒤 10-K·10-Q는 없고, 마지막 것이 기준일 전 before일 안 (순수)."""
+    if rows.empty:
+        return False
+    d = pd.to_datetime(rows.loc[rows["form"].isin(ACTIVE_FORMS), "filing_date"])
+    r = pd.Timestamp(rep_date)
+    if (d > r).any():
+        return False
+    return bool(((d <= r) & (d >= r - pd.Timedelta(days=before))).any())
+
+
+PARTNERSHIP_RE = re.compile(r"\b(L\.?\s?P\.?|LLC|OPERATING PARTNERSHIP)\s*$|\bL\.?P\.?\b", re.I)
+
+
+DEREG_FORMS = {"15-12B", "15-12G", "15-15D", "25", "25-NSE"}
+
+
+def gone_before(rows: pd.DataFrame, rep_date: str) -> bool:
+    """기준일까지 상장폐지·등록 해지 서류를 냈는지: 마지막 10-K·10-Q 뒤 ~ 기준일에 Form 15·25 또는 8-K 2.01·3.01 (순수).
+
+    합병 완료 전(옛 회사가 정답, Xperi 2020-05-31)과 완료 후(새 회사가 정답, Dime 2021-02-28)를 가른다.
+    """
+    if rows.empty:
+        return False
+    fd = pd.to_datetime(rows["filing_date"])
+    r = pd.Timestamp(rep_date)
+    q = fd[rows["form"].isin(ACTIVE_FORMS) & (fd <= r)]
+    since = q.max() if len(q) else pd.Timestamp("1900-01-01")
+    win = (fd > since) & (fd <= r)
+    items = rows.get("items", pd.Series("", index=rows.index)).fillna("").astype(str)
+    dereg = rows["form"].isin(DEREG_FORMS) | ((rows["form"] == "8-K") & items.str.contains(r"\b(?:2\.01|3\.01)\b"))
+    return bool((win & dereg).any())
+
+
+def resolve(cands: set[int], rep_date: str, alive, same_name_then=None, ending=None,
+            is_partnership=None, ending_if_none_alive: bool = True, gone=None,
+            stale=None, same_full_then=None) -> tuple[int | None, str]:
     """후보 CIK들 → (CIK, 상태) (순수).
 
-    active(cik, rep_date) → bool: 그 시점 10-K·10-Q 제출. same_name_then(cik, rep_date) → bool: 그 시점 등록 이름이
-    펀드 이름과 같은 키인지 (옛 이름 사용 기간). 상태: 확정 | 확정(이름 기간) | 모호 | 활동 없음 | 후보 없음.
+    alive(cik, d): 그 시점 살아 있음(기준일 뒤 200일 안 10-K·10-Q). same_name_then(cik, d): 그 시점 등록 이름이
+    펀드 이름과 같은 키(옛 이름 사용 기간). is_partnership(cik, d): 그 시점 이름이 운영 조합(L.P.·LLC).
+    ending(cik, d): 인수 직전(마지막 10-K·10-Q가 기준일 전 120일 안). 살아 있는 유일 후보의 그 시점 이름이 안 맞을 때,
+    또는 (ending_if_none_alive면) 살아 있는 후보가 없을 때 본다. 첫 판정은 ending_if_none_alive=False로 불러
+    이름 검색이 먼저 오게 한다 (합병이 끝난 뒤 기준일은 새 회사가 정답).
+    stale(cik, d): ±400일 안 10-K·10-Q (공시 지연 회사 구제용).
+    상태: 확정 | 확정(이름 기간) | 확정(운영 조합 제외) | 확정(인수 직전) | 확정(공시 지연) | 모호 | 활동 없음 | 후보 없음.
     """
     if not cands:
         return None, "후보 없음"
-    act = sorted(c for c in cands if active(c, rep_date))
+    act = sorted(c for c in cands if alive(c, rep_date))
+    # 합병 직전 기준일: 옛 회사는 공시가 끝나 '살아 있음'에서 빠지고, 그 이름을 이어받은 회사만 남는다
+    # (Caesars 2020-06, Dime 2020-12, Xperi 2020-05, Aaron's 2020-09, SEACOR 2021-02). 그 시점 이름이 맞는
+    # '인수 직전' 후보가 아직 상장폐지 서류(Form 15·25, 8-K 2.01·3.01)를 안 냈으면 그 옛 회사가 정답이다.
+    if same_name_then is not None and ending is not None:
+        end_named = sorted(c for c in cands if c not in act and ending(c, rep_date) and same_name_then(c, rep_date)
+                           and not (gone is not None and gone(c, rep_date))
+                           and not (is_partnership is not None and is_partnership(c, rep_date)))
+        # 살아 있는 후보가 전체 이름까지 맞으면(Owens-Illinois Inc ↔ 자회사 Owens-Illinois Group) 그쪽이 정답
+        if same_full_then is not None and any(same_full_then(a, rep_date) for a in act):
+            end_named = [c for c in end_named if same_full_then(c, rep_date)]
+        if len(end_named) == 1:
+            return end_named[0], "확정(인수 직전)"
     if len(act) == 1:
         return act[0], "확정"
     if len(act) > 1:
@@ -454,7 +539,29 @@ def resolve(cands: set[int], rep_date: str, active, same_name_then=None) -> tupl
             same = [c for c in act if same_name_then(c, rep_date)]
             if len(same) == 1:
                 return same[0], "확정(이름 기간)"
+        if same_full_then is not None:  # 지주회사와 같은 이름 자회사(Graham Holdings·Graham Corp 등): 전체 이름 비교
+            full = [c for c in act if same_full_then(c, rep_date)]
+            if len(full) == 1:
+                return full[0], "확정(전체 이름)"
+        if is_partnership is not None:  # 리츠·지주 본체와 같은 이름의 운영 조합(L.P.·LLC)은 상장 주식이 아님
+            corp = [c for c in act if not is_partnership(c, rep_date)]
+            if len(corp) == 1:
+                return corp[0], "확정(운영 조합 제외)"
         return None, "모호"
+    if ending is not None and ending_if_none_alive:
+        end = sorted(c for c in cands if ending(c, rep_date)
+                     and not (is_partnership is not None and is_partnership(c, rep_date)))
+        if len(end) == 1:
+            return end[0], "확정(인수 직전)"
+        if len(end) > 1:
+            return None, "모호"
+        # 재작성 등으로 10-K·10-Q가 늦은 같은 회사(Super Micro 2017~18 등): ±400일 안 공시가 있고 상장폐지 서류가
+        # 없는 후보가 하나면 인정. 합병으로 사라진 회사는 gone이라 다시 붙지 않는다(Dime·Gannett·A. Schulman).
+        if stale is not None:
+            late = sorted(c for c in cands if stale(c, rep_date) and not (gone is not None and gone(c, rep_date))
+                          and not (is_partnership is not None and is_partnership(c, rep_date)))
+            if len(late) == 1:
+                return late[0], "확정(공시 지연)"
     return None, "활동 없음"
 
 
@@ -488,6 +595,67 @@ def prefetch_submissions(ciks: set[int], ua: str, workers: int = 6, per_sec: flo
     print(f"미리 받기 끝, 실패 {len(failed)}개")
 
 
+OVERRIDES_CSV = ROOT / "data" / "smallmid_cik_overrides.csv"
+
+
+def load_overrides(path: Path = OVERRIDES_CSV) -> pd.DataFrame:
+    """매칭 실패 대조표 (펀드 이름 정규식 + 유효 기간 → CIK, 근거). EDGAR에서 손으로 확인한 값 (파일).
+
+    이름 키가 아니라 원래 이름의 정규식(대소문자 무시, 전체 일치)으로 맞춘다 — 'First BanCorp'(PR)와
+    'First Bancorp/Southern Pines NC'처럼 정리하면 같은 키가 되는 다른 회사가 있기 때문.
+    """
+    if not path.exists():
+        return pd.DataFrame(columns=["name_regex", "valid_from", "valid_to", "cik", "evidence"])
+    return pd.read_csv(path, comment="#", dtype={"valid_from": str, "valid_to": str})
+
+
+def override_for(ov: pd.DataFrame, name: str, rep: str) -> int | None:
+    """대조표에서 (이름, 기준일)에 맞는 CIK. 유효 기간은 양 끝 포함, 비면 제한 없음. 둘 이상 맞으면 None (순수)."""
+    if ov.empty:
+        return None
+    hit = [int(r["cik"]) for r in ov.to_dict("records")
+           if re.fullmatch(r["name_regex"], str(name).strip(), re.I)
+           and (pd.isna(r["valid_from"]) or r["valid_from"] <= rep)
+           and (pd.isna(r["valid_to"]) or r["valid_to"] >= rep)]
+    return hit[0] if len(set(hit)) == 1 else None
+
+
+def nport_cusip_rows() -> pd.DataFrame:
+    """NPORT 보유 표의 주식 줄 (name, cusip, period) (파일)."""
+    rows = []
+    for p in sorted(HOLD.glob("*.csv")):
+        fund, period = p.stem.split("_", 1)
+        d = pd.read_csv(p)
+        if "cusip" in d.columns:
+            rows.append(d.loc[d["class"] == "주식", ["name", "cusip"]].assign(period=period))
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["name", "cusip", "period"])
+
+
+def fill_by_cusip(m: pd.DataFrame, rows: pd.DataFrame | None = None) -> pd.DataFrame:
+    """NPORT 기간(2019-09~): 이름으로 못 찾은 (이름, 기준일)을 같은 CUSIP의 확정 CIK로 채움 (rows를 주면 순수).
+
+    같은 CUSIP에 이름 매칭으로 확정된 CIK가 정확히 하나일 때만. 상태 '확정(CUSIP)'. 독립 검증(9장)은 이 행을 빼고 센다.
+    """
+    r = nport_cusip_rows() if rows is None else rows
+    if r.empty:
+        return m
+    r = r[r["cusip"].astype(str).str.fullmatch(r"[0-9A-Z]{9}") & (r["cusip"].astype(str) != "000000000")]
+    r = r.merge(m[["name", "period", "cik", "status"]], on=["name", "period"], how="left")
+    ok = r[r["status"].fillna("").str.startswith("확정")].dropna(subset=["cik"])
+    one = {}
+    for cu, s in ok.groupby("cusip")["cik"]:
+        v = set(s.astype(int))
+        if len(v) == 1:
+            one[cu] = v.pop()
+    need = r[~r["status"].fillna("").str.startswith("확정") & r["cusip"].isin(one)]
+    fill = {(n, p): one[c] for n, p, c in zip(need["name"], need["period"], need["cusip"])}
+    m = m.copy()
+    for i, (n, p) in enumerate(zip(m["name"], m["period"])):
+        if (n, p) in fill:
+            m.loc[m.index[i], ["cik", "status", "how"]] = [fill[(n, p)], "확정(CUSIP)", "CUSIP"]
+    return m
+
+
 def step_match() -> None:
     """보유 표의 (이름, 기준일) → CIK. 같은 이름이 시기마다 다른 회사일 수 있어 기준일마다 따로 판정한다.
 
@@ -516,13 +684,45 @@ def step_match() -> None:
                 failed.append(cik)
                 subs[cik], rows_cache[cik] = {}, pd.DataFrame(columns=["form", "filing_date"])
 
-    memo: dict[tuple[int, str], bool] = {}
+    memo: dict[tuple[str, int, str], bool] = {}
+
+    dates: dict[int, "np.ndarray"] = {}
+
+    def fdates(cik: int):
+        # CIK별 10-K·10-Q 제출일 정렬 배열 (alive_at·ending_at과 같은 판정을 빠르게)
+        if cik not in dates:
+            load(cik)
+            r = rows_cache[cik]
+            dates[cik] = np.sort(pd.to_datetime(r.loc[r["form"].isin(ACTIVE_FORMS), "filing_date"]).values)                 if len(r) else np.array([], dtype="datetime64[ns]")
+        return dates[cik]
 
     def active(cik: int, rep: str) -> bool:
-        if (cik, rep) not in memo:
+        if ("a", cik, rep) not in memo:
+            d, r = fdates(cik), np.datetime64(pd.Timestamp(rep))
+            i = np.searchsorted(d, r, side="right")
+            memo[("a", cik, rep)] = bool(i < len(d) and d[i] <= r + np.timedelta64(ALIVE_AFTER_DAYS, "D"))
+        return memo[("a", cik, rep)]
+
+    def stale(cik: int, rep: str) -> bool:
+        if ("s", cik, rep) not in memo:
             load(cik)
-            memo[(cik, rep)] = active_near(rows_cache[cik], rep)
-        return memo[(cik, rep)]
+            memo[("s", cik, rep)] = active_near(rows_cache[cik], rep)
+        return memo[("s", cik, rep)]
+
+    def gone(cik: int, rep: str) -> bool:
+        if ("g", cik, rep) not in memo:
+            load(cik)
+            memo[("g", cik, rep)] = gone_before(rows_cache[cik], rep)
+        return memo[("g", cik, rep)]
+
+    def ending(cik: int, rep: str) -> bool:
+        if ("e", cik, rep) not in memo:
+            d, r = fdates(cik), np.datetime64(pd.Timestamp(rep))
+            i = np.searchsorted(d, r, side="right")
+            memo[("e", cik, rep)] = bool(i == len(d) and i > 0 and d[i - 1] >= r - np.timedelta64(ENDING_BEFORE_DAYS, "D"))
+        return memo[("e", cik, rep)]
+
+    overrides = load_overrides()
 
     def cands_of(name: str) -> tuple[set[int], str]:
         c = strict.get(match_key(name), set())
@@ -538,18 +738,36 @@ def step_match() -> None:
             then = name_at(subs[cik], d)
             return bool(then) and (match_key(then) == match_key(name) or loose_key(then) == loose_key(name))
 
-        cik, status = resolve(cands, rep, active, same_name_then)
-        if cik is None:
+        ov = override_for(overrides, name, rep)
+        if ov is not None:
+            out.append({"name": name, "period": rep, "key": match_key(name), "cik": ov, "status": "확정(대조표)",
+                        "how": "대조표"})
+            continue
+        def same_full_then(cik: int, d: str, name=name) -> bool:
+            load(cik)
+            return full_key(name_at(subs[cik], d) or "") == full_key(name)
+
+        def is_partnership(cik: int, d: str) -> bool:
+            load(cik)
+            return bool(PARTNERSHIP_RE.search(name_at(subs[cik], d) or ""))
+
+        cik, status = resolve(cands, rep, active, same_name_then, ending, is_partnership, ending_if_none_alive=False,
+                              gone=gone, same_full_then=same_full_then)
+        if cik is None and status != "모호":
             hits = [c for c, n in sw.name_search(clean_fund_name(name), ua) if sw.name_sim(n, clean_fund_name(name)) >= 0.85]
-            c2, s2 = resolve(set(hits), rep, active, same_name_then)
+            hits = [c for c in hits if same_name_then(c, rep)]  # 이름 검색은 그 시점 이름이 맞을 때만 (SEACOR Marine 오매칭)
+            c2, s2 = resolve(set(hits), rep, active, same_name_then, None, is_partnership, same_full_then=same_full_then)
             if c2 is not None:
                 cik, status, how = c2, s2, "이름 검색"
-            elif status == "후보 없음":
-                status = s2
+            else:  # 살아 있는 후보가 어디에도 없을 때만 인수 직전 인정
+                c3, s3 = resolve(cands | set(hits), rep, active, same_name_then, ending, is_partnership, gone=gone,
+                                 stale=stale, same_full_then=same_full_then)
+                if c3 is not None or status == "후보 없음":
+                    cik, status = c3, s3
         out.append({"name": name, "period": rep, "key": match_key(name), "cik": cik, "status": status, "how": how})
         if i % 2000 == 0:
             print(i, len(pairs))
-    m = pd.DataFrame(out)
+    m = fill_by_cusip(pd.DataFrame(out))
     m.to_csv(MATCH_CSV, index=False, encoding="utf-8-sig")
     print(m["status"].value_counts().to_dict(), m["how"].value_counts().to_dict())
     if failed or sw.SEARCH_FAILED:
@@ -600,6 +818,8 @@ def step_cusip() -> None:
         d = d[d["class"] == "주식"]
         rows.append(d[["name", "cusip"]].assign(fund=fund, period=period))
     r = pd.concat(rows, ignore_index=True).merge(match[["name", "period", "cik", "status"]], on=["name", "period"], how="left")
+    r.loc[r["status"] == "확정(CUSIP)", "cik"] = None  # CUSIP으로 채운 행은 독립 검증에서 뺀다
+    r.loc[~r["status"].fillna("").str.startswith("확정"), "cik"] = None
     c = cusip_consistency(r)
     c.to_csv(CUSIP_CSV, index=False, encoding="utf-8-sig")
     print(c["verdict"].value_counts().to_dict())

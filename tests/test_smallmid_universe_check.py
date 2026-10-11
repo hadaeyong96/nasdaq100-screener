@@ -172,3 +172,134 @@ def test_gap_reason():
     assert sm.gap_reason("Core Laboratories NV", "활동 없음", True).startswith("외국")
     assert sm.gap_reason("J. Crew Group Inc. Escrow", "후보 없음", False).startswith("주식 아님")
     assert sm.gap_reason("Foo Inc", "모호", False).startswith("같은 이름")
+
+
+def test_alive_and_ending():
+    rows = pd.DataFrame({"form": ["10-Q", "10-K", "8-K"], "filing_date": ["2020-11-06", "2020-03-01", "2021-05-01"]})
+    assert sm.alive_at(rows, "2020-09-30")          # 2020-11-06 10-Q가 뒤 200일 안
+    assert not sm.alive_at(rows, "2021-02-28")      # 뒤에는 8-K뿐 (옛 Dime 같은 경우)
+    assert sm.ending_at(rows, "2021-02-28")         # 마지막 10-Q가 114일 전
+    assert not sm.ending_at(rows, "2021-03-31")     # 145일 전 → 인수 직전 아님
+    assert not sm.ending_at(rows, "2020-09-30")     # 뒤에 10-Q가 있으면 인수 직전 아님
+
+
+def test_resolve_prefers_alive_then_ending():
+    alive = lambda c, d: c == 2  # noqa: E731
+    ending = lambda c, d: c == 1  # noqa: E731
+    assert sm.resolve({1, 2}, "2021-02-28", alive, None, ending) == (2, "확정")
+    assert sm.resolve({1}, "2021-02-28", lambda c, d: False, None, ending) == (1, "확정(인수 직전)")
+    assert sm.resolve({1}, "2021-02-28", lambda c, d: False) == (None, "활동 없음")
+
+
+def test_override_for():
+    ov = pd.DataFrame({"name_regex": [r"First BanCorp(?!.*Southern).*", r"First Bancorp/Southern Pines.*",
+                                      r"Bank of the Ozarks.*"],
+                       "valid_from": [None, None, "2011-01-01"], "valid_to": [None, None, "2017-06-22"],
+                       "cik": [1057706, 811589, 1038205], "evidence": ["", "", ""]})
+    assert sm.override_for(ov, "First BanCorp./Puerto Rico", "2016-12-31") == 1057706
+    assert sm.override_for(ov, "First Bancorp/Southern Pines NC", "2021-12-31") == 811589
+    assert sm.override_for(ov, "Bank of the Ozarks Inc.", "2016-12-31") == 1038205
+    assert sm.override_for(ov, "Bank of the Ozarks Inc.", "2018-03-31") is None
+    assert sm.override_for(ov, "Other Inc.", "2018-03-31") is None
+
+
+def test_resolve_drops_operating_partnership():
+    alive = lambda c, d: True  # noqa: E731
+    lp = lambda c, d: c == 2  # noqa: E731  2 = 'Corporate Office Properties, L.P.'
+    assert sm.resolve({1, 2}, "2016-12-31", alive, lambda c, d: True, None, lp) == (1, "확정(운영 조합 제외)")
+    assert sm.PARTNERSHIP_RE.search("Corporate Office Properties, L.P.")
+    assert sm.PARTNERSHIP_RE.search("REALOGY GROUP LLC")
+    assert not sm.PARTNERSHIP_RE.search("Realogy Holdings Corp.")
+    assert not sm.PARTNERSHIP_RE.search("Alpine Group Inc")
+
+
+def test_fill_by_cusip():
+    m = pd.DataFrame([
+        {"name": "Gannett Co Inc", "period": "2020-06-30", "cik": 1579684, "status": "확정(이름 기간)", "how": "엄격 키"},
+        {"name": "Gannett Media Corp", "period": "2021-02-28", "cik": None, "status": "활동 없음", "how": "엄격 키"},
+        {"name": "Twin A", "period": "2021-02-28", "cik": 1, "status": "확정", "how": "엄격 키"},
+        {"name": "Twin B", "period": "2021-03-31", "cik": 2, "status": "확정", "how": "엄격 키"},
+        {"name": "Twin C", "period": "2021-06-30", "cik": None, "status": "모호", "how": "엄격 키"},
+    ])
+    rows = pd.DataFrame([
+        {"name": "Gannett Co Inc", "cusip": "36472T109", "period": "2020-06-30"},
+        {"name": "Gannett Media Corp", "cusip": "36472T109", "period": "2021-02-28"},
+        {"name": "Twin A", "cusip": "999999999", "period": "2021-02-28"},
+        {"name": "Twin B", "cusip": "999999999", "period": "2021-03-31"},
+        {"name": "Twin C", "cusip": "999999999", "period": "2021-06-30"},
+    ])
+    out = sm.fill_by_cusip(m, rows).set_index("name")
+    assert out.loc["Gannett Media Corp", "cik"] == 1579684 and out.loc["Gannett Media Corp", "status"] == "확정(CUSIP)"
+    assert pd.isna(out.loc["Twin C", "cik"])  # 같은 CUSIP에 확정 CIK가 둘이면 채우지 않음
+
+
+def test_resolve_merger_eve_prefers_old_company_by_name_then():
+    # 2020-12-31 Dime: 옛 Dime(1)은 공시 끝(인수 직전), 이름 이어받을 Bridge(2)만 살아 있음, 그 시점 이름은 Bridge Bancorp
+    alive = lambda c, d: c == 2  # noqa: E731
+    ending = lambda c, d: c == 1  # noqa: E731
+    named = lambda c, d: c == 1  # noqa: E731
+    assert sm.resolve({1, 2}, "2020-12-31", alive, named, ending, None, ending_if_none_alive=False) == (1, "확정(인수 직전)")
+    # 그 시점 이름이 살아 있는 후보와 맞으면 그대로
+    assert sm.resolve({1, 2}, "2021-03-31", alive, lambda c, d: True, ending, gone=lambda c, d: c == 1) == (2, "확정")
+    # 첫 판정(ending_if_none_alive=False): 옛 회사가 이미 상장폐지 서류를 냈으면(Dime 25-NSE 2021-01-29)
+    # 인수 직전으로 가지 않고 '활동 없음' → 이름 검색으로 새 회사를 찾게 둔다
+    assert sm.resolve({1}, "2021-02-28", lambda c, d: False, named, ending, None, ending_if_none_alive=False,
+                      gone=lambda c, d: True) == (None, "활동 없음")
+
+
+def test_gone_before_and_merger_close():
+    dime = pd.DataFrame({"form": ["10-Q", "25-NSE", "15-12B"], "filing_date": ["2020-11-06", "2021-01-29", "2021-02-11"],
+                         "items": ["", "", ""]})
+    assert not sm.gone_before(dime, "2020-12-31")
+    assert sm.gone_before(dime, "2021-02-28")
+    xperi = pd.DataFrame({"form": ["10-Q", "8-K"], "filing_date": ["2020-05-06", "2020-06-01"], "items": ["", "2.01,3.01"]})
+    assert not sm.gone_before(xperi, "2020-05-31")
+    assert sm.gone_before(xperi, "2020-06-30")
+    # 합병 완료 전: 옛 회사(1, 인수 직전, 아직 상장) / 완료 후: 새 회사(2)
+    alive = lambda c, d: c == 2  # noqa: E731
+    ending = lambda c, d: c == 1  # noqa: E731
+    named = lambda c, d: True  # noqa: E731  두 회사 모두 그 시점 이름이 같음 (Xperi Corp / Xperi Holding Corp)
+    assert sm.resolve({1, 2}, "2020-05-31", alive, named, ending, gone=lambda c, d: False)[0] == 1
+    assert sm.resolve({1, 2}, "2021-02-28", alive, named, ending, gone=lambda c, d: c == 1)[0] == 2
+
+
+def test_clean_fund_name_state_suffix_guards():
+    assert sm.match_key("M/I Homes Inc.") == sm.match_key("M/I HOMES, INC.")
+    assert sm.match_key("M/I Homes Inc.") != ""
+    assert sm.match_key("Signature Bank/New York NY") == sm.match_key("Signature Bank")
+    assert sm.match_key("Universal Display Corp") == sm.match_key("UNIVERSAL DISPLAY CORP \PA\\")
+    assert sm.match_key("Travel + Leisure Co") == sm.match_key("Travel & Leisure Co.")
+    assert sm.match_key("United Bankshares Inc/WV") == sm.match_key("UNITED BANKSHARES INC/WV/")
+    assert "ferry" in sm.match_key("Korn/Ferry International")
+    assert "frost" in sm.match_key("Cullen/Frost Bankers Inc")
+    assert sm.match_key("Diodes Inc.") == sm.match_key("DIODES INC /DEL/")
+    assert sm.match_key("Service Corp. International/U.S.") == sm.match_key("SERVICE CORPORATION INTERNATIONAL")
+    assert sm.match_key("First BanCorp/Puerto Rico") == sm.match_key("FIRST BANCORP /PR/")
+    assert sm.match_key("Independent Bank Corp./Rockland MA") == sm.match_key("INDEPENDENT BANK CORP")
+
+
+def test_resolve_stale_filer_but_not_merged_away():
+    never = lambda c, d: False  # noqa: E731
+    # 재작성으로 10-K·10-Q가 늦은 같은 회사: 살아 있음·인수 직전 아님, ±400일 안 공시 있음, 상장폐지 서류 없음
+    assert sm.resolve({1}, "2017-12-31", never, None, never, gone=never, stale=lambda c, d: True) == (1, "확정(공시 지연)")
+    # 합병으로 사라진 회사: 상장폐지 서류가 있으면 붙이지 않음
+    assert sm.resolve({1}, "2021-03-31", never, None, never, gone=lambda c, d: True, stale=lambda c, d: True) == (None, "활동 없음")
+
+
+def test_full_key_and_holding_vs_subsidiary():
+    assert sm.match_key("Graham Holdings Co. Class B") == sm.match_key("GRAHAM CORP")  # 이름 키로는 못 가름
+    assert sm.full_key("Graham Holdings Co. Class B") == sm.full_key("GRAHAM HOLDINGS CO")
+    assert sm.full_key("Graham Holdings Co. Class B") != sm.full_key("GRAHAM CORP")
+    assert sm.match_key("Vertex Pharmaceuticals Inc.") == sm.match_key("VERTEX PHARMACEUTICALS INC / MA")
+    alive = lambda c, d: True  # noqa: E731
+    full = lambda c, d: c == 1  # noqa: E731
+    assert sm.resolve({1, 2}, "2016-12-31", alive, lambda c, d: True, same_full_then=full) == (1, "확정(전체 이름)")
+
+
+def test_ending_subsidiary_does_not_beat_alive_parent_with_full_name():
+    # 2019-11-30: 본체 O-I(1)는 살아 있고 전체 이름 일치, 자회사 O-I Group(2)은 마지막 10-Q 직후(인수 직전처럼 보임)
+    alive = lambda c, d: c == 1  # noqa: E731
+    ending = lambda c, d: c == 2  # noqa: E731
+    named = lambda c, d: True  # noqa: E731
+    full = lambda c, d: c == 1  # noqa: E731
+    assert sm.resolve({1, 2}, "2019-11-30", alive, named, ending, gone=lambda c, d: False, same_full_then=full)[0] == 1
