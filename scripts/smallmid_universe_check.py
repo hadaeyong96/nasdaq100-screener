@@ -92,13 +92,13 @@ def step_filings() -> None:
     """네 시리즈의 NPORT-P·N-Q 목록과 보고 기준일 → filings.csv."""
     rows = []
     for fund, index, cik, sid, _ in FUNDS:
-        for form in ("NPORT-P", "N-Q"):
+        for form in ("NPORT-P", "N-Q", "N-CSR"):  # N-CSR 검색은 N-CSRS(반기)도 함께 돌려준다
             url = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={sid}&type={form}"
                    f"&dateb=&owner=include&count=100&output=atom")
             atom = cached_get(url, RAW / "atom" / f"{sid}_{form}.xml")
             for f in parse_atom_filings(atom):
-                if f["form"] != form:  # N-Q/A 등 정정 공시는 따로 표시만
-                    f["amended"] = True
+                if form == "N-CSR" and f["filed"] > "2019-12-31":  # 2019-08 Vanguard 연 보고까지, 그 뒤는 NPORT
+                    continue
                 idx = cached_get(f["href"], RAW / "index" / f"{f['accession']}.htm")
                 info = parse_filing_index(idx)
                 rows.append({"fund": fund, "index": index, "cik": cik, "series": sid, **f, "period": info["period"]})
@@ -208,7 +208,11 @@ def fund_pages(lines: list[str], head_pat: str) -> list[str]:
 
     E-mini(선물) 줄은 제목으로 보지 않는다. Growth·Value 펀드는 제목 정규식에 안 맞는다.
     """
-    soi = [i for i, x in enumerate(lines) if re.match(r"(?i)^schedule of investments", x)] + [len(lines)]
+    # 쪽 경계: 'Schedule of Investments'(2018 iShares는 'Schedule of' / 'Investments'로 나뉨),
+    # Vanguard 연·반기 보고는 'Statement of Net Assets'
+    soi = [i for i, x in enumerate(lines)
+           if re.match(r"(?i)^(schedule of(\s+investments)?|statement of net assets)\s*(\(unaudited\))?\s*$", x)
+           or re.match(r"(?i)^schedule of investments", x)] + [len(lines)]
     out: list[str] = []
     for a, b in zip(soi, soi[1:]):
         near = " ".join(x for x in lines[max(0, a - 3):a + 5] if "mini" not in x.lower())
@@ -240,14 +244,15 @@ def parse_nq_holdings(lines: list[str]) -> pd.DataFrame:
     i = 0
     while i < len(toks):
         x = toks[i]
-        if re.match(r"(?i)^common\s+stocks", x):
-            started, buf = True, []
+        if re.match(r"(?i)^common\s+stocks", x) or (not started and re.match(r"(?i)^security$", x)):
+            started, buf = True, []  # 2018 iShares N-Q는 'COMMON STOCKS' 제목 없이 표 머리 'Security' 뒤 바로 업종
         elif started and NQ_END.match(x):
             break
         elif not started:
             pass
-        elif "%" in x or header.match(x) or re.search(NQ_HEAD["sp400"] + "|" + NQ_HEAD["sp600"], x, re.I):
-            buf = []  # 업종 제목·쪽 머리: 이름이 아님
+        elif ("%" in x or re.search(r"\(\s*continued\s*\)", x, re.I) or header.match(x)
+              or re.search(NQ_HEAD["sp400"] + "|" + NQ_HEAD["sp600"], x, re.I)):
+            buf = []  # 업종 제목('— 1.0%', 'Food Products (continued)')·쪽 머리: 이름이 아님
         elif re.search(r"[A-Za-z]", x) and not _NUM.match(x):
             buf = (buf + [x])[-3:]  # 이름이 두 줄 이상으로 접힌 경우
         elif buf and _NUM.match(x) and i + 1 < len(toks) and _NUM.match(toks[i + 1]):
@@ -287,6 +292,64 @@ def fetch_nq_doc(r: dict) -> str:
     return cached_get("https://www.sec.gov" + href, nq_doc_path(r))
 
 
+SIZE_OK = {"sp400": (370, 430), "sp600": (560, 640)}  # 기대 크기 (보통주 줄 수)
+REPORTS_CSV = CACHE / "reports.csv"
+FIRST_PERIOD, LAST_HTML_PERIOD = "2011-05-31", "2019-08-31"  # 2011-12 앞 편입 기간 확인용으로 반년 앞부터
+
+
+def report_docs(r: dict) -> list[tuple[str, str, str]]:
+    """공시 색인 → 본문 후보 (N-Q·N-CSR·N-CSRS 종류의 .htm·.txt, 큰 것부터) (네트워크·파일)."""
+    idx = cached_get(r["href"], RAW / "index" / f"{r['accession']}.htm")
+    docs = [d for d in parse_filing_index(idx)["docs"]
+            if d[1].startswith(("N-Q", "N-CSR")) and d[0].endswith((".htm", ".txt"))]
+    return sorted(docs, key=lambda d: -int(d[2] or 0))
+
+
+def read_report(r: dict, index: str) -> tuple[pd.DataFrame, str]:
+    """한 공시의 본문 문서들에서 그 펀드 보통주 표를 찾는다. 기대 크기에 맞는 첫 문서를 쓴다.
+
+    출력: (표, 문서 경로). 맞는 문서가 없으면 가장 많이 읽힌 표.
+    """
+    best, best_doc = pd.DataFrame(columns=["name", "shares", "value"]), ""
+    lo, hi = SIZE_OK[index]
+    for k, (href, _, _) in enumerate(report_docs(r)):
+        path = RAW / "nq" / (f"{r['accession']}.htm" if k == 0 else f"{r['accession']}_{k}.htm")
+        df = parse_nq_holdings(fund_pages(flatten_html(cached_get("https://www.sec.gov" + href, path)), NQ_HEAD[index]))
+        if lo <= len(df) <= hi:
+            return df, href
+        if len(df) > len(best):
+            best, best_doc = df, href
+    return best, best_doc
+
+
+def step_reports() -> None:
+    """2011-05 ~ 2019-08 N-Q·N-CSR·N-CSRS 전부 읽기. 기대 크기 검사 결과는 reports.csv, 통과한 것만 보유 표로 저장.
+
+    정정 공시(/A)는 원 공시가 검사를 못 통과할 때만 쓴다.
+    """
+    f = pd.read_csv(FILINGS_CSV)
+    f = f[f["form"].str.startswith(("N-Q", "N-CSR")) & (f["period"] >= FIRST_PERIOD) & (f["period"] <= LAST_HTML_PERIOD)]
+    log = []
+    for (fund, period), g in f.groupby(["fund", "period"]):
+        index = [x for x in FUNDS if x[0] == fund][0][1]
+        lo, hi = SIZE_OK[index]
+        g = g.assign(amend=g["form"].str.endswith("/A")).sort_values("amend")
+        res = None
+        for _, r in g.iterrows():
+            df, doc = read_report(r.to_dict(), index)
+            ok = lo <= len(df) <= hi
+            log.append({"fund": fund, "index": index, "period": period, "form": r["form"], "accession": r["accession"],
+                        "doc": doc, "n": len(df), "ok": ok})
+            if ok:
+                res = df
+                break
+        if res is not None:
+            res = res.assign(**{"class": "주식"})
+            res.to_csv(HOLD / f"{fund}_{period}.csv", index=False, encoding="utf-8-sig")
+        print(fund, period, "→", log[-1]["form"], log[-1]["n"], "통과" if res is not None else "실패")
+    pd.DataFrame(log).to_csv(REPORTS_CSV, index=False, encoding="utf-8-sig")
+
+
 # ── 이름 → CIK ─────────────────────────────────────────────────────────────
 
 CIK_LOOKUP_URL = "https://www.sec.gov/Archives/edgar/cik-lookup-data.txt"
@@ -310,34 +373,60 @@ def _sw():
 
 
 def clean_fund_name(name: str) -> str:
-    """펀드 보고서 종목 이름에서 매칭에 방해되는 꼬리 제거 (순수).
+    """펀드 보고서·EDGAR 이름에서 매칭에 방해되는 표기를 정리 (순수).
 
-    '/WV', '/The', 'Class A', 'Cl A', '- A' 같은 주 등록지·주식 종류 표기를 뗀다.
+    - '/WV', '/The', 'Class A', 'Cl A', '- A' 같은 주 등록지·주식 종류 표기를 뗀다
+    - 아포스트로피(' ’)는 지운다: America's → Americas (EDGAR는 AMERICAS로 씀)
+    - 약어 Cos → Companies (Carlisle Cos. ↔ CARLISLE COMPANIES INC)
     """
     x = str(name)
     x = re.sub(r"/[A-Za-z .]{1,12}/?$", " ", x)            # United Bankshares Inc/WV, Kroger Co/The
     x = re.sub(r"[,\s-]+(?:class|cl)\.?\s+[a-z]\b.*$", " ", x, flags=re.I)
     x = re.sub(r"\s+-\s+[a-z]$", " ", x, flags=re.I)
-    return x.strip()
+    x = re.sub(r"['’`]", "", x)
+    x = re.sub(r"\bCos\b\.?", "Companies", x, flags=re.I)
+    x = re.sub(r"[,\s]+NVS\.?$", "", x)  # 무의결권 표시 (Eaton Vance Corp. NVS)
+    # 이니셜 붙이기: A.O. Smith → AO Smith, EDGAR 'SCRIPPS E W CO' → 'SCRIPPS EW CO'
+    x = re.sub(r"\b(?:[A-Za-z](?:\.\s?|\s)){1,3}[A-Za-z]\b\.?",
+               lambda mm: re.sub(r"[.\s]", "", mm.group(0)) + " ", x)
+    return re.sub(r"\s+", " ", x).strip()
 
 
 def match_key(name: str) -> str:
-    """매칭 키 = 꼬리 제거 뒤 SW1·S&P 500 점검과 같은 norm_name (순수)."""
+    """엄격 키 = 정리 뒤 SW1·S&P 500 점검과 같은 norm_name (순수)."""
     return _sw().norm_name(clean_fund_name(name))
 
 
-def load_name_index() -> dict[str, set[int]]:
-    """EDGAR cik-lookup-data(옛 이름 포함 모든 등록인) → {키: {cik}} (네트워크 1회·파일 캐시)."""
+def loose_key(name: str) -> str:
+    """느슨한 키 = 엄격 키의 단어를 정렬 (어순·이니셜 위치 무시: A.O. Smith ↔ SMITH A O) (순수)."""
+    return " ".join(sorted(match_key(name).split()))
+
+
+def load_name_index() -> tuple[dict[str, set[int]], dict[str, set[int]]]:
+    """EDGAR cik-lookup-data(옛 이름 포함 모든 등록인) → ({엄격 키: {cik}}, {느슨한 키: {cik}}) (네트워크 1회·캐시)."""
     text = cached_get(CIK_LOOKUP_URL, RAW / "cik-lookup-data.txt")
-    idx: dict[str, set[int]] = {}
+    strict: dict[str, set[int]] = {}
+    loose: dict[str, set[int]] = {}
     for line in text.splitlines():
         m = re.match(r"^(.*):(\d{10}):\s*$", line)
         if not m:
             continue
         k = match_key(m.group(1))
         if k:
-            idx.setdefault(k, set()).add(int(m.group(2)))
-    return idx
+            cik = int(m.group(2))
+            strict.setdefault(k, set()).add(cik)
+            loose.setdefault(" ".join(sorted(k.split())), set()).add(cik)
+    return strict, loose
+
+
+def name_at(sub: dict, date: str) -> str:
+    """submissions JSON → 그 날짜에 쓰던 등록 이름 (formerNames의 from~to 기간, 없으면 현재 이름) (순수)."""
+    d = pd.Timestamp(date)
+    for f in sub.get("formerNames", []) or []:
+        a, b = f.get("from"), f.get("to")
+        if a and b and pd.Timestamp(a[:10]) <= d <= pd.Timestamp(b[:10]):
+            return f.get("name", "")
+    return sub.get("name", "")
 
 
 def active_near(rows: pd.DataFrame, rep_date: str, days: int = 400) -> bool:
@@ -349,14 +438,22 @@ def active_near(rows: pd.DataFrame, rep_date: str, days: int = 400) -> bool:
     return bool(((d >= r - pd.Timedelta(days=days)) & (d <= r + pd.Timedelta(days=days))).any())
 
 
-def resolve(cands: set[int], rep_date: str, active) -> tuple[int | None, str]:
-    """후보 CIK들 → (CIK, 상태). active(cik, rep_date) → bool. 상태: 확정 | 모호 | 활동 없음 | 후보 없음 (순수)."""
+def resolve(cands: set[int], rep_date: str, active, same_name_then=None) -> tuple[int | None, str]:
+    """후보 CIK들 → (CIK, 상태) (순수).
+
+    active(cik, rep_date) → bool: 그 시점 10-K·10-Q 제출. same_name_then(cik, rep_date) → bool: 그 시점 등록 이름이
+    펀드 이름과 같은 키인지 (옛 이름 사용 기간). 상태: 확정 | 확정(이름 기간) | 모호 | 활동 없음 | 후보 없음.
+    """
     if not cands:
         return None, "후보 없음"
     act = sorted(c for c in cands if active(c, rep_date))
     if len(act) == 1:
         return act[0], "확정"
     if len(act) > 1:
+        if same_name_then is not None:
+            same = [c for c in act if same_name_then(c, rep_date)]
+            if len(same) == 1:
+                return same[0], "확정(이름 기간)"
         return None, "모호"
     return None, "활동 없음"
 
@@ -392,52 +489,260 @@ def prefetch_submissions(ciks: set[int], ua: str, workers: int = 6, per_sec: flo
 
 
 def step_match() -> None:
-    """보유 표의 주식 이름 → CIK. 이름 키 일치 → 그 시점 10-K·10-Q 제출로 확인, 없으면 EDGAR 이름 검색 보조."""
+    """보유 표의 (이름, 기준일) → CIK. 같은 이름이 시기마다 다른 회사일 수 있어 기준일마다 따로 판정한다.
+
+    순서: 엄격 키 후보 → 없으면 느슨한 키 후보 → 그 시점 10-K·10-Q 제출 확인 → 여럿이면 그 시점 등록 이름으로
+    가림 → 그래도 없으면 EDGAR 이름 검색(유사도 ≥ 0.85) 보조. 출력 match.csv (name, period, cik, status, how).
+    """
     sw = _sw()
     _, ua = _edgar()
-    idx = load_name_index()
-    hold = []
+    strict, loose = load_name_index()
+    pairs = []
     for p in sorted(HOLD.glob("*.csv")):
         fund, period = p.stem.split("_", 1)
         d = pd.read_csv(p)
-        d = d[d["class"] == "주식"]
-        hold.append(pd.DataFrame({"fund": fund, "period": period, "name": d["name"], "cusip": d.get("cusip")}))
-    h = pd.concat(hold, ignore_index=True)
+        pairs += [(n, period) for n in d.loc[d["class"] == "주식", "name"].dropna()]
+    pairs = sorted(set(pairs))
+    subs: dict[int, dict] = {}
     rows_cache: dict[int, pd.DataFrame] = {}
     failed: list[int] = []
 
-    def active(cik: int, rep: str) -> bool:
+    def load(cik: int) -> None:
         if cik not in rows_cache:
             try:
-                rows_cache[cik] = sw.submissions_rows(sw.fetch_submissions(cik, ua))
+                js = sw.fetch_submissions(cik, ua)
+                subs[cik], rows_cache[cik] = js[0], sw.submissions_rows(js)
             except Exception:  # noqa: BLE001 — 실패 CIK는 모아 보고
                 failed.append(cik)
-                rows_cache[cik] = pd.DataFrame(columns=["form", "filing_date"])
-        return active_near(rows_cache[cik], rep)
+                subs[cik], rows_cache[cik] = {}, pd.DataFrame(columns=["form", "filing_date"])
 
-    # 이름마다 한 번: 그 이름이 처음 나온 기준일로 확인
-    first = h.groupby("name")["period"].min()
-    prefetch_submissions({c for n in first.index for c in idx.get(match_key(n), set())}, ua)
+    memo: dict[tuple[int, str], bool] = {}
+
+    def active(cik: int, rep: str) -> bool:
+        if (cik, rep) not in memo:
+            load(cik)
+            memo[(cik, rep)] = active_near(rows_cache[cik], rep)
+        return memo[(cik, rep)]
+
+    def cands_of(name: str) -> tuple[set[int], str]:
+        c = strict.get(match_key(name), set())
+        return (c, "엄격 키") if c else (loose.get(loose_key(name), set()), "느슨한 키")
+
+    prefetch_submissions({c for n, _ in pairs for c in cands_of(n)[0]}, ua)
     out = []
-    for i, (name, rep) in enumerate(first.items()):
-        k = match_key(name)
-        cik, status = resolve(idx.get(k, set()), rep, active)
-        how = "이름 키"
+    for i, (name, rep) in enumerate(pairs):
+        cands, how = cands_of(name)
+
+        def same_name_then(cik: int, d: str, name=name) -> bool:
+            load(cik)
+            then = name_at(subs[cik], d)
+            return bool(then) and (match_key(then) == match_key(name) or loose_key(then) == loose_key(name))
+
+        cik, status = resolve(cands, rep, active, same_name_then)
         if cik is None:
             hits = [c for c, n in sw.name_search(clean_fund_name(name), ua) if sw.name_sim(n, clean_fund_name(name)) >= 0.85]
-            c2, s2 = resolve(set(hits), rep, active)
+            c2, s2 = resolve(set(hits), rep, active, same_name_then)
             if c2 is not None:
                 cik, status, how = c2, s2, "이름 검색"
             elif status == "후보 없음":
                 status = s2
-        out.append({"name": name, "key": k, "first_period": rep, "cik": cik, "status": status, "how": how})
-        if i % 200 == 0:
-            print(i, len(first))
+        out.append({"name": name, "period": rep, "key": match_key(name), "cik": cik, "status": status, "how": how})
+        if i % 2000 == 0:
+            print(i, len(pairs))
     m = pd.DataFrame(out)
     m.to_csv(MATCH_CSV, index=False, encoding="utf-8-sig")
     print(m["status"].value_counts().to_dict(), m["how"].value_counts().to_dict())
     if failed or sw.SEARCH_FAILED:
         print("submissions 실패 CIK:", failed[:50], "이름 검색 실패:", sw.SEARCH_FAILED[:50])
+
+
+# ── CUSIP 독립 검증 (NPORT) ─────────────────────────────────────────────────
+
+CUSIP_CSV = CACHE / "cusip_check.csv"
+
+
+def cusip_consistency(rows: pd.DataFrame) -> pd.DataFrame:
+    """NPORT 행(cusip, period, name, cik) → CUSIP별 CIK 연속성 표 (순수).
+
+    출력 열: cusip, n_periods, ciks(';'), n_cik, n_null, names(';'), first, last, verdict
+    verdict: 일치 | 일부 기간 미확정 | 전 기간 미확정 | 같은 이름 다른 CIK(오매칭 의심) | 이름·CIK 함께 바뀜(재편·합병 또는 오매칭)
+    """
+    out = []
+    valid = rows["cusip"].astype(str).str.fullmatch(r"[0-9A-Z]{9}") & (rows["cusip"].astype(str) != "000000000")
+    for cu, g in rows[valid].groupby("cusip"):  # '000000000'·'N/A' 등 자리표시는 검사 못 함 (외국 법인 등)
+        g = g.sort_values("period")
+        ciks = [int(c) for c in g["cik"].dropna().unique()]
+        n_null = int(g["cik"].isna().sum())
+        keys = {match_key(n) for n in g["name"]}
+        if len(ciks) == 1:
+            v = "일치" if n_null == 0 else "일부 기간 미확정"
+        elif not ciks:
+            v = "전 기간 미확정"
+        elif len(keys) == 1:
+            v = "같은 이름 다른 CIK(오매칭 의심)"
+        else:
+            v = "이름·CIK 함께 바뀜(재편·합병 또는 오매칭)"
+        out.append({"cusip": cu, "n_periods": g["period"].nunique(), "ciks": ";".join(map(str, ciks)), "n_cik": len(ciks),
+                    "n_null": n_null, "names": ";".join(dict.fromkeys(g["name"])), "first": g["period"].min(),
+                    "last": g["period"].max(), "verdict": v})
+    return pd.DataFrame(out)
+
+
+def step_cusip() -> None:
+    """NPORT 보유 표의 CUSIP을 키로, 기준일마다 붙은 CIK가 같은지 확인 → cusip_check.csv."""
+    match = pd.read_csv(MATCH_CSV)
+    rows = []
+    for p in sorted(HOLD.glob("*.csv")):
+        fund, period = p.stem.split("_", 1)
+        d = pd.read_csv(p)
+        if "cusip" not in d.columns:
+            continue
+        d = d[d["class"] == "주식"]
+        rows.append(d[["name", "cusip"]].assign(fund=fund, period=period))
+    r = pd.concat(rows, ignore_index=True).merge(match[["name", "period", "cik", "status"]], on=["name", "period"], how="left")
+    c = cusip_consistency(r)
+    c.to_csv(CUSIP_CSV, index=False, encoding="utf-8-sig")
+    print(c["verdict"].value_counts().to_dict())
+    same_cik_multi = r.dropna(subset=["cik"]).groupby("cik")["cusip"].nunique()
+    print("한 CIK에 CUSIP 2개 이상:", int((same_cik_multi > 1).sum()), "(주식 종류 2개·CUSIP 변경)")
+    for _, x in c[c["n_cik"] > 1].iterrows():
+        print(" ", x["cusip"], x["ciks"], x["names"][:120], x["first"], x["last"])
+
+
+# ── 편입·편출 기간 ──────────────────────────────────────────────────────────
+
+INTERVALS_CSV = CACHE / "membership_intervals.csv"
+
+
+def presence_runs(present: list[bool], max_gap: int = 1) -> list[tuple[int, int, int]]:
+    """보고 순서별 있음/없음 → (시작 위치, 끝 위치, 메운 빈칸 수) 목록 (순수).
+
+    사이에 빠진 보고가 max_gap개 이하이면 한 구간으로 잇는다 (한 펀드의 리밸런싱 시차·파싱 누락 흡수).
+    """
+    idx = [i for i, p in enumerate(present) if p]
+    if not idx:
+        return []
+    runs, s, prev, filled = [], idx[0], idx[0], 0
+    for i in idx[1:]:
+        if i - prev - 1 <= max_gap:
+            filled += i - prev - 1
+        else:
+            runs.append((s, prev, filled))
+            s, filled = i, 0
+        prev = i
+    runs.append((s, prev, filled))
+    return runs
+
+
+def intervals_for(dates: list[str], present: list[bool]) -> list[dict]:
+    """한 종목의 보고 날짜·있음 → 편입·편출 날짜 범위 (순수).
+
+    편입: (앞 보고 날짜 다음날 ~ 처음 보인 날짜). 첫 보고부터 있으면 편입 가장 이른 날 = None(관찰 전).
+    편출: (마지막 보인 날짜 ~ 다음 보고 날짜 전날). 마지막 보고까지 있으면 편출 가장 늦은 날 = None(관찰 끝).
+    """
+    out = []
+    for s, e, filled in presence_runs(present):
+        d = lambda k: pd.Timestamp(dates[k])  # noqa: E731
+        out.append({"entry_earliest": None if s == 0 else (d(s - 1) + pd.Timedelta(days=1)).date().isoformat(),
+                    "entry_latest": dates[s], "exit_earliest": dates[e],
+                    "exit_latest": None if e == len(dates) - 1 else (d(e + 1) - pd.Timedelta(days=1)).date().isoformat(),
+                    "n_reports": e - s + 1 - filled, "gaps_filled": filled})
+    return out
+
+
+def step_intervals() -> None:
+    """두 펀드 계열 보고를 합쳐 지수별·종목별 편입·편출 범위 표 → membership_intervals.csv."""
+    match = pd.read_csv(MATCH_CSV)
+    recs = []
+    for p in sorted(HOLD.glob("*.csv")):
+        fund, period = p.stem.split("_", 1)
+        if not (FIRST_PERIOD <= period <= LAST_PERIOD):
+            continue
+        index = [x for x in FUNDS if x[0] == fund][0][1]
+        d = pd.read_csv(p)
+        lo, hi = SIZE_OK[index]
+        d = d[d["class"] == "주식"]
+        if not lo <= len(d) <= hi:
+            continue
+        d = d.assign(period=period).merge(match[["name", "period", "cik"]], on=["name", "period"], how="left")
+        d["id"] = [f"cik:{int(c)}" if pd.notna(c) else f"key:{match_key(n)}" for c, n in zip(d["cik"], d["name"])]
+        recs.append(d[["id", "cik", "name"]].assign(index=index, fund=fund, period=period))
+    r = pd.concat(recs, ignore_index=True)
+    out = []
+    for index, g in r.groupby("index"):
+        dates = sorted(g["period"].unique())
+        pres = g.groupby("id")["period"].apply(set)
+        names = g.groupby("id")["name"].apply(lambda s: ";".join(list(dict.fromkeys(s))[:3]))
+        for i, ps in pres.items():
+            for iv in intervals_for(dates, [x in ps for x in dates]):
+                out.append({"index": index, "id": i, "cik": i[4:] if i.startswith("cik:") else None,
+                            "names": names[i], **iv})
+        print(index, "보고 날짜", len(dates), dates[0], "~", dates[-1])
+    iv = pd.DataFrame(out)
+    iv.to_csv(INTERVALS_CSV, index=False, encoding="utf-8-sig")
+    for index, g in iv.groupby("index"):
+        e_w = (pd.to_datetime(g["entry_latest"]) - pd.to_datetime(g["entry_earliest"])).dt.days.dropna()
+        x_w = (pd.to_datetime(g["exit_latest"]) - pd.to_datetime(g["exit_earliest"])).dt.days.dropna()
+        print(index, "구간", len(g), "종목", g["id"].nunique(), "CIK 미확정 구간", int(g["cik"].isna().sum()),
+              "1회만 보임", int((g["n_reports"] == 1).sum()), "빈칸 메움", int((g["gaps_filled"] > 0).sum()),
+              "편입 범위 폭(일) 중앙값·최대", e_w.median(), e_w.max(), "편출", x_w.median(), x_w.max(),
+              "관찰 전부터", int(g["entry_earliest"].isna().sum()), "끝까지", int(g["exit_latest"].isna().sum()))
+
+
+# ── 알려진 공백 ──────────────────────────────────────────────────────────────
+
+GAPS_CSV = CACHE / "known_gaps.csv"
+FOREIGN_FORMS = {"20-F", "40-F", "6-K", "20-F/A", "40-F/A"}
+
+
+def gap_reason(name: str, status: str, foreign: bool) -> str:
+    """CIK 미확정 종목의 공백 이유 (순수)."""
+    if foreign:
+        return "외국 공시(20-F·40-F, 10-K 없음)"
+    if re.search(r"\bBank\b|\bBancorp\b|Bancshares", name, re.I) and status in ("활동 없음", "후보 없음"):
+        return "은행(규제기관 제출 추정, EDGAR 10-K 없음)"
+    if re.search(r"escrow|contra|cvr|rights?\b", name, re.I):
+        return "주식 아님(Escrow·CVR)"
+    return {"모호": "같은 이름 등록인 여럿(가리지 못함)", "활동 없음": "후보는 있으나 그 시점 10-K·10-Q 없음",
+            "후보 없음": "EDGAR 이름 후보 없음"}.get(status, status)
+
+
+def step_gaps() -> None:
+    """확정 못 한 (이름, 기준일)을 종목별로 묶어 알려진 공백 목록 → known_gaps.csv."""
+    sw = _sw()
+    strict, loose = load_name_index()
+    m = pd.read_csv(MATCH_CSV)
+    bad = m[~m["status"].str.startswith("확정")]
+    fund_of = {}
+    for p in HOLD.glob("*.csv"):
+        fund, period = p.stem.split("_", 1)
+        for n in pd.read_csv(p)["name"].dropna():
+            fund_of.setdefault((n, period), set()).add([x for x in FUNDS if x[0] == fund][0][1])
+    out = []
+    for key, g in bad.groupby("key"):
+        name = g["name"].iloc[0]
+        cands = strict.get(key, set()) or loose.get(" ".join(sorted(str(key).split())), set())
+        foreign = False
+        for c in list(cands)[:10]:
+            p = sw.SUB_CACHE / f"CIK{int(c):010d}.json"
+            if p.exists():
+                rows = sw.submissions_rows([json_load(p)])
+                foreign |= bool(rows["form"].isin(FOREIGN_FORMS).any())
+        idxs = sorted({i for n, per in zip(g["name"], g["period"]) for i in fund_of.get((n, per), set())})
+        status = g["status"].mode().iloc[0]
+        out.append({"key": key, "name": name, "index": ";".join(idxs), "first": g["period"].min(), "last": g["period"].max(),
+                    "n_reports": g["period"].nunique(), "status": status, "reason": gap_reason(name, status, foreign),
+                    "candidates": ";".join(map(str, sorted(cands)[:5]))})
+    gp = pd.DataFrame(out).sort_values(["reason", "name"])
+    gp.to_csv(GAPS_CSV, index=False, encoding="utf-8-sig")
+    print(gp["reason"].value_counts().to_dict())
+
+
+def json_load(p: Path) -> dict:
+    """JSON 파일 읽기 (파일)."""
+    import json
+
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 # ── 보고 ───────────────────────────────────────────────────────────────────
@@ -457,7 +762,7 @@ def load_snapshot(fund: str, period: str, match: pd.DataFrame) -> pd.DataFrame |
     if not p.exists():
         return None
     d = pd.read_csv(p)
-    d = d.merge(match[["name", "cik", "status"]], on="name", how="left")
+    d = d.assign(period=period).merge(match[["name", "period", "cik", "status"]], on=["name", "period"], how="left")
     d["id"] = [f"cik:{int(c)}" if pd.notna(c) else f"key:{match_key(n)}" for c, n in zip(d["cik"], d["name"])]
     return d
 
@@ -530,9 +835,9 @@ def step_report() -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--step", required=True, choices=["filings", "nport", "nq", "match", "report"])
+    ap.add_argument("--step", required=True, choices=["filings", "nport", "nq", "reports", "match", "cusip", "intervals", "gaps", "report"])
     a = ap.parse_args()
-    {"filings": step_filings, "nport": step_nport, "match": step_match, "nq": step_nq, "report": step_report}[a.step]()
+    {"filings": step_filings, "nport": step_nport, "match": step_match, "nq": step_nq, "reports": step_reports, "cusip": step_cusip, "intervals": step_intervals, "gaps": step_gaps, "report": step_report}[a.step]()
 
 
 if __name__ == "__main__":

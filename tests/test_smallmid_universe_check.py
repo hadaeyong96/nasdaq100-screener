@@ -65,6 +65,7 @@ def test_flatten_and_parse_nq_holdings():
             "<tr><td>Esterline Technologies<br>Corp.<sup>a</sup></td><td>636,698</td><td>56,793,462</td></tr>"
             "<tr><td>* eBay Inc.</td><td>10</td><td>20</td></tr>"
             "<tr><td>MarketAxess Holdings Inc.</td><td>3</td><td>4</td></tr>"
+            "<tr><td>Food Products (continued)</td></tr><tr><td>Tootsie Roll Industries Inc.</td><td>5</td><td>6</td></tr>"
             "<tr><td>TOTAL COMMON STOCKS</td><td>1</td><td>2</td></tr>"
             "<tr><td>Ignored Co.</td><td>1</td><td>2</td></tr></table>"
             "<p>Schedule of Investments</p><p>iSHARES CORE S&amp;P SMALL-CAP ETF</p>"
@@ -73,7 +74,7 @@ def test_flatten_and_parse_nq_holdings():
     pages = sm.fund_pages(lines, sm.NQ_HEAD["sp400"])
     df = sm.parse_nq_holdings(pages)
     assert list(df["name"]) == ["B/E Aerospace Inc.", "Esterline Technologies Corp.", "eBay Inc.",
-                                "MarketAxess Holdings Inc."]
+                                "MarketAxess Holdings Inc.", "Tootsie Roll Industries Inc."]
     assert df.loc[0, "shares"] == "2,169,040" and df.loc[0, "value"] == "130,554,517"
     # 다른 펀드 쪽은 들어오지 않는다
     small = sm.parse_nq_holdings(sm.fund_pages(lines, sm.NQ_HEAD["sp600"]))
@@ -102,3 +103,72 @@ def test_diff_reason():
     assert sm.diff_reason("cik:1", {"cik:1"}, None) == "기준일 차이(앞 보고에 있음)"
     assert sm.diff_reason("key:foo", None, None) == "CIK 미확정(이름 표기 차이 가능)"
     assert sm.diff_reason("cik:1", None, None) == "설명 안 됨"
+
+
+def test_clean_fund_name_apostrophe_and_cos():
+    assert sm.match_key("America's Car-Mart Inc/TX") == sm.match_key("AMERICAS CAR-MART INC")
+    assert sm.match_key("BJ’s Restaurants Inc.") == sm.match_key("BJS RESTAURANTS INC")
+    assert sm.match_key("Carlisle Cos. Inc.") == sm.match_key("CARLISLE COMPANIES INC")
+    assert "companies" not in sm.match_key("Cosan Ltd")  # 'Cos'는 단어 전체만
+
+
+def test_loose_key_word_order_and_initials():
+    assert sm.match_key("A.O. Smith Corp.") != sm.match_key("SMITH A O CORP")
+    assert sm.loose_key("A.O. Smith Corp.") == sm.loose_key("SMITH A O CORP")
+    assert sm.loose_key("EW Scripps Co.") == sm.loose_key("SCRIPPS E W CO")
+    assert sm.loose_key("HB Fuller Co") == sm.loose_key("FULLER H B CO")
+    assert sm.match_key("F.N.B. Corp.") == sm.match_key("FNB CORP/PA/")
+    assert sm.match_key("Eaton Vance Corp. NVS") == sm.match_key("EATON VANCE CORP")
+    assert sm.match_key("J. Crew Group Inc.") == sm.match_key("J Crew Group Inc")  # 이니셜 하나는 그대로
+
+
+def test_name_at_uses_former_name_period():
+    sub = {"name": "CNX RESOURCES CORP",
+           "formerNames": [{"name": "CONSOL ENERGY INC", "from": "1999-01-01T00:00:00.000Z", "to": "2017-11-28T00:00:00.000Z"}]}
+    assert sm.name_at(sub, "2016-12-31") == "CONSOL ENERGY INC"
+    assert sm.name_at(sub, "2019-12-31") == "CNX RESOURCES CORP"
+
+
+def test_resolve_picks_by_name_then():
+    active = lambda c, d: True  # noqa: E731
+    same = lambda c, d: c == 2  # noqa: E731
+    assert sm.resolve({1, 2}, "2016-12-31", active, same) == (2, "확정(이름 기간)")
+    assert sm.resolve({1, 2}, "2016-12-31", active, lambda c, d: True) == (None, "모호")
+
+
+def test_cusip_consistency_verdicts():
+    rows = pd.DataFrame([
+        {"cusip": "A0000000A", "period": "2020-03-31", "name": "Foo Inc", "cik": 1},
+        {"cusip": "A0000000A", "period": "2020-06-30", "name": "Foo Inc", "cik": 1},
+        {"cusip": "B0000000B", "period": "2020-03-31", "name": "Bar Inc", "cik": 2},
+        {"cusip": "B0000000B", "period": "2020-06-30", "name": "Bar Inc", "cik": None},
+        {"cusip": "C0000000C", "period": "2020-03-31", "name": "Baz Inc", "cik": 3},
+        {"cusip": "C0000000C", "period": "2020-06-30", "name": "Baz Inc", "cik": 4},
+        {"cusip": "D0000000D", "period": "2020-03-31", "name": "Old Name Inc", "cik": 5},
+        {"cusip": "D0000000D", "period": "2020-06-30", "name": "New Name Inc", "cik": 6},
+        {"cusip": "E0000000E", "period": "2020-03-31", "name": "Qux Inc", "cik": None},
+    ])
+    v = dict(zip(*sm.cusip_consistency(rows)[["cusip", "verdict"]].T.values))
+    assert v == {"A0000000A": "일치", "B0000000B": "일부 기간 미확정", "C0000000C": "같은 이름 다른 CIK(오매칭 의심)",
+                 "D0000000D": "이름·CIK 함께 바뀜(재편·합병 또는 오매칭)", "E0000000E": "전 기간 미확정"}
+    # 자리표시 CUSIP(외국 법인 등)은 검사에서 뺀다
+    ph = pd.DataFrame([{"cusip": "000000000", "period": "2020-03-31", "name": "X NV", "cik": 7},
+                       {"cusip": "000000000", "period": "2020-03-31", "name": "Y PLC", "cik": 8}])
+    assert sm.cusip_consistency(ph).empty
+
+
+def test_presence_runs_and_intervals():
+    assert sm.presence_runs([True, False, True, False, False, True]) == [(0, 2, 1), (5, 5, 0)]
+    dates = ["2020-02-29", "2020-03-31", "2020-05-31", "2020-06-30"]
+    iv = sm.intervals_for(dates, [False, True, True, False])
+    assert iv == [{"entry_earliest": "2020-03-01", "entry_latest": "2020-03-31", "exit_earliest": "2020-05-31",
+                   "exit_latest": "2020-06-29", "n_reports": 2, "gaps_filled": 0}]
+    iv = sm.intervals_for(dates, [True, True, True, True])
+    assert iv[0]["entry_earliest"] is None and iv[0]["exit_latest"] is None
+
+
+def test_gap_reason():
+    assert sm.gap_reason("Signature Bank/New York NY", "활동 없음", False).startswith("은행")
+    assert sm.gap_reason("Core Laboratories NV", "활동 없음", True).startswith("외국")
+    assert sm.gap_reason("J. Crew Group Inc. Escrow", "후보 없음", False).startswith("주식 아님")
+    assert sm.gap_reason("Foo Inc", "모호", False).startswith("같은 이름")
