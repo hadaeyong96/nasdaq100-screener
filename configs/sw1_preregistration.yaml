@@ -1,0 +1,72 @@
+# SW1 사전 등록 — docs/sw1_plan.md(잠금본 v2)의 핵심 수치를 기계가 읽을 수 있게 옮긴 것.
+# 어떤 결과도 계산하기 전에 커밋하고 git tag sw1-prereg를 붙인다. 이후 수정하지 않는다.
+# 계획서에 없는 세부는 결과 계산 전에 별도 "구현 해석" 목록으로 고정한다 (이 파일·계획서는 바꾸지 않음).
+# scripts/sw1_experiments.py는 시작할 때 이 파일과 docs/sw1_plan.md의 sha256(LF 정규화)을 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-09"
+base_commit: "c94165c"
+trial: {series: SW1, id: 1, label: "SW1 시도 1"}
+evidence: "docs/research/sw1_data_check.md (feat/sw1-pead c94165c)"
+
+universe:
+  lists: ["시점별 나스닥100 (data.universe_history)", "S&P 100 (위키 옛 판 재구성, 121개월)"]
+  combine: union
+  keep_after_leaving: true
+  coverage_ticker_months: {nasdaq100_pct: 88.5, sp100_pct: 97.5}
+  known_gaps:
+    cik_missing: [BBBY, CTRX, EMC, HNZ, HSH, QRTEA, RIMM, TWX, YHOO, CA]
+    other_company_price_excluded: [ALTR, APOL, MON, DTV, STRZA]
+    partial: {MYL: "2015 이후 공시 없음", WAG: "2012~2014 공시 없음"}
+    treatment: "신호 없음으로 처리, 결과에 공백 비율 기재"
+
+signal:
+  reaction_day:
+    source: "EDGAR 공시 색인 페이지 Accepted (동부시간)"
+    pre_market: same_day        # 09:30 전
+    intraday: next_trading_day
+    after_close: next_trading_day
+  conditions:   # 반응일 종가, 전날 종가 대비
+    stock_return_min: 0.05
+    excess_vs_qqq_min: 0.05
+    volume_ratio_min: 2.0
+    volume_window_days: 20      # 직전 20거래일 평균
+  eps_condition: none
+  expected_signals: {union: 636, nasdaq100: 479, sp100: 247}
+
+trade:
+  buy: "반응일 다음 거래일 시가"
+  hold_trading_days: 60         # 주 판정 (확정값)
+  sell: "매수 후 60거래일 뒤 종가"
+  stop_loss: none
+  same_ticker_while_holding: ignore_new_signal
+  prices: "분할 반영 (Tiingo 포함)"
+  money: "D1 설정 그대로"
+  costs: {buy_commission_pct: 0.07, sell_commission_pct: 0.07, fx_spread_pct: 0.1}
+  tax: {rate_pct: 22, deduction_krw: 2500000, unit: "연 단위"}
+
+benchmarks:
+  qqq: "같은 매수일·매도일에 QQQ를 샀다고 가정"
+  random: {draw: "같은 매수일, 같은 대상에서 무작위 1종목, 같은 보유 기간", iterations: 1000, seed: 20261009}
+  reference_control: "같은 주에 실적을 발표했지만 신호가 안 난 종목 중 무작위 (참고)"
+
+criteria:   # 모두 충족해야 합격
+  - {id: 1, key: mean_excess_after_cost_tax, rule: "> 0"}
+  - {id: 2, key: random_percentile_of_mean_excess, rule: ">= 75"}
+  - {id: 3, key: mean_excess_each_period, periods: [["2012", "2016"], ["2017", "2021"]], rule: "> 0"}
+  - {id: 4, key: years_with_positive_mean_excess, rule: ">= 6 of 10"}
+  - {id: 5, key: trade_count, rule: ">= 300", else: "판정 불가"}
+criteria_reference: ["분기별로 묶은 평균으로 기준 1 재확인"]
+
+period:
+  verdict: {first: "2012-01", last: "2021-12", basis: reaction_day}
+  seal_from: "2022-01-01"
+
+reference_reports:
+  - {id: 1, name: "20·40거래일 보유"}
+  - {id: 2, name: "−8% 손절"}
+  - {id: 3, name: "EPS 확인판", rule: "10-Q 제출일에 EPS 증가가 확인된 신호만 (608건 중 423건)", buy: "10-Q 다음 날"}
+  - {id: 4, name: "비교 지수 SPY"}
+  - {id: 5, name: "나스닥100만 / S&P 100만 따로"}
+
+expectation: "대형주에서 효과가 약해졌다는 연구가 많음. 1~2%p 수준이면 비용·세금에 먹혀 불합격 가능성 높음"
+outputs: ["docs/results/sw1.md"]
