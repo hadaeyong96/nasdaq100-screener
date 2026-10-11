@@ -9,6 +9,12 @@ on:
     - cron: "47 21 * * *"
   workflow_dispatch: {}
 
+# 예약 실행과 수동 실행이 겹치면 드라이브 state DB를 서로 덮어쓴다 -> 한 번에 하나만.
+# 진행 중인 실행은 취소하지 않고 끝날 때까지 기다린다.
+concurrency:
+  group: daily-screener
+  cancel-in-progress: false
+
 jobs:
   daily:
     runs-on: ubuntu-latest
