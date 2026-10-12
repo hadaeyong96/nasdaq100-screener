@@ -6,7 +6,8 @@
 단계:
   --step tickers   CIK별 그 시기 티커: 그 시기 10-K·10-Q의 XBRL 파일 이름(abc-20151231.xml) → 없으면 현재 티커
   --step yf        yfinance(auto_adjust=False) 시가·종가·거래량·분할 → data/cache/smallmid/prices/<cik>.csv
-  --step tiingo    yfinance로 못 받은 CIK만 Tiingo. --wait-on-limit이면 한도(429)에서 다음 정시까지 기다렸다 이어 받음.
+  --step tiingo    yfinance로 못 받은 CIK만 Tiingo. 검증 ① 종목 먼저(2017~2021 발표 많은 순) → 탐색 ② → 나머지.
+                   --wait-on-limit이면 한도(429)에서 다음 정시까지 기다렸다 이어 받음. 403·월 한도면 멈추고 tiingo_stop.json.
                    받은 결과(빈 응답·404 포함)는 tiingo_progress.json에 남겨 PC가 꺼져도 다시 실행하면 이어 받는다.
   --step check     같은 회사 확인: 가격 기간 ↔ 편입 기간, 시가총액(EDGAR 주식 수 × 원가격), 편출일 가격 연속성
   --step accepted  실적 발표(8-K 2.02, 없으면 10-Q·10-K)마다 EDGAR 색인 페이지 Accepted(동부시간)
@@ -42,6 +43,7 @@ TI = CACHE / "tiingo"
 TICKERS_CSV = CACHE / "tickers.csv"
 PRICE_STATUS_CSV = CACHE / "price_status.csv"
 TI_PROGRESS = CACHE / "tiingo_progress.json"
+TI_STOP = CACHE / "tiingo_stop.json"  # 403·월 한도로 멈춘 위치
 CHECK_CSV = CACHE / "price_check.csv"
 ACCEPTED_JSON = CACHE / "accepted.json"
 EVENTS_CSV = CACHE / "earnings_events.csv"
@@ -279,14 +281,68 @@ def tiingo_adjust(raw: pd.DataFrame) -> pd.DataFrame:
                          "split": f.where(f != 1.0, 0.0)}, index=raw.index)
 
 
-def step_tiingo(wait_on_limit: bool) -> None:
+def big_overlap(b: tuple | None, d: pd.Timestamp) -> bool:
+    """그날이 나스닥100 ∪ S&P 100 소속 기간(앞뒤 한 분기 = 92일) 안인지 (순수). b = (first, last) 또는 None."""
+    return bool(b) and b[0] - pd.Timedelta(days=92) <= d <= b[1] + pd.Timedelta(days=92)
+
+
+def event_day(r: dict) -> pd.Timestamp:
+    """받기 순서용 발표 날짜: Accepted(동부시간) 날짜, 없으면 제출일 (순수). 반응일 계산은 signals 단계에서만."""
+    a = r.get("accepted_et")
+    return pd.Timestamp(str(a)[:10] if isinstance(a, str) and a else r["filing_date"]).normalize()
+
+
+def tiingo_priority(events: pd.DataFrame, ivs: dict, big_ivs: dict) -> dict[int, tuple[int, int]]:
+    """CIK → 정렬 키 (구역 순위, -발표 수) (순수).
+
+    발표가 편입 중(보고 1번만 보인 구간 제외)이고 대형 겹침(앞뒤 한 분기)이 아닐 때만 센다.
+    구역 순위: 0 = 검증 ①(2017~2021 발표 1건 이상, 키는 2017~2021 발표 수), 1 = 탐색 ②(2012~2016, 키는 그 수).
+    둘 다 없는 CIK는 넣지 않는다(= 나머지).
+    """
+    n: dict[int, list[int]] = {}
+    for r in events.to_dict("records"):
+        cik = int(r["cik"])
+        d = event_day(r)
+        if not 2012 <= d.year <= 2021 or not member_on(ivs.get(cik, []), d)[0] or big_overlap(big_ivs.get(cik), d):
+            continue
+        n.setdefault(cik, [0, 0])[0 if d.year >= 2017 else 1] += 1
+    return {c: (0, -v) if v else (1, -e) for c, (v, e) in n.items()}
+
+
+def order_todo(need: pd.DataFrame, prog: dict, prio: dict[int, tuple[int, int]]) -> list[str]:
+    """받을 티커 순서 (순수): 검증 ① → 탐색 ② → 나머지, 구역 안에서는 발표 수 많은 순, 같으면 원래 순서.
+
+    진행 파일(prog)에 있는 티커는 뺀다. CIK 안에서는 candidate_tickers 순서, 중복 티커는 처음 나온 자리만.
+    """
+    recs = need.to_dict("records")
+    keyed = sorted(range(len(recs)), key=lambda i: (*prio.get(int(recs[i]["cik"]), (2, 0)), i))
+    todo = [tk for i in keyed for tk in candidate_tickers(recs[i]) if tk not in prog]
+    return list(dict.fromkeys(todo))
+
+
+def is_hard_stop(status: int, text: str) -> bool:
+    """정시까지 기다려도 풀리지 않는 응답인지 (순수): 403 전부, 또는 본문에 월 한도 문구(month·monthly)."""
+    return status == 403 or bool(re.search(r"(?i)month", text or ""))
+
+
+def load_tiingo_priority() -> dict[int, tuple[int, int]]:
+    """earnings_events.csv·편입 기간·대형 소속 기간으로 tiingo_priority (파일)."""
+    big = pd.read_csv(su.SW1_CIK, parse_dates=["first", "last"]).dropna(subset=["cik"])
+    big_ivs = {int(c): (a, b) for c, a, b in zip(big["cik"], big["first"], big["last"])}
+    return tiingo_priority(pd.read_csv(EVENTS_CSV), intervals_by_cik(), big_ivs)
+
+
+def step_tiingo(wait_on_limit: bool, get=None, sleep=time.sleep) -> None:
     """yfinance로 못 받은 CIK의 후보 티커를 Tiingo에서 받음. 결과는 tiingo/<ticker>.csv, 진행은 tiingo_progress.json.
 
-    TIINGO_API_KEY는 .env에서 읽고 값은 출력하지 않는다. 429면 --wait-on-limit일 때 다음 정시까지 기다린다.
+    순서는 order_todo(검증 ① 먼저). 403이나 월 한도 문구가 오면 바로 멈추고 tiingo_stop.json에
+    멈춘 시각·응답·마지막 성공 티커를 남긴다. TIINGO_API_KEY는 .env에서 읽고 값은 출력하지 않는다.
+    429면 --wait-on-limit일 때 다음 정시까지 기다린다. get·sleep은 테스트용 (기본 requests.get·time.sleep).
     """
     import requests
     from dotenv import load_dotenv
 
+    get = get or requests.get
     load_dotenv(ROOT / ".env")
     key = os.environ.get("TIINGO_API_KEY", "").strip()
     print(f"[tiingo] TIINGO_API_KEY 있음: {bool(key)}", flush=True)
@@ -295,25 +351,37 @@ def step_tiingo(wait_on_limit: bool) -> None:
     need = t[t["cik"].isin(st.loc[st["source"] != "yfinance", "cik"])]
     prog = json.loads(TI_PROGRESS.read_text(encoding="utf-8")) if TI_PROGRESS.exists() else {}
     TI.mkdir(parents=True, exist_ok=True)
-    todo = [tk for r in need.to_dict("records") for tk in candidate_tickers(r) if tk not in prog]
-    todo = list(dict.fromkeys(todo))
     attach_tiingo(need)  # 지난 실행에서 받아 두고 못 붙인 것
-    print(f"[tiingo] 대상 CIK {len(need)} · 받을 티커 {len(todo)} · 이미 받음 {len(prog)}", flush=True)
+    prio = load_tiingo_priority()
+    todo = order_todo(need, prog, prio)
+    zone = {0: 0, 1: 0, 2: 0}
+    for r in need.to_dict("records"):
+        if any(tk in todo for tk in candidate_tickers(r)):
+            zone[prio.get(int(r["cik"]), (2, 0))[0]] += 1
+    print(f"[tiingo] 대상 CIK {len(need)} · 받을 티커 {len(todo)} · 이미 받음 {len(prog)} · "
+          f"남은 CIK 검증① {zone[0]} / 탐색② {zone[1]} / 나머지 {zone[2]}", flush=True)
+    last_ok = None
     i = 0
     while i < len(todo):
         tk = todo[i]
         try:
-            resp = requests.get(f"https://api.tiingo.com/tiingo/daily/{tk}/prices",
-                                params={"startDate": PX_START, "endDate": "2021-12-31", "token": key, "format": "json"},
-                                timeout=30)
+            resp = get(f"https://api.tiingo.com/tiingo/daily/{tk}/prices",
+                       params={"startDate": PX_START, "endDate": "2021-12-31", "token": key, "format": "json"},
+                       timeout=30)
         except requests.RequestException as exc:
             print(f"[tiingo] {tk} 네트워크 실패 {type(exc).__name__} — 60초 뒤 다시", flush=True)
-            time.sleep(60)
+            sleep(60)
             continue
-        if resp.status_code in (429, 403) and re.search(r"(?i)month", resp.text or ""):
-            # 월 고유 종목 한도: 정시까지 기다려도 풀리지 않는다 → 멈추고 보고 (응답 본문은 키를 담지 않는 안내문)
-            msg = (resp.text or "")[:160].replace(key, "***") if key else (resp.text or "")[:160]
-            print(f"[tiingo] 월 한도로 멈춤 ({resp.status_code}): {msg!r} — 남음 {len(todo) - i}개", flush=True)
+        if is_hard_stop(resp.status_code, resp.text):
+            # 월 한도·403: 정시까지 기다려도 풀리지 않는다 → 멈추고 위치 기록 (응답 본문은 키를 지운 안내문만)
+            msg = (resp.text or "")[:160]
+            msg = msg.replace(key, "***") if key else msg
+            TI_STOP.write_text(json.dumps({
+                "stopped_at": time.strftime("%Y-%m-%d %H:%M:%S"), "status": resp.status_code, "message": msg,
+                "last_success": last_ok, "next_ticker": tk, "index_in_run": i, "remaining": len(todo) - i,
+                "progress_count": len(prog)}, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"[tiingo] 멈춤 ({resp.status_code}): {msg!r} — 마지막 성공 {last_ok} · 다음 {tk} · "
+                  f"남음 {len(todo) - i}개 (tiingo_stop.json)", flush=True)
             break
         if resp.status_code == 429:
             if not wait_on_limit:
@@ -321,7 +389,7 @@ def step_tiingo(wait_on_limit: bool) -> None:
                 break
             w = next_hour_wait_seconds(time.time())
             print(f"[tiingo] 한도(429) — {w}초 기다림 (남음 {len(todo) - i})", flush=True)
-            time.sleep(w)
+            sleep(w)
             continue
         recs = resp.json() if resp.status_code == 200 else None
         if isinstance(recs, list) and recs:
@@ -334,8 +402,9 @@ def step_tiingo(wait_on_limit: bool) -> None:
         else:
             prog[tk] = "빈 응답" if resp.status_code == 200 else f"HTTP {resp.status_code}"
         TI_PROGRESS.write_text(json.dumps(prog, ensure_ascii=False), encoding="utf-8")
+        last_ok = tk
         i += 1
-        time.sleep(0.5)
+        sleep(0.5)
         if i % 25 == 0:
             print(f"[tiingo] {i}/{len(todo)}", flush=True)
     attach_tiingo(need)
@@ -589,8 +658,7 @@ def step_signals() -> None:
             rows.append({**row, "status": "그날 편입 아님"})
             continue
         row["index"] = idx
-        b = big_ivs.get(cik)
-        if b and b[0] - pd.Timedelta(days=92) <= d0 <= b[1] + pd.Timedelta(days=92):
+        if big_overlap(big_ivs.get(cik), d0):
             rows.append({**row, "status": "대형 겹침(앞뒤 한 분기)"})
             continue
         if cik not in usable:

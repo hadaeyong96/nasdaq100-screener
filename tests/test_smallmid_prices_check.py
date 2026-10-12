@@ -1,5 +1,6 @@
 """중소형 가격·발표 시각·신호 건수 조사 스크립트의 순수 함수 (네트워크 없음)."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -86,3 +87,113 @@ def test_member_on_excludes_single_report_intervals():
     assert pc.member_on(ivs, pd.Timestamp("2015-06-01")) == (True, "sp600")
     assert pc.member_on(ivs, pd.Timestamp("2018-03-31")) == (False, None)
     assert pc.member_on(ivs, pd.Timestamp("2017-01-03")) == (False, None)
+
+
+# ── Tiingo 받기 순서·멈춤 ─────────────────────────────────────────────────────
+
+def _ivs():
+    full = (pd.Timestamp("2012-01-01"), pd.Timestamp("2021-12-31"), "sp600", 30)
+    return {1: [full], 2: [full], 3: [(pd.Timestamp("2012-01-01"), pd.Timestamp("2016-12-31"), "sp400", 20)],
+            4: [(pd.Timestamp("2018-01-01"), pd.Timestamp("2018-01-01"), "sp400", 1)], 5: [full]}
+
+
+def _events():
+    rows = []
+    for cik, days in {1: ["2018-02-01", "2019-02-01", "2013-02-01"],
+                      2: ["2017-05-01", "2018-05-01", "2019-05-01", "2020-05-01"],
+                      3: ["2013-03-01", "2014-03-01"],
+                      4: ["2018-01-01"],  # 보고 1번만 보인 구간 → 안 셈
+                      5: ["2019-06-01", "2020-06-01"]}.items():  # 대형 겹침 → 안 셈
+        rows += [{"cik": cik, "filing_date": d, "accepted_et": f"{d} 16:05:00"} for d in days]
+    return pd.DataFrame(rows)
+
+
+def test_tiingo_priority_validation_first_then_counts():
+    big = {5: (pd.Timestamp("2019-01-01"), pd.Timestamp("2020-12-31"))}
+    pr = pc.tiingo_priority(_events(), _ivs(), big)
+    assert pr == {1: (0, -2), 2: (0, -4), 3: (1, -2)}
+    assert pc.big_overlap(big[5], pd.Timestamp("2021-03-15"))  # 끝 + 92일 안
+    assert not pc.big_overlap(None, pd.Timestamp("2021-03-15"))
+
+
+def test_event_day_falls_back_to_filing_date():
+    assert pc.event_day({"accepted_et": "2018-02-01 17:00:00", "filing_date": "2018-02-02"}) == pd.Timestamp("2018-02-01")
+    assert pc.event_day({"accepted_et": float("nan"), "filing_date": "2018-02-02"}) == pd.Timestamp("2018-02-02")
+
+
+def test_order_todo_zone_order_and_skips_progress():
+    need = pd.DataFrame([{"cik": 9, "ticker_hist": "REST", "ticker_now": None},
+                         {"cik": 3, "ticker_hist": "EXP", "ticker_now": None},
+                         {"cik": 1, "ticker_hist": "VA", "ticker_now": "VA2"},
+                         {"cik": 2, "ticker_hist": "VB", "ticker_now": "VA"}])
+    prio = {1: (0, -2), 2: (0, -4), 3: (1, -2)}
+    assert pc.order_todo(need, {}, prio) == ["VB", "VA", "VA2", "EXP", "REST"]
+    assert pc.order_todo(need, {"VB": "있음 10", "EXP": "빈 응답"}, prio) == ["VA", "VA2", "REST"]
+
+
+def test_is_hard_stop():
+    assert pc.is_hard_stop(403, "Forbidden")
+    assert pc.is_hard_stop(429, "You have exceeded your monthly unique symbol limit")
+    assert not pc.is_hard_stop(429, "hourly request allocation exceeded")
+    assert not pc.is_hard_stop(404, "")
+
+
+class _Resp:
+    def __init__(self, status, text="", data=None):
+        self.status_code, self.text, self._data = status, text, data
+
+    def json(self):
+        return self._data
+
+
+def _tiingo_env(tmp_path, monkeypatch):
+    """임시 캐시: CIK 1(이미 받았지만 안 붙인 OLD), CIK 2(받을 NEW1), CIK 3(받을 NEW2)."""
+    cache = tmp_path / "smallmid"
+    (cache / "tiingo").mkdir(parents=True)
+    (cache / "prices").mkdir()
+    pd.DataFrame([{"cik": 1, "ticker_hist": "OLD", "ticker_now": None, "first": "2015-01-01", "last": "2015-12-31"},
+                  {"cik": 2, "ticker_hist": "NEW1", "ticker_now": None, "first": "2018-01-01", "last": "2018-12-31"},
+                  {"cik": 3, "ticker_hist": "NEW2", "ticker_now": None, "first": "2013-01-01", "last": "2013-12-31"}]
+                 ).to_csv(cache / "tickers.csv", index=False)
+    pd.DataFrame({"cik": [1, 2, 3], "source": ["없음"] * 3}).to_csv(cache / "price_status.csv", index=False)
+    days = pd.bdate_range("2015-01-02", "2015-12-31")
+    pd.DataFrame({"raw_open": 10.0, "raw_close": 10.0, "volume": 1000, "split_factor": 1.0},
+                 index=pd.Index(days, name="date")).to_csv(cache / "tiingo" / "OLD.csv")
+    (cache / "tiingo_progress.json").write_text('{"OLD": "있음 250"}', encoding="utf-8")
+    for name, val in {"TI": cache / "tiingo", "PX": cache / "prices", "TICKERS_CSV": cache / "tickers.csv",
+                      "PRICE_STATUS_CSV": cache / "price_status.csv", "TI_PROGRESS": cache / "tiingo_progress.json",
+                      "TI_STOP": cache / "tiingo_stop.json"}.items():
+        monkeypatch.setattr(pc, name, val)
+    monkeypatch.setattr(pc, "load_tiingo_priority", lambda: {3: (1, -4), 2: (0, -4)})
+    monkeypatch.setenv("TIINGO_API_KEY", "testkey")
+    return cache
+
+
+def test_step_tiingo_attaches_old_at_start_and_stops_on_403(tmp_path, monkeypatch):
+    cache = _tiingo_env(tmp_path, monkeypatch)
+    calls = []
+
+    def get(url, params, timeout):
+        calls.append(url.split("/")[-2])
+        assert (cache / "prices" / "1.csv").exists()  # 첫 요청 전에 이미 붙어 있어야 함
+        if len(calls) == 1:
+            return _Resp(200, "", [{"date": "2018-03-01T00:00:00Z", "open": 5, "close": 5, "volume": 1}] * 1)
+        return _Resp(403, "Forbidden testkey")
+
+    pc.step_tiingo(False, get=get, sleep=lambda s: None)
+    assert calls == ["NEW1", "NEW2"]  # 검증 ① 먼저, 받은 OLD는 건너뜀
+    prog = json.loads((cache / "tiingo_progress.json").read_text(encoding="utf-8"))
+    assert set(prog) == {"OLD", "NEW1"}
+    stop = json.loads((cache / "tiingo_stop.json").read_text(encoding="utf-8"))
+    assert stop["status"] == 403 and stop["last_success"] == "NEW1" and stop["next_ticker"] == "NEW2"
+    assert stop["remaining"] == 1 and "testkey" not in stop["message"]
+
+
+def test_step_tiingo_stops_on_monthly_429_without_waiting(tmp_path, monkeypatch):
+    cache = _tiingo_env(tmp_path, monkeypatch)
+    slept = []
+    pc.step_tiingo(True, get=lambda url, params, timeout: _Resp(429, "monthly unique symbol limit"),
+                   sleep=slept.append)
+    assert slept == []
+    stop = json.loads((cache / "tiingo_stop.json").read_text(encoding="utf-8"))
+    assert stop["last_success"] is None and stop["next_ticker"] == "NEW1" and stop["remaining"] == 2
