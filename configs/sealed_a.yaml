@@ -1,0 +1,82 @@
+# 봉인 ⓐ 개봉 사전 등록 (내부 ID sealed-a) — docs/sealed_a_plan.md의 핵심 수치를 기계가 읽을 수 있게 옮긴 것.
+# 2022-01-01 이후 가격·수익 데이터를 읽기 전에 커밋하고 git tag sealed-a-prereg를 붙여 push한다. 이후 수정하지 않는다.
+# 실행 스크립트는 시작할 때 이 파일·계획서의 sha256(LF 정규화)이 태그 내용·스크립트 기록값과 같은지 확인하고 다르면 멈춘다.
+
+registered_at: "2026-10-13"
+base_commit: "37f5729"
+trial: {id: sealed-a, tag: sealed-a-prereg, label: "봉인 ⓐ 개봉", zone: "봉인 ⓐ 지수 + 대형", opening: 1}
+approval: "사용자 개봉 승인 2026-10-13, B1 봉인 구간 기준 승인 2026-10-13"
+candidates: [B1, SW1-large]
+locked_sources:
+  l1b-prereg:
+    docs/l1b_plan.md: "dd8b8cd6fd17b3f0e0a27a5fdc035ad48a6b3e0331b41e14c3e8d53cf3c7fa71"
+    configs/l1b_preregistration.yaml: "091dbc7c73cf0cd33aefa5a25d966e84f82be8210ebdaa7570c9f2588a0f3816"
+  sw1-prereg:
+    docs/sw1_plan.md: "8b864411c51104aef01888ff2b99228b6688d4e34a89fcb13f7fbeda140ebfe9"
+    configs/sw1_preregistration.yaml: "c5ad820f50993b91f14642a9ab58aa48f4adf88731dc5f8285d95246d90c730e"
+  sw1_interpretations: "docs/sw1_interpretations.md (aceb621)"
+
+seal:
+  first: "2022-01-01"
+  last: "2026-09-30"
+  rows_after_last: stop   # 잘라내지 않고 멈춘다
+  warmup: "2021년 가격(이미 본 구간)"
+
+B1:
+  same_rules_as: l1b-prereg   # B1 신호·체결·비용·세금·장부 (l1b 구현 해석 9·10·13·14·18~25)
+  market: QQQ
+  price: "yfinance QQQ auto_adjust=False Close, 배당 미포함"
+  data_start: "2021-01-01"
+  B0: "QQQ 1배 보유"
+  rule: "종가 > SMA(sma_days)면 2배, 같거나 아래면 국채"
+  params: {sma_days: 200}
+  leveraged_2x: {formula: "2 * r_QQQ - RF - 0.0095/252", rebalance: daily, wipeout: "r2 <= -1 이면 가치 0"}
+  rf: {source: "FRED DTB3", conversion: "직전 거래일까지 알려진 DTB3/100 × 직전 거래일부터 달력 일수/360"}
+  execution: {signal: "t일 종가", fill: "t+1 거래일 종가", start: "2022-01-03 종가 (2021-12-31 신호)"}
+  costs_tax: {trade_cost_one_way_pct: 0.1, capital_gains_rate_pct: 22, taxable_base: "연 실현손익 + 국채 이자", deduction: 0,
+              loss_carryforward: false, settlement: "그해 마지막 거래일 종가, 전환 뒤", cost_basis: moving_average,
+              initial_usd: 100000, end: "기간 끝 전량 청산·세금"}
+  periods:
+    full: {start: "2022-01-03", end: "2026-09-30"}
+    sub:
+      - {name: "2022~2023", start: "2022-01-03", end: "2023-12-29"}
+      - {name: "2024~2026-09", start: "2024-01-02", end: "2026-09-30"}
+    sub_restart_usd: 100000
+  criteria:   # 모두 충족 = PASS, 하나라도 미달 = FAIL. 반올림 전 값 비교
+    - {id: 1, key: excess_posttax_cagr_vs_B0_pp, min: 2.0}
+    - {id: 2, key: mdd_minus_B0_mdd_pp, min: -2.0}
+    - {id: 3, key: sub_periods_beating_B0_posttax, need: "2 of 2", strict_greater: true}
+    - {id: 4, key: neighborhood_stable, sma_days: [190, 210], within_pp: 1.0}
+  reports: ["세후·세전 연복리", "최대 낙폭", "최장 회복", "최악의 해", "연도별", "전환 횟수", "세금 합계", "2배 보유 비율",
+            "B0 비교", "2022 약세장 2022-01-03~2022-12-30", "참고: 실제 QLD (auto_adjust=False Close)", "L1d 해외 재현 실패 기재"]
+  output: "docs/results/sealed_a_b1.md"
+
+SW1_large:
+  same_rules_as: sw1-prereg   # 신호·매매·비용·세금 + docs/sw1_interpretations.md (H1·H2, 해석 1~24)
+  universe: {lists: ["시점별 나스닥100 (data.universe_history)", "S&P 100 (위키 옛 판 매달 말)"], combine: union,
+             month_ends: ["2021-12", "2026-08"], basis: "제출일 전 달 말", keep_after_leaving: true, identity: CIK}
+  events: {source: "EDGAR 8-K Item 2.02", filing_dates: ["2021-12-01", "2026-09-30"], time: "공시 색인 Accepted (동부시간)"}
+  signal: {stock_return_min: 0.05, excess_vs_qqq_min: 0.05, volume_ratio_min: 2.0, volume_window_days: 20, eps_condition: none}
+  trade: {buy: "반응일 다음 거래일 시가", hold_trading_days: 60, sell: "60거래일 뒤 종가", stop_loss: none,
+          same_stock_while_holding: ignore_new_signal, sell_after_seal: exclude_trade}
+  period: {reaction_first: "2022-01-01", sell_last: "2026-09-30", basis: reaction_day}
+  prices: {primary: "yfinance auto_adjust=False 2021-01-01~2026-09-30", fallback: "Tiingo (11월 한도 회복 뒤)"}
+  costs: {commission_pct: 0.07, fx_spread_pct: 0.1, slippage_pct: 0.0, one_way: true, tax_rate_pct: 22,
+          tax_deduction: none, tax_allocation: "이익 비례 (H2)"}
+  fx: "yfinance KRW=X + FRED DEXKOUS 보완"
+  benchmarks: {qqq: "같은 매수일·매도일", random: {iterations: 1000, seed: 20261013, draw: "같은 매수일·같은 대상 명단 무작위 1종목"}}
+  criteria:
+    - {id: 1, rule: "평균 초과(QQQ 대비, 비용·세금 뒤) > 0"}
+    - {id: 2, rule: "무작위 1,000회 97.5백분위 이상", random_pct_min: 97.5, basis: "봉인 ⓐ 후보 2개 → 0.05/2"}
+    - {id: 3, rule: "2022~2023, 2024~2026-09 두 구간 모두 > 0", periods: [[2022, 2023], [2024, 2026]]}
+    - {id: 4, rule: "2022~2026 5개 연도 중 3개 이상 > 0", years: [2022, 2026], min_pos_years: 3}
+    - {id: 5, rule: "매매 200건 이상", min_trades: 200, else: "판정 불가"}
+    - {id: 6, rule: "상위 5건 제외 평균 > 0", drop_top: 5}
+    - {id: 7, rule: "판정 불가(가격 공백) 비율 ≤ 10%", max_undecided_rate: 0.10,
+       if_exceeded: "수익 계산 안 함, 대기 (11월 Tiingo 뒤 실행)", if_gap_and_mean_le_0: FAIL}
+  verdict_names: {PASS: "①~⑦ 모두", WAIT: "⑦ 초과", UNDECIDABLE: "⑤ 미달", FAIL: "그 밖 하나라도 미달"}
+  undecided_def: "대상 발표 중 (같은 회사 가격 없음·반응일 가격 없음·거래량 22거래일 미만·발표 시각 없음) / (판정 + 그것들). CIK 못 찾은 대상 티커는 대상 달 수/3(올림)건"
+  reference_reports: ["20·40거래일 보유", "나스닥100만 / S&P 100만", "SW1 2012~2021 결과와 나란히"]
+  output: "docs/results/sealed_a_sw1.md"
+
+trial_log: "docs/results/trial_log.md 에 '봉인 ⓐ 개봉' (개봉 일시, 두 후보, 결과 또는 대기)"
