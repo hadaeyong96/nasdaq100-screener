@@ -368,6 +368,8 @@ def run() -> None:
 
     sig_all = ev[(ev["status"] == "판정") & ev["signal"]].copy()
     sig_all["ticker"] = sig_all["cik"]
+    st["dup_signals"] = int(sig_all.duplicated(["ticker", "d0"]).sum())
+    st["dup_signals_liquid"] = int(sig_all[sig_all["liquid"]].duplicated(["ticker", "d0"]).sum())
     sig_all = sig_all.drop_duplicates(["ticker", "d0"])
     sig = sig_all[sig_all["liquid"]]
     cols = ["ticker", "d0", "accn", "index", "liquid"]
@@ -489,9 +491,11 @@ def write_report(pre, T, S, V, st, mm, sig_rate, rmeans, pool_sizes, refs, sk0, 
           f"| 판정 | {st['judged']} (신호 {st['signals']}, 신호+유동성 {st['signals_liquid']}) |",
           f"| 판정 불가 (가격 공백·다른 회사 + 가격 부족) | {st['undecided']} ({st['rate']:.2%}) |",
           f"| 그 밖 제외 (편입 아님 · 대형 겹침) | {int((ev['status'] == '그날 편입 아님').sum())} · {int((ev['status'] == '대형 겹침(앞뒤 한 분기)').sum())} |",
-          f"| 신호+유동성 중 매매 안 됨 | {sum(sk.values())}/{st['signals_liquid']} — " + (", ".join(f"{k} {v}" for k, v in sk.items()) or "없음") + " |",
+          f"| 같은 CIK·같은 반응일 신호 중복 (1건만 씀, 해석 7) | 신호 {st['dup_signals']} · 신호+유동성 {st['dup_signals_liquid']} |",
+          f"| 신호+유동성 중 매매 안 됨 | {sum(sk.values())}/{st['signals_liquid'] - st['dup_signals_liquid']} — " + (", ".join(f"{k} {v}" for k, v in sk.items()) or "없음") + " |",
           "| 매도 사유 | " + ", ".join(f"{k} {v}" for k, v in T["exit_reason"].value_counts().to_dict().items()) + " |", "",
-          "## 결과를 본 뒤 바꾼 점", "", "없음", ""]
+          "## 결과를 본 뒤 바꾼 점", "",
+          "없음 (계산·규칙 변경 없음. 첫 실행 뒤 보고 줄 1개만 추가: 같은 CIK·같은 반응일 신호 중복 건수 — 해석 7의 \"생기면 보고\")", ""]
     RESULT_MD.write_text("\n".join(L), encoding="utf-8", newline="\n")
 
 
