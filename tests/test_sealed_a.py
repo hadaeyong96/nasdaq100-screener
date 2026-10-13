@@ -75,3 +75,50 @@ def test_window_report_loss_and_moves():
     assert w["mdd_pct"] == pytest.approx(-20.0)
     assert w["b0_loss_pct"] == pytest.approx(-7.0)
     assert [a for _, a in w["moves"]] == ["cash", "2x"]
+
+
+# ── SW1 대형 (scripts/sealed_a_sw1.py, scripts/sealed_a_sw1_data.py) ──────────
+
+
+def _S(ex=0.5, per=(0.1, 0.2), pos=3, n=250):
+    return {"ex_after": ex, "per": list(per), "pos_years": pos, "n": n}
+
+
+def test_sw1_verdict_names():
+    from scripts import sealed_a_sw1 as s
+
+    assert s.verdict(_S(), 97.5, 0.1, 0.10)["name"] == "PASS"
+    assert s.verdict(_S(), 99.0, 0.1, 0.1001)["name"] == "WAIT"       # ⑦ 먼저
+    assert s.verdict(_S(n=199), 99.0, 0.1, 0.05)["name"] == "판정 불가"  # ⑤
+    assert s.verdict(_S(), 97.4, 0.1, 0.05)["name"] == "FAIL"           # ② 0.05/2
+    assert s.verdict(_S(ex=-0.1), 99.0, 0.1, 0.05)["name"] == "FAIL"
+    assert s.verdict(_S(per=(0.1, 0.0)), 99.0, 0.1, 0.05)["name"] == "FAIL"
+    assert s.verdict(_S(pos=2), 99.0, 0.1, 0.05)["name"] == "FAIL"
+    assert s.verdict(_S(), 99.0, 0.0, 0.05)["name"] == "FAIL"           # ⑥
+
+
+def test_sw1_mean_without_top():
+    from scripts import sealed_a_sw1 as s
+
+    ex = pd.Series([10.0, 9.0, 8.0, 7.0, 6.0, 1.0, -1.0])
+    assert s.mean_without_top(ex, 5) == pytest.approx(0.0)
+
+
+def test_sw1_pools_use_previous_month_end_and_exclude_self():
+    from scripts import sealed_a_sw1 as s
+
+    me_prev, me_cur = pd.Timestamp("2022-03-31"), pd.Timestamp("2022-04-30")
+    m = {"ndx": {me_prev: {"AAA", "BBB"}, me_cur: {"FUT"}}, "sp100": {me_prev: {"CCC", "NOPX"}}}
+    cik_of = {"AAA": "1", "BBB": "2", "CCC": "3", "FUT": "9"}
+    tr = pd.DataFrame({"buy_day": [pd.Timestamp("2022-04-14")], "ticker": ["1"]})
+    assert s.pools_for(tr, m, cik_of) == [["2", "3"]]  # 이번 달 명단(FUT)·가격 없는 티커·자기 자신 제외
+
+
+def test_sw1_price_judge_seal_window():
+    from scripts import sealed_a_sw1_data as d
+
+    f, l = pd.Timestamp("2021-12-31"), pd.Timestamp("2026-08-31")
+    assert d.judge(f, l, pd.Timestamp("2021-01-04"), pd.Timestamp("2026-09-30")) == "맞음"
+    assert d.judge(f, l, pd.Timestamp("2022-03-01"), pd.Timestamp("2026-09-30")) == "앞이 빔"
+    assert d.judge(f, l, pd.Timestamp("2021-01-04"), pd.Timestamp("2025-01-02")) == "끝이 이름"
+    assert d.judge(f, l, pd.Timestamp("2026-09-01"), pd.Timestamp("2026-09-30")) == "다른 회사 의심"
