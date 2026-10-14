@@ -42,6 +42,14 @@ jobs:
           python scripts/drive_sync.py download --mode live
           python scripts/drive_sync.py download --mode paper
 
+      # 가상 장부 DB(docs/design/virtual_books.md)는 따로 받는다 — 실패해도 브리핑은 그대로 진행.
+      - name: Download virtual books state from Google Drive
+        continue-on-error: true
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
+        run: python scripts/drive_sync.py download --mode vbooks
+
       - name: Run engine.daily (live, then paper)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -52,6 +60,10 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # 가상 장부 시트(먼저 사본 시트) — 없으면 시트 기록만 건너뛴다
+          VIRTUAL_BOOKS_SHEETS_ID: ${{ secrets.VIRTUAL_BOOKS_SHEETS_ID }}
+          # 값은 쓰지 않고 있는지만 본다: 없고 시작일도 미고정이면 가상 장부가 매일 새로 시작하므로 멈춘다
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
         run: |
           python -m engine.daily --mode live
           python -m engine.daily --mode paper --no-send
@@ -66,6 +78,14 @@ jobs:
         run: |
           python scripts/drive_sync.py upload --mode live
           python scripts/drive_sync.py upload --mode paper
+
+      - name: Upload virtual books state to Google Drive
+        if: always()
+        continue-on-error: true
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
+        run: python scripts/drive_sync.py upload --mode vbooks
 
       - name: Notify on failure
         if: failure()

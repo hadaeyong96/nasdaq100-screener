@@ -77,6 +77,7 @@ from data import sheets  # noqa: E402
 from data.universe import get_universe  # noqa: E402
 from notify import briefing, report_html, telegram  # noqa: E402
 from store import db  # noqa: E402
+from engine import virtual_books as vbooks  # noqa: E402
 
 OUTPUT_DIR = ROOT / "outputs"
 KST = ZoneInfo("Asia/Seoul")  # 계획 자동 기록 등록일(실행일 KST)
@@ -2241,6 +2242,13 @@ def main() -> None:
         print(f"시트 입력 오류 {len(summary['input_errors'])}건")
     print(f"보고서: {summary['report_path']}")
 
+    # ── 가상 장부 5개 (live 전용, docs/design/virtual_books.md): 브리핑 맨 위 국면 한 줄만 보탠다.
+    # 장부 오류는 run_safely가 잡아 따로 알림 — 기존 브리핑은 그대로 나간다.
+    vb_result = None
+    if mode == "live" and not args.dry_run and not summary.get("stale"):
+        vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send)
+        _attach_regime_line(summary, vb_result, cfg)
+
     if not args.dry_run:
         if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 배너 보고서 한 통만 보낸다(지연 문구는 첨부 설명)
             sent_path = telegram.send_delay_notice(summary, cfg, force_no_send=args.no_send)
@@ -2260,6 +2268,29 @@ def main() -> None:
                     print(f"[daily] {warning}")
                     telegram.notify_ops_error(warning)
         print(f"텔레그램 글: {sent_path}")
+
+        # 가상 장부 알림(전환 신호·낙폭)은 브리핑 뒤에 따로 — 실패해도 브리핑과 무관
+        for a in vbooks.send_alerts_safely(vb_result, force_no_send=args.no_send):
+            print(f"[daily] 가상 장부 알림 보냄: {a['kind']} {a['key']}")
+
+
+def _attach_regime_line(summary: dict, vb_result: dict | None, cfg: dict) -> None:
+    """가상 장부 국면 한 줄을 summary에 붙이고 보고서를 다시 그린다. 기준일이 다르거나
+    다시 그리기가 실패하면 줄을 빼고 원래 보고서를 그대로 둔다(브리핑 보호)."""
+    if not vb_result or not vb_result.get("regime_line"):
+        return
+    as_of = summary.get("as_of")
+    if as_of is None or vb_result["base_date"].date() != as_of.date():
+        print(f"[daily] 가상 장부 기준일 {vb_result['base_date'].date()}이 브리핑 기준일과 달라 국면 줄을 넣지 않습니다")
+        return
+    original_path = summary.get("report_path")
+    summary["regime_line"] = vb_result["regime_line"]
+    try:
+        summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
+    except Exception as exc:
+        print(f"[daily] 국면 줄을 넣은 보고서를 다시 그리지 못해 원래 보고서를 씁니다: {type(exc).__name__}: {exc}")
+        summary.pop("regime_line", None)
+        summary["report_path"] = original_path
 
 
 if __name__ == "__main__":

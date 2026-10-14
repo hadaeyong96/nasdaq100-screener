@@ -458,6 +458,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
 
     return {
         "stale": bool(summary.get("stale")),
+        "regime_line": summary.get("regime_line") or "",  # 가상 장부 국면 한 줄 (engine.virtual_books)
         "expected_date_str": summary.get("expected_date") or "",
         "actual_date_str": summary.get("actual_date") or "",
         "mode_label": summary.get("mode_label", "실전"),
