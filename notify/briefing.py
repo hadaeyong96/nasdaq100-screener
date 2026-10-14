@@ -117,6 +117,37 @@ def build_fred_missing_line(missing_codes: list[str]) -> str | None:
     return f"⚠️ FRED 지표 수집 실패: {', '.join(missing_codes)}"
 
 
+def title_line(summary: dict, cfg: dict) -> str:
+    """제목 줄: "📊 {short_title} · 10/13(화) 마감 · 실전"."""
+    as_of = summary.get("as_of")
+    mode_label = summary.get("mode_label", "실전")
+    if as_of is not None:
+        d = as_of.date()
+        date_str = f"{d.month}/{d.day}({_KOREAN_WEEKDAY[as_of.dayofweek]})"
+    else:
+        date_str = "알수없음"
+    return f"📊 {report_titles(cfg)['short_title']} · {date_str} 마감 · {mode_label}"
+
+
+def build_report_caption(summary: dict, cfg: dict) -> str:
+    """개인 브리핑 보고서 첨부 설명 (브리핑 다이어트): 제목 + 국면 줄 + "매수 n · 매도 n" + 티커만.
+
+    예: 세 줄 — "📊 데이터브리핑 · 10/13(화) 마감 · 실전" / "오늘 국면: …" / "매수 2(NVDA, AAPL) · 매도 1(ROP)"
+    추천이 없으면 "매수 0 · 매도 0". 티커는 매수는 차수 순서·중복 제거, 매도는 매도 표 순서.
+    """
+    lines = [title_line(summary, cfg)]
+    if summary.get("regime_line"):
+        lines.append(summary["regime_line"])
+    buy_groups = summary.get("buy_groups", {})
+    buys = list(dict.fromkeys(r["ticker"] for key in _STAGE_ORDER for r in buy_groups.get(key, [])))
+    sells = list(dict.fromkeys(r["티커"] for r in summary.get("sell_rows", [])))
+    buy_n = summary.get("buy_count", sum(len(buy_groups.get(k, [])) for k in _STAGE_ORDER))
+    sell_n = len(summary.get("sell_rows", []))
+    lines.append(f"매수 {buy_n}" + (f"({', '.join(buys)})" if buys else "")
+                 + f" · 매도 {sell_n}" + (f"({', '.join(sells)})" if sells else ""))
+    return "\n".join(lines)
+
+
 def build_briefing_text(summary: dict, cfg: dict) -> str:
     """summary + cfg -> 텔레그램에 보낼 본문 문자열 (최소 형식, P3.4 2번).
 
@@ -127,15 +158,7 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     제목(🎯 등)과 시장 온도 줄의 판정 이모지(🟢🟡🔴)는 그대로 둔다.
     HTML 보고서 첨부는 이 함수와 무관하게 notify.telegram.send_briefing이 그대로 한다.
     """
-    as_of = summary.get("as_of")
-    mode_label = summary.get("mode_label", "실전")
-    if as_of is not None:
-        d = as_of.date()
-        date_str = f"{d.month}/{d.day}({_KOREAN_WEEKDAY[as_of.dayofweek]})"
-    else:
-        date_str = "알수없음"
-
-    lines = [f"📊 {report_titles(cfg)['short_title']} · {date_str} 마감 · {mode_label}"]
+    lines = [title_line(summary, cfg)]
     if summary.get("regime_line"):  # 가상 장부 국면 한 줄 (live, engine.virtual_books — 실패하면 없음)
         lines.append(summary["regime_line"])
     if summary.get("rebuilt_from"):

@@ -38,7 +38,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from notify.briefing import REGIME_LINE_PREFIX, report_titles
+from notify.briefing import REGIME_LINE_PREFIX, build_report_caption, report_titles
 from store import db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -91,6 +91,11 @@ def report_caption(text: str, limit: int = MAX_CAPTION_LEN) -> str:
         return ""
     kept = [lines[0]] + [line for line in lines[1:] if line.startswith(("🔁", "⚠️", REGIME_LINE_PREFIX))]
     caption = "\n".join(kept)
+    return caption if len(caption) <= limit else caption[: limit - 1] + "…"
+
+
+def _limit_caption(caption: str, limit: int = MAX_CAPTION_LEN) -> str:
+    """첨부 설명 글자 수 한도(1024자)를 넘으면 자른다."""
     return caption if len(caption) <= limit else caption[: limit - 1] + "…"
 
 
@@ -262,8 +267,8 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
          as_of, mode, report_path 포함), cfg, force_no_send(--no-send 플래그)
     출력: 저장한 txt 파일 경로
 
-    본문 글은 따로 보내지 않고, report_caption(text)(제목 줄 + 정정본·경고 줄)을 첨부
-    설명으로만 붙인다(2026-10-01 사용자 확정). 보고서 파일이 없을 때만 본문 글을 대신
+    본문 글은 따로 보내지 않고, notify.briefing.build_report_caption(제목 + 국면 줄 + "매수 n · 매도 n"
+    + 티커)을 첨부 설명으로만 붙인다(2026-10-14 브리핑 다이어트, 사용자 확정). 보고서 파일이 없을 때만 본문 글을 대신
     보낸다 — 아무것도 못 받는 날이 없게 하기 위해서다.
 
     모의(paper) 모드는 --no-send 여부와 관계없이 절대 텔레그램을 보내지 않는다(하드
@@ -296,7 +301,8 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
         report_path = summary.get("report_path")
         if report_path and Path(report_path).exists():
             ok = _send_document(
-                token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg), caption=report_caption(text)
+                token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
+                caption=_limit_caption(build_report_caption(summary, cfg)),
             )
         else:
             print("[telegram] 보고서 파일이 없어 본문 글을 대신 보냅니다.")

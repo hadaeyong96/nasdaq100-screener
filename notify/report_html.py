@@ -283,6 +283,61 @@ _SECTOR_KO = {
 _FLOW_STATUS_CLS = {"유입": "ok", "투매": "no", "보통": ""}
 
 
+# 보고서 맨 위 "오늘 매수 추천"의 한 줄 이유 (표시 전용 — 규칙 탭의 조건 요약과 같은 내용)
+_TOP_BUY_REASON = {
+    "A1": "RSI 30 상향 돌파 · 1차 정찰",
+    "A2": "MACD 골든크로스 · 2차 확인",
+    "A3": "일목 구름 4요소 충족 · 3차 확정",
+    "B": "구름 위 골든크로스 · 재진입",
+}
+
+
+def _top_buy_rows(all_rows: list[dict]) -> list[dict]:
+    """매수 신호 행(점수 내림차순) → 맨 위 추천 표 행: 종목, 현재가(기준일 종가), 이유, 신호 강도(점수·등급)."""
+    out = []
+    for r in all_rows:
+        close = r.get("close")
+        grade = r.get("grade") or ""
+        out.append({
+            "ticker": r["ticker"], "kr": r.get("kr") or r["ticker"],
+            "close_str": f"${close:,.2f}" if close is not None else "-",
+            "reason": _TOP_BUY_REASON.get(r.get("stage", ""), r.get("stage_label", "")),
+            "strength": f"{r.get('score', 0)}점" + (f" · {grade}등급" if grade else ""),
+            "hold": r.get("decision") not in (None, "매수"),
+        })
+    return out
+
+
+def _top_sell_rows(sell_rows: list[dict]) -> list[dict]:
+    """매도·손절 행 → 맨 위 추천 표 행: 종목, 보유 수익률(손익률), 이유(신호)."""
+    out = []
+    for r in sell_rows:
+        ret = r.get("손익률")
+        out.append({
+            "ticker": r["티커"], "kr": r.get("종목명") or r["티커"],
+            "ret_str": f"{ret:+.1f}%" if ret is not None else "-",
+            "ret_cls": "" if ret is None else ("ok" if ret >= 0 else "no"),
+            "reason": r.get("신호") or "",
+        })
+    return out
+
+
+def _vbooks_ctx(vbooks: dict | None) -> tuple[list[dict], str]:
+    """summary["vbooks"]({start, benchmark, rows: 장부 요약}) → 접기 안 가상 장부 표 행, 시작일."""
+    if not vbooks or not vbooks.get("rows"):
+        return [], ""
+    bench = next((r for r in vbooks["rows"] if r["book"] == vbooks.get("benchmark")), None)
+    rows = []
+    for r in vbooks["rows"]:
+        vs = None if bench is None or r is bench else r["cum_return_pct"] - bench["cum_return_pct"]
+        rows.append({
+            "book": r["book"], "value_str": f"{r['value']:,.0f}", "cum_str": f"{r['cum_return_pct']:+.2f}%",
+            "vs_qqq_str": "-" if vs is None else f"{vs:+.2f}%p", "mdd_str": f"{r['mdd_pct']:.1f}%",
+            "switches": r["switches"], "holding": r["holding"],
+        })
+    return rows, vbooks.get("start", "")
+
+
 def _pct(v, digits: int = 1, sign: bool = True) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "-"
@@ -370,6 +425,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
             }
         )
     buy_count = summary.get("buy_count", len(all_rows))
+    vbooks_rows, vbooks_start = _vbooks_ctx(summary.get("vbooks"))
 
     stage_label = {"정찰": "1차 정찰", "확인": "2차 확인", "확정": "3차 확정", "추세보유": "재진입", "청산중": "청산중"}
     hold_rows = [
@@ -492,6 +548,11 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "buy_risk_sum_str": _won(buy_risk_sum_krw),
         "buy_risk_pct": f"{buy_risk_pct:.2f}" if buy_risk_pct is not None else "0.00",
         "sell_rows": sell_rows,
+        # 맨 위 오늘 추천 (브리핑 다이어트 — 아래 상세 표와 같은 행을 짧게만 보여 준다)
+        "top_buys": _top_buy_rows(all_rows),
+        "top_sells": _top_sell_rows(summary.get("sell_rows", [])),
+        "vbooks_rows": vbooks_rows,
+        "vbooks_start": vbooks_start,
         "hold_rows": hold_rows,
         "hold_totals": hold_totals,
         "watch_rows": summary.get("watch_rows", []),

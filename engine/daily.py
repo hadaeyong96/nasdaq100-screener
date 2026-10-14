@@ -2285,11 +2285,19 @@ def _attach_regime_line(summary: dict, vb_result: dict | None, cfg: dict) -> Non
         return
     original_path = summary.get("report_path")
     summary["regime_line"] = vb_result["regime_line"]
+    ledger = vb_result.get("ledger")
+    if ledger is not None:  # 보고서 접기 안 "가상 장부 현황" 표 (표시 전용)
+        summary["vbooks"] = {
+            "start": ledger.start.date().isoformat(),
+            "benchmark": (cfg.get("virtual_books") or {}).get("benchmark_book"),
+            "rows": ledger.summaries,
+        }
     try:
         summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
     except Exception as exc:
         print(f"[daily] 국면 줄을 넣은 보고서를 다시 그리지 못해 원래 보고서를 씁니다: {type(exc).__name__}: {exc}")
         summary.pop("regime_line", None)
+        summary.pop("vbooks", None)
         summary["report_path"] = original_path
 
 
