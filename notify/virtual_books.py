@@ -86,63 +86,112 @@ def _d(v) -> str:
     return pd.Timestamp(v).date().isoformat() if v is not None else ""
 
 
-def daily_table(ledger: LedgerResult, books: list[BookSpec], benchmark: str) -> list[list]:
-    """전략비교_일일 탭: 날짜·QQQ 국면 + 다섯 장부 총자산 / 누적 수익률 / QQQ 대비 / 고점 대비 낙폭 (오래된 날 → 최근)."""
+def _yn(v) -> str:
+    return "" if v is None else ("예" if v else "아니오")
+
+
+def daily_table(ledger: LedgerResult, books: list[BookSpec], benchmark: str, extra: list[dict] | None = None) -> list[list]:
+    """전략비교_일일 탭: 날짜·QQQ 국면 + 장부별 총자산 / 누적 수익률 / QQQ 대비 / 고점 대비 낙폭 (오래된 날 → 최근).
+
+    extra: 추천 따라하기 장부들 [{name, start, daily(DataFrame: value·cum_return_pct·drawdown_pct)}] — 시작일이
+    다를 수 있어 "QQQ 대비"는 그 장부 시작일부터 잰 QQQ 그냥 보유 수익과 비교한다. 장부가 없는 날은 빈칸.
+    """
+    extra = extra or []
     names = [b.name for b in books]
-    others = [n for n in names if n != benchmark]
+    all_names = names + [x["name"] for x in extra]
+    others = [n for n in all_names if n != benchmark]
     header = (["날짜", "QQQ 종가", "QQQ 200일선", "국면", "전환 장부 보유"]
-              + [f"{n} 총자산($)" for n in names]
-              + [f"{n} 누적(%)" for n in names]
+              + [f"{n} 총자산($)" for n in all_names]
+              + [f"{n} 누적(%)" for n in all_names]
               + [f"{n} QQQ 대비(%p)" for n in others]
-              + [f"{n} 낙폭(%)" for n in names])
+              + [f"{n} 낙폭(%)" for n in all_names])
     switch_names = [b.name for b in books if b.kind == SMA_SWITCH]
     dailies = {n: ledger.books[n].daily for n in names}
-    bench = dailies[benchmark]["cum_return_pct"]
+    dailies.update({x["name"]: x["daily"] for x in extra})
+    bench_value = dailies[benchmark]["value"]
+    starts = {n: dailies[n].index[0] for n in names}
+    starts.update({x["name"]: pd.Timestamp(x["start"]) for x in extra})
+
+    def cell(n, d, col):
+        df = dailies[n]
+        return _r(df.at[d, col]) if d in df.index else ""
+
+    def vs_bench(n, d):
+        df = dailies[n]
+        if d not in df.index or starts[n] not in bench_value.index:
+            return ""
+        if n in names:  # 기존 5개 장부는 시작일이 같다 — 예전 계산 그대로
+            bench_cum = dailies[benchmark].at[d, "cum_return_pct"]
+        else:
+            bench_cum = (bench_value.at[d] / bench_value.at[starts[n]] - 1.0) * 100.0
+        return _r(df.at[d, "cum_return_pct"] - bench_cum)
+
+    dates = sorted(set().union(*[set(df.index) for df in dailies.values()]))
     rows = [header]
-    for d in dailies[names[0]].index:
+    for d in dates:
         r = ledger.regime.loc[d]
-        held = "·".join(dict.fromkeys(dailies[n].at[d, "holding"] for n in switch_names))
+        held = "·".join(dict.fromkeys(dailies[n].at[d, "holding"] for n in switch_names if d in dailies[n].index))
         rows.append(
             [_d(d), _r(r["close"]), _r(r["sma"]), _side_word(r["above"] == 1.0), held]
-            + [_r(dailies[n].at[d, "value"]) for n in names]
-            + [_r(dailies[n].at[d, "cum_return_pct"]) for n in names]
-            + [_r(dailies[n].at[d, "cum_return_pct"] - bench.at[d]) for n in others]
-            + [_r(dailies[n].at[d, "drawdown_pct"]) for n in names]
+            + [cell(n, d, "value") for n in all_names]
+            + [cell(n, d, "cum_return_pct") for n in all_names]
+            + [vs_bench(n, d) for n in others]
+            + [cell(n, d, "drawdown_pct") for n in all_names]
         )
     return rows
 
 
-def trades_table(ledger: LedgerResult, books: list[BookSpec]) -> list[list]:
-    """매매기록 탭: 장부 이름, 신호일, 체결일, 구분, 종목, 수량, 가격, 수수료, 실현손익, 사유 (체결일 → 장부 순)."""
+def trades_table(ledger: LedgerResult, books: list[BookSpec], extra: list[dict] | None = None) -> list[list]:
+    """매매기록 탭: 장부 이름, 신호일, 체결일, 구분, 종목, 수량, 가격, 수수료, 실현손익, 사유, 브리핑 추천에도 있었음.
+
+    extra(추천 따라하기 장부)의 체결·"자리 없음" 행도 함께 넣는다. SGOV(남는 현금) 매매는 넣지 않는다.
+    "브리핑 추천에도 있었음"은 추천 따라하기 장부만 예/아니오(그날 브리핑 기록이 없으면 빈칸).
+    """
+    extra = extra or []
     order = {b.name: i for i, b in enumerate(books)}
-    trades = [t for b in books for t in ledger.books[b.name].trades]
-    trades.sort(key=lambda t: (t["fill_date"], order[t["book"]], 0 if t["side"] == "매도" else 1))
-    rows = [["장부", "신호일", "체결일", "구분", "종목", "수량", "가격($)", "수수료($)", "실현손익($)", "사유"]]
+    order.update({x["name"]: len(books) + i for i, x in enumerate(extra)})
+    trades = [t for b in books for t in ledger.books[b.name].trades] + [t for x in extra for t in x["trades"]]
+    trades.sort(key=lambda t: (pd.Timestamp(t["fill_date"]), order[t["book"]], 0 if t["side"] == "매도" else 1))
+    rows = [["장부", "신호일", "체결일", "구분", "종목", "수량", "가격($)", "수수료($)", "실현손익($)", "사유",
+             "브리핑 추천에도 있었음"]]
     for t in trades:
         rows.append([t["book"], _d(t["signal_date"]), _d(t["fill_date"]), t["side"], t["ticker"], int(t["qty"]),
-                     _r(t["price"], 4), _r(t["commission"]), _r(t["realized_pnl"]), t["reason"]])
+                     _r(t["price"], 4), _r(t["commission"]), _r(t["realized_pnl"]), t["reason"], _yn(t.get("in_briefing"))])
     return rows
 
 
-def summary_table(ledger: LedgerResult, meta: dict) -> list[list]:
+def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = None) -> list[list]:
     """전략요약 탭: 장부별 누적 수익·연환산·최대 낙폭·전환 횟수 + 세후 값, 아래에 시작 조건·가정.
 
     meta: {start_krw, start_fx, fx_date, initial_usd, updated_at, min_days_for_annualized, notes([str])}
+    extra: 추천 따라하기 장부 [{name, start, summary, meta}] — 이 장부들만 완료 거래 수·승률·평균 보유일·
+    SGOV 보유액 열을 채운다(전환 횟수는 비움).
     """
+    extra = extra or []
     rows = [["장부", "시작일", "기준일", "시작 자금($)", "총자산($)", "누적 수익(%)", "연환산(%)", "최대 낙폭(%)",
              "최대 낙폭일", "전환 횟수", "현재 보유", "납부 세금 누적($)",
-             "청산 가정 세후 추정($)", "청산 가정 세후 수익(%)"]]
+             "청산 가정 세후 추정($)", "청산 가정 세후 수익(%)", "완료 거래 수", "승률(%)", "평균 보유일", "SGOV 보유액($)"]]
+
+    def base(s, switches):
+        return [s["book"], _d(s["start"]), _d(s["end"]), _r(s["initial_usd"]), _r(s["value"]), _r(s["cum_return_pct"]),
+                _r(s["cagr_pct"]), _r(s["mdd_pct"]), _d(s["mdd_date"]), switches, s["holding"],
+                _r(s["tax_cum"]), _r(s["value_after_tax_liq"]),
+                _r((s["value_after_tax_liq"] / s["initial_usd"] - 1.0) * 100.0)]
+
     for s in ledger.summaries:
-        rows.append([
-            s["book"], _d(s["start"]), _d(s["end"]), _r(s["initial_usd"]), _r(s["value"]), _r(s["cum_return_pct"]),
-            _r(s["cagr_pct"]), _r(s["mdd_pct"]), _d(s["mdd_date"]), int(s["switches"]), s["holding"],
-            _r(s["tax_cum"]), _r(s["value_after_tax_liq"]),
-            _r((s["value_after_tax_liq"] / s["initial_usd"] - 1.0) * 100.0),
-        ])
+        rows.append(base(s, int(s["switches"])) + ["", "", "", ""])
+    for x in extra:
+        s = x["summary"]
+        rows.append(base(s, "") + [int(s["completed"]), _r(s["win_rate_pct"], 1), _r(s["avg_hold_days"], 1), _r(s["sgov_value"])])
     rows.append([])
     rows.append(["시작 조건", f"장부당 {meta['start_krw']:,.0f}원 ÷ {meta['start_fx']:,.2f}원/$ ({meta['fx_date']}) "
                  f"= ${meta['initial_usd']:,.2f}, 이후 달러 운용"])
     rows.append(["config 고정값", f"start_date: \"{_d(ledger.start)}\"  start_fx: {meta['start_fx']!r}"])
+    for x in extra[:1]:  # 추천 따라하기 장부들은 시작일·환율을 함께 쓴다
+        m = x["meta"]
+        rows.append(["시작 조건(추천 따라하기)", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
+                     f"= ${m['initial_usd']:,.2f}, 이후 달러 운용"])
+        rows.append(["config 고정값(picks)", f"start_date: \"{_d(x['start'])}\"  start_fx: {m['start_fx']!r}"])
     rows.append(["갱신", meta["updated_at"]])
     rows.append(["연환산", f"시작 후 {meta['min_days_for_annualized']}일 미만이면 비움"])
     for n in meta.get("notes", []):

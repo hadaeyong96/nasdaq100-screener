@@ -66,3 +66,16 @@ def write_tables(client, sheet_id: str, tables: dict[str, list[list]]) -> dict[s
             ws.update(values=padded, range_name="A1", value_input_option="RAW")
         out[name] = len(padded)
     return out
+
+
+def read_tables(client, sheet_id: str, tabs: tuple[str, ...] = ALLOWED_TABS) -> dict[str, list[list]]:
+    """가상 장부 탭을 읽기만 한다 (DB 복구용 — engine.picks_books.recover_from_tables).
+
+    입력: client, sheet_id, tabs(허용 세 탭 중) / 출력: {탭 이름: get_all_values() 결과}
+    예외: 허용 탭이 아니면 VirtualBooksSheetForbiddenError
+    """
+    bad = [t for t in tabs if t not in ALLOWED_TABS]
+    if bad:
+        raise VirtualBooksSheetForbiddenError(f"가상 장부 탭 외에는 읽지 않습니다: {bad}")
+    spreadsheet = client.open_by_key(sheet_id)
+    return {t: spreadsheet.worksheet(t).get_all_values() for t in tabs}

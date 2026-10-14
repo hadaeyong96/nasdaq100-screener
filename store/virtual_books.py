@@ -117,3 +117,127 @@ def record_alert(conn: sqlite3.Connection, kind: str, key: str, sent_at: str) ->
     """보낸 알림 기록 (실제로 보낸 뒤에만 부른다)."""
     conn.execute("INSERT OR IGNORE INTO alerts (kind, key, sent_at) VALUES (?, ?, ?)", (kind, key, sent_at))
     conn.commit()
+
+
+# ── 추천 따라하기 장부 (core/picks_book.py) — 하루씩 이어 가므로 표를 통째로 바꾸지 않고 쌓는다 ──────────
+
+import json  # noqa: E402
+
+import pandas as pd  # noqa: E402
+
+_PICKS_DAILY_COLS = [
+    "book", "date", "holding", "qty", "cash", "value", "cum_return_pct", "drawdown_pct", "realized_ytd",
+    "tax_cum", "value_after_tax_liq", "dividends_cum", "sgov_value",
+]
+_PICKS_TRADE_COLS = [
+    "book", "signal_date", "fill_date", "side", "ticker", "qty", "price", "commission", "amount", "realized_pnl",
+    "reason", "kind", "in_briefing", "entry_date",
+]
+_PICKS_SIGNAL_COLS = ["book", "date", "ticker", "kind", "stage", "score", "note"]
+
+
+def _ensure_picks_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS picks_state (book TEXT PRIMARY KEY, state_json TEXT, last_date TEXT);
+        CREATE TABLE IF NOT EXISTS picks_daily (
+            book TEXT, date TEXT, holding TEXT, qty INTEGER, cash REAL, value REAL, cum_return_pct REAL,
+            drawdown_pct REAL, realized_ytd REAL, tax_cum REAL, value_after_tax_liq REAL, dividends_cum REAL,
+            sgov_value REAL, PRIMARY KEY (book, date)
+        );
+        CREATE TABLE IF NOT EXISTS picks_trades (
+            book TEXT, signal_date TEXT, fill_date TEXT, side TEXT, ticker TEXT, qty INTEGER, price REAL,
+            commission REAL, amount REAL, realized_pnl REAL, reason TEXT, kind TEXT, in_briefing INTEGER,
+            entry_date TEXT, PRIMARY KEY (book, fill_date, ticker, side, kind)
+        );
+        CREATE TABLE IF NOT EXISTS picks_signals (
+            book TEXT, date TEXT, ticker TEXT, kind TEXT, stage TEXT, score REAL, note TEXT,
+            PRIMARY KEY (book, date, ticker, kind, stage)
+        );
+        CREATE TABLE IF NOT EXISTS rec_log (date TEXT, side TEXT, ticker TEXT, PRIMARY KEY (date, side, ticker));
+        """
+    )
+
+
+def _enc(o):
+    if isinstance(o, pd.Timestamp):
+        return {"__ts__": o.isoformat()}
+    if hasattr(o, "item"):  # numpy 숫자
+        return o.item()
+    raise TypeError(f"직렬화할 수 없는 값: {type(o)}")
+
+
+def _dec(d: dict):
+    return pd.Timestamp(d["__ts__"]) if set(d) == {"__ts__"} else d
+
+
+def dump_book(book: dict) -> str:
+    """장부 상태 dict → JSON 문자열 (Timestamp 보존)."""
+    return json.dumps(book, default=_enc, ensure_ascii=False)
+
+
+def load_book_json(text: str) -> dict:
+    """JSON 문자열 → 장부 상태 dict (Timestamp 복원)."""
+    return json.loads(text, object_hook=_dec)
+
+
+def load_picks_book(conn: sqlite3.Connection, book: str) -> dict | None:
+    """저장된 장부 상태 (없으면 None)."""
+    _ensure_picks_schema(conn)
+    row = conn.execute("SELECT state_json FROM picks_state WHERE book = ?", (book,)).fetchone()
+    return load_book_json(row[0]) if row else None
+
+
+def _cell(v):
+    if isinstance(v, pd.Timestamp):
+        return v.date().isoformat()
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, float) and v != v:  # NaN
+        return None
+    return v.item() if hasattr(v, "item") else v
+
+
+def save_picks_day(conn: sqlite3.Connection, book: dict, daily_rows: list[dict], trades: list[dict],
+                   signals: list[dict]) -> None:
+    """장부 상태 덮어쓰기 + 일별·매매·신호 행 쌓기(같은 키면 바꿔 쓴다) — 한 트랜잭션."""
+    _ensure_picks_schema(conn)
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO picks_state (book, state_json, last_date) VALUES (?, ?, ?)",
+                     (book["name"], dump_book(book), _cell(book.get("last_date"))))
+        for table, cols, rows in (("picks_daily", _PICKS_DAILY_COLS, daily_rows),
+                                  ("picks_trades", _PICKS_TRADE_COLS, trades),
+                                  ("picks_signals", _PICKS_SIGNAL_COLS, signals)):
+            conn.executemany(
+                f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                [tuple(_cell(r.get(c)) if c != "stage" else (r.get(c) or "") for c in cols) for r in rows],
+            )
+
+
+def picks_rows(conn: sqlite3.Connection, table: str, book: str) -> list[dict]:
+    """picks_daily|picks_trades|picks_signals 의 한 장부 행 (날짜 오름차순)."""
+    cols = {"picks_daily": _PICKS_DAILY_COLS, "picks_trades": _PICKS_TRADE_COLS, "picks_signals": _PICKS_SIGNAL_COLS}[table]
+    _ensure_picks_schema(conn)
+    order = {"picks_daily": "date", "picks_trades": "fill_date, rowid", "picks_signals": "date, ticker"}[table]
+    cur = conn.execute(f"SELECT {', '.join(cols)} FROM {table} WHERE book = ? ORDER BY {order}", (book,))
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def save_rec_log(conn: sqlite3.Connection, date: str, buys: list[str], sells: list[str]) -> None:
+    """그날 브리핑 매수·매도 추천 티커 (같은 날 다시 실행하면 바꿔 쓴다)."""
+    _ensure_picks_schema(conn)
+    with conn:
+        conn.execute("DELETE FROM rec_log WHERE date = ?", (date,))
+        conn.executemany("INSERT OR IGNORE INTO rec_log (date, side, ticker) VALUES (?, ?, ?)",
+                         [(date, "day", "")] + [(date, "buy", t) for t in buys] + [(date, "sell", t) for t in sells])
+
+
+def load_rec_log(conn: sqlite3.Connection) -> dict[str, dict]:
+    """{날짜: {"buy": set, "sell": set}} — 기록한 날짜만(추천 0건인 날도 "day" 표시 행으로 남는다)."""
+    _ensure_picks_schema(conn)
+    out: dict[str, dict] = {}
+    for d, side, t in conn.execute("SELECT date, side, ticker FROM rec_log").fetchall():
+        rec = out.setdefault(d, {"buy": set(), "sell": set()})
+        if side in rec:
+            rec[side].add(t)
+    return out
