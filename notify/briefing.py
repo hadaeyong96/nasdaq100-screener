@@ -10,6 +10,10 @@ from __future__ import annotations
 # 단체방 공개용 고지 문구 (텔레그램 본문·공개 HTML 맨 아래 모두 이 상수를 쓴다).
 PUBLIC_DISCLAIMER = "개인 학습용 참고 자료이며 투자 권유가 아닙니다. 투자 판단과 책임은 본인에게 있습니다."
 
+# 가상 장부 국면 한 줄(notify/virtual_books.regime_line)의 머리말 — 제목 바로 아래에 두고,
+# 텔레그램 첨부 설명(notify.telegram.report_caption)에도 남긴다.
+REGIME_LINE_PREFIX = "오늘 국면:"
+
 # config.yaml report 섹션이 없을 때(구버전 테스트 fixture 등)만 쓰는 기본값 — 실제 값은 config.yaml에서 읽는다.
 _DEFAULT_REPORT_TITLES = {
     "title": "데이터 투자 브리핑",
@@ -132,6 +136,8 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
         date_str = "알수없음"
 
     lines = [f"📊 {report_titles(cfg)['short_title']} · {date_str} 마감 · {mode_label}"]
+    if summary.get("regime_line"):  # 가상 장부 국면 한 줄 (live, engine.virtual_books — 실패하면 없음)
+        lines.append(summary["regime_line"])
     if summary.get("rebuilt_from"):
         lines.append(f"🔁 체결 기록 변경 반영 정정본 ({summary['rebuilt_from']}부터 재계산)")
 

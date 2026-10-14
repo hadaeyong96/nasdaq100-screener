@@ -161,6 +161,8 @@ tr.why td{background:var(--soft);white-space:normal;padding:10px 14px}
 footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var(--line);padding-top:10px}
 .stale-banner{background:var(--sell);color:#fff;font-weight:700;font-size:14px;
   border-radius:8px;padding:10px 14px;margin-bottom:16px}
+.regime-line{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:14px;
+  font-size:14px;font-weight:700}
 
 /* ── 휴대폰 화면: 표를 카드로 ───────────────── */
 .tabs{position:sticky;top:0;z-index:5;background:var(--paper);padding-top:env(safe-area-inset-top,0)}
@@ -325,6 +327,10 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 <div class="stale-banner">
   데이터 지연: 기대 기준일 {{ expected_date_str }}, 실제 {{ actual_date_str }}. 오늘은 매매 신호 없음
 </div>
+{% endif %}
+
+{% if regime_line %}
+<div class="regime-line">{{ regime_line }}</div>
 {% endif %}
 
 <header>

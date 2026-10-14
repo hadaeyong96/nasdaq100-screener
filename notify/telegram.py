@@ -38,7 +38,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from notify.briefing import report_titles
+from notify.briefing import REGIME_LINE_PREFIX, report_titles
 from store import db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,13 +83,13 @@ def report_caption(text: str, limit: int = MAX_CAPTION_LEN) -> str:
 
     텔레그램은 보고서 파일 한 통만 보낸다(본문 글은 보내지 않는다, 2026-10-01 사용자 확정).
     첨부만 봐도 무슨 파일인지 알 수 있게 본문 첫 줄(📊 제목 · 날짜 · 모드)과, 놓치면
-    안 되는 정정본(🔁)·오류 경고(⚠️) 줄만 남긴다. limit자를 넘으면 자른다.
+    안 되는 가상 장부 국면 줄("오늘 국면:")·정정본(🔁)·오류 경고(⚠️) 줄만 남긴다. limit자를 넘으면 자른다.
     출력 예: "📊 데이터브리핑 · 9/30(수) 마감 · 실전"
     """
     lines = [line for line in text.strip().split("\n") if line.strip()]
     if not lines:
         return ""
-    kept = [lines[0]] + [line for line in lines[1:] if line.startswith(("🔁", "⚠️"))]
+    kept = [lines[0]] + [line for line in lines[1:] if line.startswith(("🔁", "⚠️", REGIME_LINE_PREFIX))]
     caption = "\n".join(kept)
     return caption if len(caption) <= limit else caption[: limit - 1] + "…"
 
@@ -225,6 +225,23 @@ def notify_ops_error(message: str) -> bool:
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
         print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 오류 알림을 보낼 수 없습니다. ({env_status()})")
+        return False
+    return all(_send_text(token, chat_id, chunk) for chunk in split_message(message))
+
+
+def send_alert_text(message: str, force_no_send: bool = False) -> bool:
+    """개인 채팅에 짧은 알림 글 한 통 (가상 장부 전환 신호·낙폭 알림, engine/virtual_books.py).
+
+    입력: message, force_no_send(--no-send면 보내지 않고 False)
+    출력: 실제로 다 보냈으면 True. 토큰이 없거나 실패하면 False(호출부가 알림 기록을 남기지 않아
+         다음 실행에서 다시 시도한다). 중복 방지는 호출부(가상 장부 DB alerts 표)가 맡는다.
+    """
+    if force_no_send:
+        return False
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+    if not token or not chat_id:
+        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 알림을 보내지 않습니다. ({env_status()})")
         return False
     return all(_send_text(token, chat_id, chunk) for chunk in split_message(message))
 
