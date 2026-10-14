@@ -19,7 +19,7 @@ VBOOKS_DB_PATH = ROOT / "data" / "virtual_books.db"
 
 _DAILY_COLS = [
     "book", "date", "holding", "qty", "close", "cash", "value", "cum_return_pct", "drawdown_pct",
-    "realized_ytd", "tax_cum", "value_after_tax", "value_after_tax_liq", "dividends_cum",
+    "realized_ytd", "tax_cum", "value_after_tax_liq", "dividends_cum",
 ]
 _TRADE_COLS = [
     "book", "signal_date", "fill_date", "side", "ticker", "qty", "price", "commission", "amount",
@@ -41,7 +41,7 @@ def connect(db_path: Path = VBOOKS_DB_PATH) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS daily (
             book TEXT, date TEXT, holding TEXT, qty INTEGER, close REAL, cash REAL, value REAL,
             cum_return_pct REAL, drawdown_pct REAL, realized_ytd REAL, tax_cum REAL,
-            value_after_tax REAL, value_after_tax_liq REAL, dividends_cum REAL,
+            value_after_tax_liq REAL, dividends_cum REAL,
             PRIMARY KEY (book, date)
         );
         CREATE TABLE IF NOT EXISTS trades (

@@ -164,20 +164,56 @@ def test_dividend_credited_after_withholding_to_shares_held_before_ex_date():
     assert d.at[ex, "cash"] - d.at[closes.index[234], "cash"] == pytest.approx(qty * 0.85)
 
 
-def test_year_end_tax_on_realized_gain_not_deducted_from_cash():
+def test_year_end_tax_formula_on_realized_gain():
     closes, divs = _frames(n=300, start="2022-01-03")  # 첫 전환 체결(254)과 2022 연말(259)이 겹치게
     start = closes.index[230]
     led = vbc.run_ledger(_books(), closes, divs, start, _params(), _year_ends(closes.index))
     book = led.books["TQQQ 200일선 전환"]
-    sells = [t for t in book.trades if t["side"] == vbc.SIDE_SELL]
+    sells = [t for t in book.trades if t["side"] == vbc.SIDE_SELL and t["kind"] == vbc.KIND_SWITCH]
     year = sells[0]["fill_date"].year
     realized = sum(t["realized_pnl"] for t in sells if t["fill_date"].year == year)
     assert book.taxes[year]["tax"] == pytest.approx(max(realized, 0) * 0.22)
-    last = book.daily.iloc[-1]
-    assert last["value_after_tax"] == pytest.approx(last["value"] - last["tax_cum"])
-    assert last["value"] == pytest.approx(last["cash"] + last["qty"] * last["close"])  # 세금은 현금에서 안 뺌
     hold = led.books["QQQ 그냥 보유"]
     assert all(v["tax"] == 0 for v in hold.taxes.values())  # 그냥 보유는 실현 없음
+
+
+def _tax_case():
+    """QLD로 이익을 낸 뒤 12/20 SGOV로 전환 → 12/30 연말 세금이 남은 현금보다 커서 SGOV 일부 매도."""
+    idx = pd.bdate_range("2022-12-01", "2023-01-13")
+    k = np.arange(len(idx), dtype=float)
+    drop = idx >= pd.Timestamp("2022-12-19")
+    qqq = np.where(drop, 50.0, 100.0 + k)
+    qld = np.where(idx >= pd.Timestamp("2022-12-21"), 80.0, 50.0 + 2 * k)
+    closes = pd.DataFrame({"QQQ": qqq, "QLD": qld, "TQQQ": qld, "SGOV": 100.0}, index=idx)
+    divs = pd.DataFrame(0.0, index=idx, columns=TICKERS)
+    books = [vbc.BookSpec("QLD 200일선 전환", vbc.SMA_SWITCH, "QLD")]
+    params = vbc.LedgerParams(initial_usd=70_000.0, sma_days=3)
+    led = vbc.run_ledger(books, closes, divs, pd.Timestamp("2022-12-07"), params, {pd.Timestamp("2022-12-30")})
+    return led.books["QLD 200일선 전환"], led
+
+
+def test_year_end_tax_deducted_from_cash_selling_shares_when_short():
+    book, led = _tax_case()
+    d = book.daily
+    ye, before = pd.Timestamp("2022-12-30"), pd.Timestamp("2022-12-29")
+    switch_sell = next(t for t in book.trades if t["kind"] == vbc.KIND_SWITCH and t["side"] == vbc.SIDE_SELL)
+    assert switch_sell["fill_date"] == pd.Timestamp("2022-12-20")  # 12/19 신호 → 12/20 종가
+    tax = book.taxes[2022]["tax"]
+    assert tax == pytest.approx(0.22 * switch_sell["realized_pnl"]) and tax > d.at[before, "cash"]
+    tax_sale = next(t for t in book.trades if t["kind"] == vbc.KIND_TAX)
+    assert tax_sale["fill_date"] == ye and tax_sale["ticker"] == "SGOV" and tax_sale["reason"].startswith("2022년 세금 납부 매도")
+    short = tax - d.at[before, "cash"]
+    assert tax_sale["qty"] == math.ceil(short / (100.0 * (1 - 0.0007)))
+    assert d.at[ye, "qty"] == d.at[before, "qty"] - tax_sale["qty"]
+    assert 0 <= d.at[ye, "cash"] < 100.0
+    assert d.at[ye, "cash"] == pytest.approx(d.at[before, "cash"] + tax_sale["amount"] - tax)
+    assert d.at[ye, "value"] == pytest.approx(d.at[before, "value"] - tax - tax_sale["commission"])  # SGOV 가격 그대로
+    assert d.at[ye, "tax_cum"] == pytest.approx(tax)
+    # 납부용 매도 손익(매수 수수료 몫만큼 손실)은 다음 해 장부로
+    assert d.at[ye, "realized_ytd"] == pytest.approx(tax_sale["realized_pnl"]) and tax_sale["realized_pnl"] < 0
+    assert d["realized_ytd"].iat[-1] == pytest.approx(tax_sale["realized_pnl"])
+    assert led.summaries[0]["switches"] == 1  # 세금 납부 매도는 전환 횟수에서 뺀다
+    assert led.summaries[0]["tax_cum"] == pytest.approx(tax)
 
 
 def test_liquidation_after_tax_estimate_for_hold_book():

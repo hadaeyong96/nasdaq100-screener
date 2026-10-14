@@ -130,18 +130,19 @@ def summary_table(ledger: LedgerResult, meta: dict) -> list[list]:
     meta: {start_krw, start_fx, fx_date, initial_usd, updated_at, min_days_for_annualized, notes([str])}
     """
     rows = [["장부", "시작일", "기준일", "시작 자금($)", "총자산($)", "누적 수익(%)", "연환산(%)", "최대 낙폭(%)",
-             "최대 낙폭일", "전환 횟수", "현재 보유", "확정 세금 누적($)", "세후 총자산($)",
+             "최대 낙폭일", "전환 횟수", "현재 보유", "납부 세금 누적($)",
              "청산 가정 세후 추정($)", "청산 가정 세후 수익(%)"]]
     for s in ledger.summaries:
         rows.append([
             s["book"], _d(s["start"]), _d(s["end"]), _r(s["initial_usd"]), _r(s["value"]), _r(s["cum_return_pct"]),
             _r(s["cagr_pct"]), _r(s["mdd_pct"]), _d(s["mdd_date"]), int(s["switches"]), s["holding"],
-            _r(s["tax_cum"]), _r(s["value_after_tax"]), _r(s["value_after_tax_liq"]),
+            _r(s["tax_cum"]), _r(s["value_after_tax_liq"]),
             _r((s["value_after_tax_liq"] / s["initial_usd"] - 1.0) * 100.0),
         ])
     rows.append([])
     rows.append(["시작 조건", f"장부당 {meta['start_krw']:,.0f}원 ÷ {meta['start_fx']:,.2f}원/$ ({meta['fx_date']}) "
                  f"= ${meta['initial_usd']:,.2f}, 이후 달러 운용"])
+    rows.append(["config 고정값", f"start_date: \"{_d(ledger.start)}\"  start_fx: {meta['start_fx']!r}"])
     rows.append(["갱신", meta["updated_at"]])
     rows.append(["연환산", f"시작 후 {meta['min_days_for_annualized']}일 미만이면 비움"])
     for n in meta.get("notes", []):

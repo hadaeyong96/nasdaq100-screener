@@ -15,8 +15,10 @@
   수수료 = 체결금액 × 편도 수수료율. 매수 원가(취득가)는 수수료 포함.
 - 분배금: 배당락일 직전 거래일 종가까지 들고 있던 주식 수 × 주당 분배금 × (1 − 원천징수율)을
   배당락일 현금에 더한다(재투자 안 함).
-- 세금: 그해 마지막 거래일(전환 체결 뒤) 실현 순이익(손실과 상계, 이월결손 없음, 공제 무시) × 세율.
-  장부 현금에서 빼지 않고 "확정 세금 누적"으로 따로 쌓는다(연말 가상 계산).
+- 세금 (sealed-a B1·core.l1b.simulate와 같은 방식): 그해 마지막 거래일(전환 체결 뒤) 실현 순이익
+  (손실과 상계, 이월결손 없음, 공제 무시) × 세율을 장부 현금에서 실제로 뺀다. 현금이 모자라면 보유
+  종목을 정수 주식으로 필요한 만큼 팔아 낸다(매도 수수료 포함, 원가는 이동평균 비례 차감) — 이 납부용
+  매도 손익은 다음 해 실현 손익으로 넘긴다.
   "청산 가정 세후 추정" = 오늘 종가로 전량 팔았다고 보고(매도 수수료 포함) 올해 실현 + 미실현
   이익에 세금을 매긴 값 — 그냥 보유 장부처럼 실현이 없는 장부를 비교하기 위한 값이다.
 
@@ -37,6 +39,9 @@ HOLD = "hold"
 SMA_SWITCH = "sma_switch"
 SIDE_BUY = "매수"
 SIDE_SELL = "매도"
+KIND_START = "start"  # 시작 매수
+KIND_SWITCH = "switch"  # 200일선 전환 (매도·매수)
+KIND_TAX = "tax"  # 연말 세금 납부용 매도
 
 
 @dataclass(frozen=True)
@@ -165,8 +170,8 @@ def simulate_book(
     입력: spec, closes(종목별 종가, 거래일 오름차순 인덱스), dividends(같은 모양, 주당 분배금·없으면 0),
          regime(regime_frame 결과, closes와 같은 인덱스), start(시작일 — closes 안의 거래일 이상 첫 날),
          params, year_end_dates(그해 마지막 거래일 Timestamp 집합)
-    출력: BookResult. daily 열: book, holding, qty, close, cash, value, cum_return_pct, drawdown_pct,
-         realized_ytd, tax_cum, value_after_tax, value_after_tax_liq, dividends_cum
+    출력: BookResult. daily 열: book, holding, qty, close, cash, value(세금 납부 뒤), cum_return_pct,
+         drawdown_pct, realized_ytd, tax_cum, value_after_tax_liq, dividends_cum
     예외: 시작일 이후 행이 없거나, 전환 장부의 직전 거래일 신호가 없으면(200일선 미산출) ValueError
     """
     days = closes.index[closes.index >= start]
@@ -214,6 +219,7 @@ def simulate_book(
             signal_date = prev_d
 
         if target != ticker:
+            kind = KIND_START if ticker is None else KIND_SWITCH
             if ticker is None:
                 reason = "시작 매수 (그냥 보유)" if spec.kind == HOLD else _regime_reason(
                     regime, signal_date, params.signal_ticker, "시작 매수")
@@ -230,7 +236,7 @@ def simulate_book(
                 trades.append({
                     "book": spec.name, "signal_date": signal_date, "fill_date": d, "side": SIDE_SELL,
                     "ticker": ticker, "qty": qty, "price": px, "commission": fee, "amount": proceeds,
-                    "realized_pnl": pnl, "reason": reason,
+                    "realized_pnl": pnl, "reason": reason, "kind": kind,
                 })
                 qty, basis = 0, 0.0
             px = float(closes.at[d, target]) * (1.0 + s)
@@ -242,22 +248,42 @@ def simulate_book(
             trades.append({
                 "book": spec.name, "signal_date": signal_date, "fill_date": d, "side": SIDE_BUY,
                 "ticker": target, "qty": n, "price": px, "commission": fee, "amount": cost,
-                "realized_pnl": None, "reason": reason,
+                "realized_pnl": None, "reason": reason, "kind": kind,
             })
 
-        # 3) 평가
         close = float(closes.at[d, ticker])
-        value = cash + qty * close
 
-        # 4) 연말 세금 (전환 체결 뒤)
+        # 3) 연말 세금 (전환 체결 뒤) — 장부 현금에서 뺀다. 모자라면 보유 종목을 팔아 낸다.
         if d in year_end_dates:
             tax = max(realized_ytd, 0.0) * tr
             taxes[d.year] = {"realized": realized_ytd, "tax": tax, "settled_on": d}
             tax_cum += tax
             realized_ytd = 0.0
+            short = tax - max(cash, 0.0)
+            if short > 1e-9 and qty > 0:
+                px = close * (1.0 - s)
+                n = min(qty, int(math.ceil(short / (px * (1.0 - c)) - 1e-9)))
+                gross = n * px
+                fee = gross * c
+                proceeds = gross - fee
+                cost_out = basis * n / qty
+                pnl = proceeds - cost_out
+                realized_ytd += pnl  # 납부용 매도 손익은 다음 해 장부
+                cash += proceeds
+                qty -= n
+                basis -= cost_out
+                trades.append({
+                    "book": spec.name, "signal_date": d, "fill_date": d, "side": SIDE_SELL,
+                    "ticker": ticker, "qty": n, "price": px, "commission": fee, "amount": proceeds,
+                    "realized_pnl": pnl, "reason": f"{d.year}년 세금 납부 매도 (세금 ${tax:,.2f})", "kind": KIND_TAX,
+                })
+            cash -= tax
+
+        # 4) 평가
+        value = cash + qty * close
 
         liq = qty * close * (1.0 - s) * (1.0 - c)
-        est_tax = max(realized_ytd + (liq - basis), 0.0) * tr
+        est_tax = max(realized_ytd + (liq - basis), 0.0) * tr  # 확정 세금은 이미 현금에서 빠졌다
         peak = max(peak, value)
         rows.append({
             "date": d, "book": spec.name, "holding": ticker, "qty": qty, "close": close, "cash": cash,
@@ -265,8 +291,7 @@ def simulate_book(
             "cum_return_pct": (value / params.initial_usd - 1.0) * 100.0,
             "drawdown_pct": (value / peak - 1.0) * 100.0,
             "realized_ytd": realized_ytd, "tax_cum": tax_cum,
-            "value_after_tax": value - tax_cum,
-            "value_after_tax_liq": cash + liq - tax_cum - est_tax,
+            "value_after_tax_liq": cash + liq - est_tax,
             "dividends_cum": div_cum,
         })
 
@@ -278,7 +303,7 @@ def summarize_book(result: BookResult, params: LedgerParams, min_days_for_annual
     """장부 요약: 누적 수익·연환산·최대 낙폭·전환 횟수 등.
 
     출력: {book, start, end, initial_usd, value, cum_return_pct, cagr_pct(짧으면 None), mdd_pct, mdd_date,
-          switches(전환 체결 횟수 — 시작 매수 제외), holding, tax_cum, value_after_tax, value_after_tax_liq}
+          switches(전환 매도 횟수 — 시작 매수·세금 납부 매도 제외), holding, tax_cum, value_after_tax_liq}
     """
     d = result.daily
     start, end = d.index[0], d.index[-1]
@@ -297,10 +322,9 @@ def summarize_book(result: BookResult, params: LedgerParams, min_days_for_annual
         "cagr_pct": cagr,
         "mdd_pct": float(d["drawdown_pct"].min()),
         "mdd_date": mdd_date,
-        "switches": sum(1 for t in result.trades if t["side"] == SIDE_SELL),
+        "switches": sum(1 for t in result.trades if t["side"] == SIDE_SELL and t["kind"] == KIND_SWITCH),
         "holding": d["holding"].iat[-1],
         "tax_cum": float(d["tax_cum"].iat[-1]),
-        "value_after_tax": float(d["value_after_tax"].iat[-1]),
         "value_after_tax_liq": float(d["value_after_tax_liq"].iat[-1]),
     }
 
