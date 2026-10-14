@@ -647,3 +647,23 @@ def test_explanations_are_collapsed_by_default(tmp_path, cfg):
     guide = html[html.index('id="guide"'):html.index("</section>", html.index('id="guide"'))]
     assert guide.count('<details class="exp">') == 7 and "<h2>" not in guide
     assert "openTarget(location.hash)" not in html and "openFoldFor" not in html
+
+
+def test_check_line_counts_live_warnings_and_hides_when_zero(tmp_path, cfg):
+    """맨 위 "⚠ 확인할 것 n건" 한 줄: 추천 바로 아래, 접기 안 경고 배너와 같은 목록의 건수. 0건이면 없음."""
+    summary = _compact_summary()
+    summary["live_judgment_rows"] = [
+        _live_judgment_row(ticker="AAA", changed=True),
+        _live_judgment_row(ticker="BBB", plan_limit_exceeded=True),
+    ]
+    html = report_html.render_report(summary, cfg, tmp_path).read_text(encoding="utf-8")
+    today = html[html.index('<section class="today"'):html.index('<details class="fold"')]
+    assert '<a class="check-line" href="#fold-detail">⚠ 확인할 것 2건: 판정 변경 1 · 계획 한도 초과 1</a>' in today
+    assert today.index("오늘 매도 추천") < today.index("check-line")
+    detail = html[html.index('id="fold-detail"'):]
+    assert "판정이 바뀐 종목" in detail and "계획 한도 초과" in detail  # 상세는 접기 안 그대로
+
+    html0 = report_html.render_report(_compact_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+    assert 'class="check-line"' not in html0
+    paper = {**summary, "mode": "paper", "mode_label": "모의"}
+    assert 'class="check-line"' not in report_html.render_report(paper, cfg, tmp_path).read_text(encoding="utf-8")

@@ -532,6 +532,13 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "fx_date_str": fx_date_str,
         "fx_is_fallback": fx_is_fallback,
         "live_judgment_rows": live_judgment_rows,
+        # 맨 위 "⚠ 확인할 것 n건" 한 줄 — 접기 안 경고 배너와 같은 목록의 건수만 센다(live 전용, 0건이면 숨김)
+        "check_items": [
+            (label, len(rows))
+            for label, rows in (("판정 변경", changed_judgment_rows), ("계획금액으로 1차 0주", one_share_warning_rows),
+                                ("계획 한도 초과", plan_limit_exceeded_rows))
+            if is_live and rows
+        ],
         "changed_judgment_rows": changed_judgment_rows,
         "one_share_warning_rows": one_share_warning_rows,
         "plan_limit_exceeded_rows": plan_limit_exceeded_rows,

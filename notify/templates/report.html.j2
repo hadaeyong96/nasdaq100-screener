@@ -173,6 +173,8 @@ footer{margin-top:28px;color:var(--mute);font-size:12px;border-top:1px solid var
 .today table.rec .num{text-align:right;white-space:nowrap}
 .today .none{color:var(--mute);font-size:13px;padding:2px 0 6px}
 .today .none-all{font-size:15px;font-weight:700;padding:6px 0}
+.today .check-line{display:block;margin-top:10px;padding:8px 10px;border-radius:6px;background:var(--warn-bg);
+  color:var(--warn);font-weight:700;font-size:14px;text-decoration:none}
 details.fold{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;background:var(--card)}
 details.fold>summary{cursor:pointer;padding:10px 14px;font-weight:700;font-size:14px;list-style:none}
 details.fold>summary::-webkit-details-marker{display:none}
@@ -382,6 +384,9 @@ details.exp[open]>summary{color:var(--info)}
   {% else %}<div class="none">없음</div>{% endif %}
 {% else %}
   <div class="none-all">오늘 매수·매도 추천 없음</div>
+{% endif %}
+{% if check_items %}
+  <a class="check-line" href="#fold-detail">⚠ 확인할 것 {{ check_items|sum(attribute=1) }}건: {% for label, n in check_items %}{{ label }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</a>
 {% endif %}
 </section>
 

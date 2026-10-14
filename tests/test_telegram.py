@@ -452,15 +452,14 @@ def test_send_briefing_failed_document_does_not_record_notification(tmp_path, mo
 
 
 def test_build_report_caption_compact_format():
-    """브리핑 다이어트: 제목 + 국면 줄 + "매수 n(티커) · 매도 n(티커)" — 경고·정정본 줄은 넣지 않는다."""
+    """브리핑 다이어트: 제목 + 국면 줄 + "매수 n(티커) · 매도 n(티커)". 경고·정정본이 없는 날은 이 세 줄뿐."""
     from notify import briefing
 
     summary = {
         "as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전",
         "regime_line": "오늘 국면: QQQ 200일선 위(+10.4%) · 전환 장부 QLD·TQQQ 보유 중",
         "buy_groups": {"b1": [{"ticker": "NVDA"}], "b2": [{"ticker": "AAPL"}, {"ticker": "NVDA"}], "b3": [], "b9": []},
-        "buy_count": 3, "sell_rows": [{"티커": "ROP"}], "rebuilt_from": "2026-10-10",
-        "input_errors": ["계획 기록 오류: 3번째 줄"],
+        "buy_count": 3, "sell_rows": [{"티커": "ROP"}],
     }
     assert briefing.build_report_caption(summary, {}).split("\n") == [
         "📊 데이터브리핑 · 10/13(화) 마감 · 실전",
@@ -469,3 +468,23 @@ def test_build_report_caption_compact_format():
     ]
     empty = {"as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전"}
     assert briefing.build_report_caption(empty, {}).split("\n")[1] == "매수 0 · 매도 0"
+
+
+def test_build_report_caption_adds_rebuilt_and_warning_lines_only_when_present():
+    """해당 있는 날에만: 🔁 정정본(국면 줄 아래), ⚠️ 시트 입력 오류·FRED 누락(맨 아래)."""
+    from notify import briefing
+
+    summary = {
+        "as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전",
+        "regime_line": "오늘 국면: QQQ 200일선 아래(-0.4%) · 전환 장부 SGOV 보유 중",
+        "buy_groups": {}, "buy_count": 0, "sell_rows": [], "rebuilt_from": "2026-10-10",
+        "input_errors": ["계획 기록 오류: 3번째 줄", "체결 기록 오류: 5번째 줄"], "fred_missing": ["DGS10"],
+    }
+    assert briefing.build_report_caption(summary, {}).split("\n") == [
+        "📊 데이터브리핑 · 10/13(화) 마감 · 실전",
+        "오늘 국면: QQQ 200일선 아래(-0.4%) · 전환 장부 SGOV 보유 중",
+        "🔁 체결 기록 변경 반영 정정본 (2026-10-10부터 재계산)",
+        "매수 0 · 매도 0",
+        "⚠️ 시트 오류: 계획 기록 오류: 3번째 줄 외 1건",
+        "⚠️ FRED 지표 수집 실패: DGS10",
+    ]

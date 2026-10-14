@@ -130,14 +130,18 @@ def title_line(summary: dict, cfg: dict) -> str:
 
 
 def build_report_caption(summary: dict, cfg: dict) -> str:
-    """개인 브리핑 보고서 첨부 설명 (브리핑 다이어트): 제목 + 국면 줄 + "매수 n · 매도 n" + 티커만.
+    """개인 브리핑 보고서 첨부 설명 (브리핑 다이어트): 제목 + 국면 줄 + "매수 n · 매도 n" + 티커.
 
     예: 세 줄 — "📊 데이터브리핑 · 10/13(화) 마감 · 실전" / "오늘 국면: …" / "매수 2(NVDA, AAPL) · 매도 1(ROP)"
     추천이 없으면 "매수 0 · 매도 0". 티커는 매수는 차수 순서·중복 제거, 매도는 매도 표 순서.
+    해당 있는 날에만 정정본(🔁, 국면 줄 아래)과 시트 입력 오류·FRED 누락(⚠️, 맨 아래) 줄을 덧붙인다
+    (2026-10-14 사용자 확정) — 없는 날은 세 줄 그대로.
     """
     lines = [title_line(summary, cfg)]
     if summary.get("regime_line"):
         lines.append(summary["regime_line"])
+    if summary.get("rebuilt_from"):
+        lines.append(f"🔁 체결 기록 변경 반영 정정본 ({summary['rebuilt_from']}부터 재계산)")
     buy_groups = summary.get("buy_groups", {})
     buys = list(dict.fromkeys(r["ticker"] for key in _STAGE_ORDER for r in buy_groups.get(key, [])))
     sells = list(dict.fromkeys(r["티커"] for r in summary.get("sell_rows", [])))
@@ -145,6 +149,10 @@ def build_report_caption(summary: dict, cfg: dict) -> str:
     sell_n = len(summary.get("sell_rows", []))
     lines.append(f"매수 {buy_n}" + (f"({', '.join(buys)})" if buys else "")
                  + f" · 매도 {sell_n}" + (f"({', '.join(sells)})" if sells else ""))
+    lines.extend(line for line in (
+        build_input_error_line(summary.get("input_errors", [])),
+        build_fred_missing_line(summary.get("fred_missing", [])),
+    ) if line)
     return "\n".join(lines)
 
 
