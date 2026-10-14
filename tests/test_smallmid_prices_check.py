@@ -197,3 +197,19 @@ def test_step_tiingo_stops_on_monthly_429_without_waiting(tmp_path, monkeypatch)
     assert slept == []
     stop = json.loads((cache / "tiingo_stop.json").read_text(encoding="utf-8"))
     assert stop["last_success"] is None and stop["next_ticker"] == "NEW1" and stop["remaining"] == 2
+
+
+def test_judge_period_smallmid_new_listing_month():
+    # 분사·신규 상장: 첫 보고 달 안(+10일)에 가격 시작, 첫 10-K·10-Q가 1년 안이거나 뒤 → 통과
+    assert pc.judge_period_smallmid("2012-06-30", "2021-12-31", "2012-06-14", "2021-12-31", "2012-04-02") == "맞음(상장 첫 달)"
+    assert pc.judge_period_smallmid("2015-06-30", "2021-12-31", "2015-07-01", "2021-12-31", "2015-08-11") == "맞음(상장 첫 달)"
+    assert pc.judge_period_smallmid("2014-11-30", "2021-12-31", "2014-11-13", "2021-12-31", "2014-11-14") == "맞음(상장 첫 달)"
+    # 오래된 회사의 Tiingo 앞 기록 잘림 → 그대로 앞이 빔
+    assert pc.judge_period_smallmid("2011-05-31", "2016-06-30", "2016-01-04", "2016-08-15", "2009-06-01") == "앞이 빔"
+    # 첫 달 안에 시작해도 오래된 CIK(티커 재사용 가능) → 앞이 빔
+    assert pc.judge_period_smallmid("2014-09-30", "2021-12-31", "2014-09-24", "2021-12-31", "2001-01-01") == "앞이 빔"
+    # 첫 보고 달 + 10일 넘게 늦으면 앞이 빔
+    assert pc.judge_period_smallmid("2015-06-30", "2021-12-31", "2015-07-20", "2021-12-31", "2015-03-04") == "앞이 빔"
+    # 원래 맞음은 그대로, 제출일 모름도 원래 판정
+    assert pc.judge_period_smallmid("2012-06-30", "2021-12-31", "2011-06-01", "2021-12-31", None) == "맞음"
+    assert pc.judge_period_smallmid("2012-06-30", "2021-12-31", "2012-06-14", "2021-12-31", None) == "앞이 빔"

@@ -449,6 +449,27 @@ def max_gap_days(px: pd.DataFrame, first: str, last: str) -> int:
     return int(pd.Series(w).diff().dt.days.max()) if len(w) > 1 else 0
 
 
+NEW_LISTING_TOL_DAYS = 10  # 첫 보고 달 끝 + 이 날수 안에 가격이 시작하면 "상장 첫 달" (TopBuild 2015-07-01 상장·6월 말 보고)
+NEW_REGISTRANT_DAYS = 365  # CIK 첫 10-K·10-Q가 가격 시작 전 이 날수 안(또는 뒤) = 분사·신규 상장 회사
+
+
+def judge_period_smallmid(first: str, last: str, p_first, p_last, first_periodic: str | None) -> str:
+    """S&P 500 점검 judge_period + 상장 첫 달 예외 (순수, 2026-10-13 사용자 결정, 결과 보기 전).
+
+    분사·신규 상장 회사는 첫 보고 달 중간에 상장해 "앞이 빔"으로 걸린다 (A&B·CDK·TopBuild·HighPoint·Aaron's Holdings).
+    "앞이 빔"이면서 가격 시작 ≤ 첫 보고일(달 끝) + 10일이고, CIK 첫 정기 보고(10-K·10-Q)가 가격 시작 전 365일 안이거나
+    그 뒤(새 공개 회사)면 "맞음(상장 첫 달)". 첫 제출이 아니라 정기 보고로 보는 것은 상장 몇 년 전에 S-1만 낸
+    분사 회사(Enova: S-1 2011, 상장 2014-11) 때문. 오래된 회사의 Tiingo 앞 기록 잘림·티커 재사용은 그대로 "앞이 빔".
+    """
+    dc = sw.judge_period(pd.Timestamp(first), pd.Timestamp(last), p_first, p_last)
+    if dc != "앞이 빔" or not first_periodic:
+        return dc
+    pf = pd.Timestamp(p_first)
+    if pf <= pd.Timestamp(first) + pd.Timedelta(days=NEW_LISTING_TOL_DAYS) and             pd.Timestamp(first_periodic) >= pf - pd.Timedelta(days=NEW_REGISTRANT_DAYS):
+        return "맞음(상장 첫 달)"
+    return dc
+
+
 def step_check() -> None:
     """가격이 있는 CIK마다: 기간 대조(judge_period), 시가총액 중앙값, 편입 기간 안 최대 공백, 편출일 가격 → price_check.csv."""
     t = pd.read_csv(TICKERS_CSV)
@@ -463,7 +484,9 @@ def step_check() -> None:
         check_seal(px, f"prices/{r['cik']}")
         real = px.index[px["volume"].fillna(0) > 0]
         p_first, p_last = px.index.min(), (real[-1] if len(real) else px.index[-1])
-        dc = sw.judge_period(pd.Timestamp(r["first"]), pd.Timestamp(r["last"]), p_first, p_last)
+        fl = filings_table(sub_jsons(int(r["cik"])))
+        ff = fl.loc[fl["form"].isin(["10-K", "10-Q"]), "filing_date"].min()
+        dc = judge_period_smallmid(r["first"], r["last"], p_first, p_last, ff if isinstance(ff, str) else None)
         try:
             mc = sw.shares_median_mcap(int(r["cik"]), pd.DataFrame({"close": raw_close(px)}))
         except Exception:  # noqa: BLE001 — EDGAR 실패는 시가총액 없음으로
@@ -474,7 +497,7 @@ def step_check() -> None:
                                & (px.index <= pd.Timestamp(r["last"]))]))
         # 시가총액은 EDGAR 표지 주식 수가 종류별·단위별로 섞여 믿기 어려워(Compuware 2백만, SunEdison 10^15 달러)
         # 탈락 기준에서 빼고 '확인 필요'로만 남긴다. 탈락은 날짜 대조(티커 재사용: ACET·DV·ESI)와 공백으로.
-        same = dc in ("맞음", "끝이 이름") and gap <= 15
+        same = dc in ("맞음", "맞음(상장 첫 달)", "끝이 이름") and gap <= 15
         rows.append({**row, "price": px["source"].iloc[0] if "source" in px else "yfinance", "ticker": px["ticker"].iloc[0],
                      "price_first": p_first.date(), "price_last": p_last.date(), "date_check": dc,
                      "mcap_median_m": round(mc / 1e6) if mc else None, "mcap_ok": mc_ok, "max_gap_days": gap,

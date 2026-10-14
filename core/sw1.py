@@ -14,11 +14,16 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class Costs:
-    """비용 (퍼센트). D1 설정 그대로: 매수·매도 수수료 0.07%, 환전 0.1%(원→달러, 달러→원 각각)."""
+    """비용 (퍼센트). D1 설정 그대로: 매수·매도 수수료 0.07%, 환전 0.1%(원→달러, 달러→원 각각).
+
+    slippage_pct: 편도 슬리피지 (pead-smallmid). 매수 체결가 = 시가 × (1 + s), 매도 체결가 = 종가 × (1 − s).
+    기본 0이라 SW1 계산은 그대로다.
+    """
 
     buy_commission_pct: float = 0.07
     sell_commission_pct: float = 0.07
     fx_spread_pct: float = 0.1
+    slippage_pct: float = 0.0
 
 
 def buy_index(days: pd.DatetimeIndex, d0: pd.Timestamp) -> int | None:
@@ -118,13 +123,16 @@ def krw_after_cost(usd_ret: np.ndarray | float, fx_buy: np.ndarray | float, fx_s
                    costs: Costs = Costs()) -> np.ndarray | float:
     """원화 1을 넣었을 때 비용·환전 뒤 원화 수익 (세전).
 
-    원→달러 환전(스프레드) → 매수 수수료(shares = 달러 / (1+c) / 시가) → 매도 수수료 → 달러→원 환전.
+    원→달러 환전(스프레드) → 매수 수수료(shares = 달러 / (1+c) / 체결가) → 매도 수수료 → 달러→원 환전.
+    체결가는 슬리피지 반영(매수 시가 × (1+s), 매도 종가 × (1−s)), s = 0이면 SW1과 같다.
     입력: usd_ret(종가/시가 − 1), fx_buy·fx_sell(원/달러). 출력: 원화 수익률.
     """
     f = costs.fx_spread_pct / 100.0
     cb, cs = costs.buy_commission_pct / 100.0, costs.sell_commission_pct / 100.0
+    sl = costs.slippage_pct / 100.0
     usd_in = (1.0 - f) / np.asarray(fx_buy, dtype=float)
-    out = usd_in / (1.0 + cb) * (1.0 + np.asarray(usd_ret, dtype=float)) * (1.0 - cs) * np.asarray(fx_sell, dtype=float) * (1.0 - f)
+    out = (usd_in / (1.0 + cb) * (1.0 + np.asarray(usd_ret, dtype=float)) * (1.0 - sl) / (1.0 + sl) * (1.0 - cs)
+           * np.asarray(fx_sell, dtype=float) * (1.0 - f))
     return out - 1.0
 
 
