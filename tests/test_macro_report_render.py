@@ -106,7 +106,8 @@ def test_every_indicator_has_anchor_links_star_scale_and_explanation(tmp_path, r
         assert not any(sym in scale for sym in ("🟢", "🟡", "🔴"))
         star_li = re.search(r'<li class="cur">(.*?)</li>', scale, re.S).group(1)
         assert f'dot-{row["badge"]["status"]}' in star_li and row["badge"]["label"] in star_li
-        article = re.search(rf'<article id="explain-{slug}">.*?</article>', html, re.S)
+        # 설명은 지표마다 기본 닫힌 접기 (2026-10-14 사용자 요청) — 앵커 id는 접기에 있다
+        article = re.search(rf'<details class="exp" id="explain-{slug}">.*?</article>\s*</details>', html, re.S)
         assert article, f"{slug} 설명 없음"
         body = article.group(0)
         for head in ("① 이게 뭔가요", "② 주식시장에 왜 영향을 주나요", "③ 실제 예시", "④ 지금 수치는 어떻게 읽나요"):
