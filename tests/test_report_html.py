@@ -559,17 +559,18 @@ def test_why_row_follows_sorted_signal_row_in_browser(tmp_path, cfg):
             browser = p.chromium.launch()
             page = browser.new_page()
             page.goto(path.resolve().as_uri(), wait_until="domcontentloaded", timeout=15000)
+            page.locator("#fold-detail > summary").click()  # 상세 표는 접기(기본 닫힘) 안에 있다
             table = page.locator("#all table")  # "전체" 탭이 기본으로 보임(b1은 하위 탭이라 숨김)
             table.locator("thead th", has_text="점수").click()  # 오름차순
             rows = table.locator("tbody tr")
             classes = rows.evaluate_all("els => els.map(e => e.className)")
             tickers = rows.evaluate_all("els => els.map(e => e.dataset.key || '')")
-            # sig/why가 번갈아 나오고, 각 why 앞의 sig가 같은 종목이어야 한다(정렬 후에도 짝이 안 깨짐).
-            assert classes == ["sig", "why"] * 3
-            assert [tickers[i] for i in range(0, 6, 2)] == ["CCC-A1", "AAA-A1", "BBB-A1"]  # 점수 5<20<60
             browser.close()
     except Exception as e:  # pragma: no cover - 브라우저 바이너리가 없는 환경 대비
         pytest.skip(f"playwright 브라우저를 쓸 수 없어 건너뜀: {e}")
+    # sig/why가 번갈아 나오고, 각 why 앞의 sig가 같은 종목이어야 한다(정렬 후에도 짝이 안 깨짐).
+    assert classes == ["sig", "why"] * 3
+    assert [tickers[i] for i in range(0, 6, 2)] == ["CCC-A1", "AAA-A1", "BBB-A1"]  # 점수 5<20<60
 
 
 # ── 브리핑 다이어트 (2026-10-14): 맨 위 오늘 추천 + 나머지는 접기(기본 닫힘) ──────────────
