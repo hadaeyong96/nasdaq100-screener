@@ -159,7 +159,8 @@ def read_closes_guarded(ticker: str, path: Path, allowed: set[str]) -> tuple[pd.
 def read_prices_guarded(ticker: str, path: Path, allowed: set[str]) -> pd.DataFrame:
     """가드를 지키며(2021-12-31 넘는 줄에서 멈춤) 분할 반영 종가·그날 실제 종가를 읽는다.
 
-    출력: DataFrame(index=날짜, close=분할 반영 종가, raw_close=그날 실제 종가, split=그날 분할 비율(없으면 1)).
+    출력: DataFrame(index=날짜, close=분할 반영 종가, raw_close=그날 실제 종가, split=그날 분할 비율(없으면 1),
+          div=주당 분배금(close와 같은 분할 기준)).
     yfinance 저장분은 close가 이미 분할 반영이다(raw_close는 비움). Tiingo 저장분은 raw_close를 그날 이후
     (2021-12-31까지) 분할 비율의 곱으로 나눈다 — 2022년 이후 분할은 구간 안 수익 비율에 영향이 없어 보지 않는다.
     """
@@ -173,6 +174,7 @@ def read_prices_guarded(ticker: str, path: Path, allowed: set[str]) -> pd.DataFr
         tiingo = "raw_close" in head
         i_c = head.index("raw_close") if tiingo else head.index("close")
         i_s = head.index("split_factor") if tiingo else None
+        i_v = head.index("div_cash") if tiingo else (head.index("div") if "div" in head else None)
         for row in rd:
             d = pd.Timestamp(row[i_d][:10])
             if prev is not None and d < prev:
@@ -183,14 +185,15 @@ def read_prices_guarded(ticker: str, path: Path, allowed: set[str]) -> pd.DataFr
             if d < ZONE_FIRST or row[i_c] == "":
                 continue
             sp = float(row[i_s]) if tiingo and row[i_s] not in ("", "0", "0.0") else 1.0
-            rows.append((d, float(row[i_c]), sp))
-    df = pd.DataFrame(rows, columns=["date", "px", "split"]).drop_duplicates("date", keep="last").set_index("date")
+            dv = float(row[i_v]) if i_v is not None and row[i_v] not in ("",) else 0.0
+            rows.append((d, float(row[i_c]), sp, dv))
+    df = pd.DataFrame(rows, columns=["date", "px", "split", "dv"]).drop_duplicates("date", keep="last").set_index("date")
     if tiingo:
         later = df["split"][::-1].cumprod()[::-1].shift(-1).fillna(1.0)  # 다음 날부터 2021-12-31까지 분할 곱
-        df["close"], df["raw_close"] = df["px"] / later, df["px"]
-    else:
-        df["close"], df["raw_close"] = df["px"], float("nan")
-    return df[["close", "raw_close", "split"]]
+        df["close"], df["raw_close"], df["div"] = df["px"] / later, df["px"], df["dv"] / later
+    else:  # yfinance 분배금은 이미 지금 주식 기준(종가와 같은 기준)
+        df["close"], df["raw_close"], df["div"] = df["px"], float("nan"), df["dv"]
+    return df[["close", "raw_close", "split", "div"]]
 
 
 def zone_windows(m: pd.DataFrame) -> dict[str, tuple[pd.Timestamp, pd.Timestamp]]:
