@@ -165,12 +165,14 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
 
     meta: {start_krw, start_fx, fx_date, initial_usd, updated_at, min_days_for_annualized, notes([str])}
     extra: 추천 따라하기 장부 [{name, start, summary, meta}] — 이 장부들만 완료 거래 수·승률·평균 보유일·
-    SGOV 보유액 열을 채운다(전환 횟수는 비움).
+    SGOV 보유액 열을 채운다(전환 횟수는 비움). kind == "momentum"(6개월 강세 따라하기)은 이 장부만
+    교체 횟수·현재 보유 10종목 열을 채운다.
     """
     extra = extra or []
     rows = [["장부", "시작일", "기준일", "시작 자금($)", "총자산($)", "누적 수익(%)", "연환산(%)", "최대 낙폭(%)",
              "최대 낙폭일", "전환 횟수", "현재 보유", "납부 세금 누적($)",
-             "청산 가정 세후 추정($)", "청산 가정 세후 수익(%)", "완료 거래 수", "승률(%)", "평균 보유일", "SGOV 보유액($)"]]
+             "청산 가정 세후 추정($)", "청산 가정 세후 수익(%)", "완료 거래 수", "승률(%)", "평균 보유일", "SGOV 보유액($)",
+             "교체 횟수", "현재 보유 10종목"]]
 
     def base(s, switches):
         return [s["book"], _d(s["start"]), _d(s["end"]), _r(s["initial_usd"]), _r(s["value"]), _r(s["cum_return_pct"]),
@@ -179,19 +181,30 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
                 _r((s["value_after_tax_liq"] / s["initial_usd"] - 1.0) * 100.0)]
 
     for s in ledger.summaries:
-        rows.append(base(s, int(s["switches"])) + ["", "", "", ""])
-    for x in extra:
+        rows.append(base(s, int(s["switches"])) + ["", "", "", "", "", ""])
+    momentum = [x for x in extra if x.get("kind") == "momentum"]
+    picks = [x for x in extra if x.get("kind") != "momentum"]
+    for x in picks:
         s = x["summary"]
-        rows.append(base(s, "") + [int(s["completed"]), _r(s["win_rate_pct"], 1), _r(s["avg_hold_days"], 1), _r(s["sgov_value"])])
+        rows.append(base(s, "") + [int(s["completed"]), _r(s["win_rate_pct"], 1), _r(s["avg_hold_days"], 1), _r(s["sgov_value"]),
+                                   "", ""])
+    for x in momentum:
+        s = x["summary"]
+        rows.append(base(s, "") + ["", "", "", "", int(s["rebalances"]), s["holdings_list"]])
     rows.append([])
     rows.append(["시작 조건", f"장부당 {meta['start_krw']:,.0f}원 ÷ {meta['start_fx']:,.2f}원/$ ({meta['fx_date']}) "
                  f"= ${meta['initial_usd']:,.2f}, 이후 달러 운용"])
     rows.append(["config 고정값", f"start_date: \"{_d(ledger.start)}\"  start_fx: {meta['start_fx']!r}"])
-    for x in extra[:1]:  # 추천 따라하기 장부들은 시작일·환율을 함께 쓴다
+    for x in picks[:1]:  # 추천 따라하기 장부들은 시작일·환율을 함께 쓴다
         m = x["meta"]
         rows.append(["시작 조건(추천 따라하기)", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
                      f"= ${m['initial_usd']:,.2f}, 이후 달러 운용"])
         rows.append(["config 고정값(picks)", f"start_date: \"{_d(x['start'])}\"  start_fx: {m['start_fx']!r}"])
+    for x in momentum:  # 6개월 강세 따라하기는 첫 월말 신호일에 따로 시작한다
+        m = x["meta"]
+        rows.append(["시작 조건(6개월 강세)", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
+                     f"= ${m['initial_usd']:,.2f}, 이후 달러 운용 · 시작일 {_d(x['start'])}(첫 월말 신호일)"])
+        rows.append(["config 고정값(momentum)", f"start_fx: {m['start_fx']!r}"])
     rows.append(["갱신", meta["updated_at"]])
     rows.append(["연환산", f"시작 후 {meta['min_days_for_annualized']}일 미만이면 비움"])
     for n in meta.get("notes", []):

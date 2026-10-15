@@ -137,3 +137,19 @@ def fetch_actions(tickers: list[str], start: date, history_fn=None) -> dict[str,
     if failed:
         raise VirtualBooksDataError("가상 장부 분배금·분할 받기 실패 — " + "; ".join(failed))
     return out
+
+
+def month_end_trading_days(first_year: int, last_year: int) -> set:
+    """각 달의 마지막 NYSE 거래일 Timestamp 집합 (6개월 강세 장부 신호일 — 휴장·주말 반영).
+
+    달력은 미리 정해진 거래소 일정이라 미래 가격 데이터가 아니다(기준일의 월말 여부를 알려면 다음 거래일 달력이 필요).
+    """
+    out = set()
+    for y in range(first_year, last_year + 1):
+        for m in range(1, 13):
+            first = date(y, m, 1)
+            last = (pd.Timestamp(first) + pd.offsets.MonthEnd(0)).date()
+            days = trading_days_between(first, last)
+            if len(days):
+                out.add(pd.Timestamp(days[-1]))
+    return out

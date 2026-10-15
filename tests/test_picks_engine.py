@@ -107,6 +107,7 @@ def cfg(monkeypatch):
     vb.update({"start_date": None, "start_fx": None, "sheet_id_env": "VB_TEST_SHEET_ID"})
     vb["picks"].update({"start_date": None, "start_fx": None,
                         "books": [{"name": B1, "rules": "stub"}, {"name": B2, "rules": "stub"}]})
+    vb["momentum"]["enabled"] = False  # 8번 장부는 tests/test_momentum_book.py에서 따로 본다
     return c
 
 
@@ -155,7 +156,7 @@ def test_first_run_starts_in_sgov_then_fills_next_day_and_writes_sheet(cfg, tmp_
     assert [r for r in th if r[0] == B1][0][-1] == "예"
     summ = client.tabs[vbsheet.TAB_SUMMARY].values
     head = summ[0]
-    assert head[-4:] == ["완료 거래 수", "승률(%)", "평균 보유일", "SGOV 보유액($)"]
+    assert head[-6:] == ["완료 거래 수", "승률(%)", "평균 보유일", "SGOV 보유액($)", "교체 횟수", "현재 보유 10종목"]
     row_b1 = next(r for r in summ if r and r[0] == B1)
     row_qqq = next(r for r in summ if r and r[0] == "QQQ 그냥 보유")
     assert row_b1[head.index("완료 거래 수")] == "0" and float(row_b1[head.index("SGOV 보유액($)")]) > 0

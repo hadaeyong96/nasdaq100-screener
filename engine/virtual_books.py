@@ -180,7 +180,7 @@ def sheet_tables(cfg: dict, ctx: dict, updated_at: str, extra: list[dict] | None
 
 def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets_client=None,
         now_et: datetime | None = None, history_fn=None, fx_fn=None, year_end_fn=None, next_day_fn=None,
-        briefing: dict | None = None, market_fn=None, actions_fn=None) -> dict:
+        briefing: dict | None = None, market_fn=None, actions_fn=None, month_end_fn=None) -> dict:
     """가상 장부 하루 실행 (알림은 아직 보내지 않는다 — send_alerts가 브리핑 뒤에 보낸다).
 
     briefing: 오늘 브리핑 매수·매도 추천 티커 {"buy": [...], "sell": [...]} — 추천 따라하기 장부의
@@ -229,6 +229,11 @@ def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets
                                           actions_fn=actions_fn, fx_fn=fx_fn, year_end_fn=year_end_fn)
         except Exception as exc:
             picks = {"extra": [], "errors": [f"추천 따라하기 장부 오류: {type(exc).__name__}: {exc}"], "warnings": [], "today": {}}
+        # 8번 장부 「6개월 강세 따라하기」 — 따로 잡는다(오류가 나도 다른 장부·브리핑은 그대로)
+        mom = picks_books.run_momentum(cfg, conn, ctx, dry_run=dry_run, market_fn=market_fn, actions_fn=actions_fn,
+                                       fx_fn=fx_fn, year_end_fn=year_end_fn, month_end_fn=month_end_fn)
+        picks = {**picks, "extra": picks["extra"] + mom["extra"], "errors": picks["errors"] + mom["errors"],
+                 "warnings": picks["warnings"] + mom["warnings"]}
         result["picks"] = picks
         result["errors"].extend(picks["errors"])
         result["warnings"].extend(picks["warnings"])

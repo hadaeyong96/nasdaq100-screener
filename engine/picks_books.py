@@ -18,6 +18,7 @@ from datetime import timedelta
 
 import pandas as pd
 
+from core import momentum_book as mb
 from core import picks_book as pb
 from core import state as st
 from core.bollinger_signals import BOLLINGER_RULES, add_bollinger_columns
@@ -268,6 +269,136 @@ def run_picks(cfg: dict, conn, ctx: dict, *, briefing: dict | None, dry_run: boo
         except Exception as exc:  # 장부 하나의 오류가 다른 장부·브리핑을 막지 않게
             out["errors"].append(f"{name} 오류: {type(exc).__name__}: {exc}")
     return out
+
+
+# ── 8번 장부 「6개월 강세 따라하기」 (core/momentum_book.py, 작업 5-2) ───────────────────────
+
+
+def momentum_params(cfg: dict) -> mb.MomentumParams:
+    vb, mo = cfg["virtual_books"], cfg["virtual_books"]["momentum"]
+    return mb.MomentumParams(
+        name=str(mo["name"]), top_n=int(mo["top_n"]), lookback_days=int(mo["lookback_days"]),
+        min_price=float(mo["min_price"]), commission_pct=float(vb["commission_pct"]),
+        slippage_pct=float(vb["slippage_pct"]), tax_rate_pct=float(vb["capital_gains_rate_pct"]),
+        dividend_withholding_pct=float(vb["dividend_withholding_pct"]),
+    )
+
+
+def summarize_momentum(book: dict, daily: pd.DataFrame, min_days_for_annualized: int) -> dict:
+    """전략요약 한 줄 — 기존 키 + 이 장부만 교체 횟수·현재 보유 10종목."""
+    start, end = daily.index[0], daily.index[-1]
+    value = float(daily["value"].iat[-1])
+    days = (end - start).days
+    cagr = ((value / book["initial_usd"]) ** (365.25 / days) - 1.0) * 100.0 if days >= min_days_for_annualized and days > 0 else None
+    return {
+        "book": book["name"], "start": start, "end": end, "initial_usd": book["initial_usd"], "value": value,
+        "cum_return_pct": float(daily["cum_return_pct"].iat[-1]), "cagr_pct": cagr,
+        "mdd_pct": float(daily["drawdown_pct"].min()), "mdd_date": daily["drawdown_pct"].idxmin(), "switches": "-",
+        "holding": daily["holding"].iat[-1], "tax_cum": float(book["tax_cum"]),
+        "value_after_tax_liq": _last_or(daily, "value_after_tax_liq", value),
+        "rebalances": int(book["rebalances"]), "holdings_list": ", ".join(sorted(book["positions"])),
+    }
+
+
+def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, actions_fn=None, fx_fn=None,
+                 year_end_fn=None, month_end_fn=None) -> dict:
+    """「6개월 강세 따라하기」 장부를 기준일까지 하루씩 이어 간다.
+
+    입력: cfg, conn(가상 장부 DB), ctx(engine.virtual_books.compute 결과 — QQQ 거래일·종가·기준일), dry_run,
+         market_fn·actions_fn·fx_fn·year_end_fn·month_end_fn(첫 해, 끝 해 → 월말 거래일 집합)(테스트 주입)
+    출력: {"extra": [시트용 장부 묶음 0~1개], "errors": [str], "warnings": [str]}
+    시작: start_date를 비워 두고, 처음 돈 기준일(armed_date) 이후 첫 월말 신호일에 시작한다(그날 원/달러 종가).
+    """
+    vb = cfg["virtual_books"]
+    mo = vb.get("momentum") or {}
+    out = {"extra": [], "errors": [], "warnings": []}
+    if not mo.get("enabled", False):
+        return out
+    params = momentum_params(cfg)
+    name = params.name
+    try:
+        base = ctx["base_date"]
+        closes_all = ctx["closes"]
+        days_index = closes_all.index
+        qqq = closes_all[str(vb["signal_ticker"])]
+        book = vbstore.load_picks_book(conn, name)
+        if book is None:
+            book = mb.new_book(name, base)
+            days = list(days_index[(days_index >= base) & (days_index <= base)])
+        elif book.get("last_date") is None:
+            days = list(days_index[(days_index >= pd.Timestamp(book["armed_date"])) & (days_index <= base)])
+        else:
+            days = list(days_index[(days_index > pd.Timestamp(book["last_date"])) & (days_index <= base)])
+        held = sorted(set(book["positions"]) | {o["ticker"] for o in book.get("carry_sells", [])})
+        new_daily, new_trades = [], []
+        if days:
+            market = (market_fn or default_market)(cfg, held)
+            out["warnings"].extend(market.get("warnings", []))
+            days, defer_warning = defer_incomplete_last_day(days, market["frames"], list(market["universe"]) + held, days_index)
+            if defer_warning:
+                out["warnings"].append(f"{name}: {defer_warning}")
+        if days:
+            frames = market["frames"]
+            hist = {t: df["close"] for t, df in frames.items()}
+            month_ends = (month_end_fn or vbdata.month_end_trading_days)(days[0].year, base.year)
+            year_ends = (year_end_fn or vbdata.year_end_trading_days)(days[0].year, base.year)
+            actions = (actions_fn or vbdata.fetch_actions)(held, (days[0] - timedelta(days=10)).date()) if held else {}
+            for d in days:
+                closes = {t: float(df.at[d, "close"]) for t, df in frames.items() if d in df.index and not pd.isna(df.at[d, "close"])}
+                if book["status"] == mb.WAITING and d in month_ends and d >= pd.Timestamp(book["armed_date"]):
+                    start_fx, fx_date = _momentum_fx(mo, d, fx_fn)
+                    book = mb.start_book(book, d, float(vb["start_krw"]) / start_fx)
+                    book["start_fx"], book["fx_date"] = start_fx, fx_date
+                signal = mb.rank(hist, qqq, d, market["universe"], params) if (d in month_ends and book["status"] == mb.RUNNING) else None
+                if signal is not None and not signal["ok"]:
+                    out["warnings"].append(f"{name}: {d.date()} 월말 신호를 QQQ {params.lookback_days}거래일 가격이 없어 계산하지 못했습니다")
+                divs, splits = _actions_for_day(actions, d)
+                book, row, trades = mb.process_day(book, d, closes=closes, dividends=divs, splits=splits, signal=signal,
+                                                   universe=market["universe"], params=params, year_end=d in year_ends)
+                if row is not None:
+                    new_daily.append(row)
+                new_trades.extend(trades)
+                new_tickers = sorted(set(book["positions"]) - set(held))
+                if new_tickers:  # 교체일에 새로 산 종목 — 이어지는 날의 분배금·분할을 받는다
+                    actions.update((actions_fn or vbdata.fetch_actions)(new_tickers, (d - timedelta(days=10)).date()))
+                    held = sorted(set(held) | set(new_tickers))
+        if not dry_run and (days or vbstore.load_picks_book(conn, name) is None):
+            vbstore.save_picks_day(conn, book, new_daily, new_trades, [])
+        if book["status"] != mb.RUNNING:
+            out["warnings"].append(f"{name}: 첫 월말 신호({pd.Timestamp(book['armed_date']).date()} 이후) 대기 중")
+            return out
+        daily_rows = vbstore.picks_rows(conn, "picks_daily", name)
+        trade_rows = _db_trades(vbstore.picks_rows(conn, "picks_trades", name))
+        if dry_run:
+            daily_rows = daily_rows + new_daily
+            trade_rows = trade_rows + new_trades
+        daily = _db_daily(daily_rows)
+        if daily.empty:
+            return out
+        out["extra"].append({
+            "name": name, "kind": "momentum", "start": pd.Timestamp(book["start_date"]), "daily": daily,
+            "trades": trade_rows, "summary": summarize_momentum(book, daily, int(vb["min_days_for_annualized"])),
+            "meta": {"start_krw": float(vb["start_krw"]), "start_fx": book.get("start_fx"),
+                     "fx_date": book.get("fx_date", ""), "initial_usd": book["initial_usd"]},
+            "positions": book["positions"],
+        })
+    except Exception as exc:  # 이 장부의 오류가 다른 장부·브리핑을 막지 않게
+        out["errors"].append(f"{name} 오류: {type(exc).__name__}: {exc}")
+    return out
+
+
+def _momentum_fx(mo: dict, start: pd.Timestamp, fx_fn) -> tuple[float, str]:
+    """6개월 강세 장부 시작 환율: 설정값 → 시작일(첫 월말 신호일) 원/달러 종가."""
+    if mo.get("start_fx"):
+        return float(mo["start_fx"]), "설정값"
+    if fx_fn is None:
+        from engine.virtual_books import _default_fx
+
+        fx_fn = _default_fx
+    rate, fx_date, warning = fx_fn(start.date())
+    if rate is None:
+        raise RuntimeError(f"6개월 강세 장부 시작일 {start.date()} 원/달러 환율을 구하지 못했습니다 ({warning})")
+    return float(rate), str(fx_date or "")
 
 
 def _picks_fx(conn, pk: dict, start: pd.Timestamp, fx_fn) -> tuple[float, str]:
