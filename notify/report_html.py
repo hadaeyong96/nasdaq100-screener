@@ -376,6 +376,41 @@ def _flow_watch_ctx(summary: dict) -> dict | None:
             "top": top, "sectors": sectors, "excluded": view["excluded"]}
 
 
+def _pp(v: float) -> str:
+    r = round(v, 1) + 0.0  # 반올림 후 0이면 "-0.0" 대신 "0.0"
+    return f"{r:+.1f}%p" if r else "0.0%p"
+
+
+def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
+    """summary["weekly_rs"](engine.daily.build_weekly_rs_view) -> 템플릿 context. 없으면 None (작업 5-1)."""
+    view = summary.get("weekly_rs")
+    if not view:
+        return None
+    caption = (cfg.get("weekly_rs") or {}).get("caption", "")
+    names = view.get("names") or {}
+
+    def cls(v):
+        return "up" if round(v, 1) > 0 else ("down" if round(v, 1) < 0 else "")
+
+    top = [{"rank": i + 1, "ticker": r["ticker"], "name": names.get(r["ticker"], r["ticker"]), "group": r["group"],
+            "excess": _pp(r["excess_pp"]), "excess_cls": cls(r["excess_pp"]), "ret": _pct(r["ret"])}
+           for i, r in enumerate(view["top"])]
+
+    def grp(x):
+        return {"group": x["group"], "count": x["count"], "avg": _pp(x["avg_excess_pp"]),
+                "avg_cls": cls(x["avg_excess_pp"]), "tickers": ", ".join(x["tickers"])}
+
+    window = view.get("window")
+    return {
+        "caption": caption, "error": view.get("error"), "ok": view.get("status") == "ok",
+        "window_str": f"{window[0].date().isoformat()} → {window[1].date().isoformat()}" if window else "",
+        "qqq_ret": _pct(view["qqq_return"]) if view.get("qqq_return") is not None else "-",
+        "scan_count": len(view.get("rows", [])), "top": top,
+        "groups_top": [grp(x) for x in view["groups_top"]], "groups_bottom": [grp(x) for x in view["groups_bottom"]],
+        "excluded": view.get("excluded", []),
+    }
+
+
 def build_context(summary: dict, cfg: dict) -> dict:
     """summary dict(engine/daily.py) + cfg -> Jinja2 템플릿에 넘길 context."""
     as_of = summary.get("as_of")
@@ -591,6 +626,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "macro_disclaimer": macro_explain.DISCLAIMER,
         "screening": _screening_ctx(summary, cfg),
         "flow_watch": _flow_watch_ctx(summary),
+        "weekly_rs": _weekly_rs_ctx(summary, cfg),
     }
 
 

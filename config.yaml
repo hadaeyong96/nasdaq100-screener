@@ -177,6 +177,29 @@ flow_watch:
   top_n: 10 # TOP 표·주간 목록 크기
   exclude_tickers: [QQQ, QQQM, TQQQ, QLD, SQQQ, PSQ] # 대상에서 뺄 ETF
 
+# ── 이번 주 QQQ보다 강한 종목·업종 (작업 5-1, core/weekly_rs.py, docs/design/weekly_rs.md) ──
+# 관찰용 표시 전용 — 신호·필터·수량 계산에 쓰지 않는다. 묶음은 사용자 지정(2026-10-15), 명단에 있는 종목만 쓴다.
+weekly_rs:
+  days: 5 # 최근 거래일 수 (QQQ 거래일 기준)
+  top_n: 10 # 표 1 상위 종목 수
+  group_top: 3 # 표 2 상위 묶음 수
+  group_bottom: 3 # 표 2 하위 묶음 수
+  group_min: 2 # 계산된 종목이 이보다 적은 묶음은 표시 안 함
+  caption: "관찰용 · 매수 신호 아님 (1주 강세는 과거 시험에서 다음 상승을 예측하지 못함)"
+  groups:
+    메모리: [MU, WDC, STX, SNDK]
+    반도체장비: [AMAT, LRCX, KLAC, ASML, TER]
+    반도체: [NVDA, AMD, AVGO, QCOM, ADI, TXN, MCHP, NXPI, INTC, MRVL, MPWR, ARM]
+    식음료: [PEP, KDP, MDLZ, MNST, CCEP]
+    유틸리티: [AEP, EXC, XEL, CEG]
+    소프트웨어: [MSFT, ADBE, INTU, ADSK, CDNS, SNPS, WDAY, ROP, PANW, FTNT, CRWD, DDOG]
+    인터넷: [GOOGL, META, AMZN, NFLX, BKNG, ABNB, DASH, MELI, PDD, SHOP]
+    헬스: [AMGN, GILD, REGN, VRTX, ISRG, IDXX, DXCM, ALNY, GEHC]
+    산업: [CSX, ODFL, PCAR, FAST, CTAS, CPRT, HON, AXON]
+    소비: [COST, WMT, ROST, ORLY, SBUX, MAR]
+    에너지: [FANG, BKR]
+    급여: [ADP, PAYX]
+
 # ── 시장 온도 (P3.8) ────────────────────────────────────────────────────────
 # 표시 전용. 여기 값은 신호·필터·수량 계산에 쓰지 않는다.
 macro:

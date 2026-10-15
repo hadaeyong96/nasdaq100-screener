@@ -310,6 +310,7 @@ details.exp[open]>summary{color:var(--info)}
 /* 자금 흐름 관찰 (F2, 참고용, docs/design/flow_watch.md) */
 .fw .cap{display:inline-block;margin-left:6px;padding:1px 8px;border-radius:999px;background:var(--warn-bg);color:var(--warn);font-size:11px;font-weight:700;vertical-align:middle}
 .fw td.up{color:var(--buy);font-weight:700}.fw td.down{color:var(--sell);font-weight:700}
+.wrs-cap{display:inline-block;margin:0 0 6px;padding:2px 10px;border-radius:999px;background:var(--warn-bg);color:var(--warn);font-size:12px;font-weight:700}
 /* "왜?" 4단 설명 (매수) */
 .whybox .ws{margin:0 0 8px}
 .whybox .ws h4{margin:0 0 4px;font-size:13px;font-weight:800}
@@ -389,6 +390,43 @@ details.exp[open]>summary{color:var(--info)}
   <a class="check-line" href="#fold-detail">⚠ 확인할 것 {{ check_items|sum(attribute=1) }}건: {% for label, n in check_items %}{{ label }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</a>
 {% endif %}
 </section>
+
+{% if weekly_rs %}
+<!-- 이번 주 QQQ보다 강한 종목·업종 (작업 5-1, docs/design/weekly_rs.md) — 관찰용, 매수 신호 아님 -->
+<details class="fold" id="fold-weekly-rs">
+<summary>▶ 이번 주 QQQ보다 강한 종목·업종</summary>
+<div class="fold-body">
+<section class="scr fw" aria-label="이번 주 QQQ보다 강한 종목·업종">
+  <div class="wrs-cap">{{ weekly_rs.caption }}</div>
+  {% if weekly_rs.error %}<div class="empty2">{{ weekly_rs.error }}</div>
+  {% elif not weekly_rs.ok %}<div class="empty2">QQQ 기준일·5거래일 전 종가가 없어 계산하지 않았습니다</div>
+  {% else %}
+  <div class="scr-sub">최근 5거래일 {{ weekly_rs.window_str }} · QQQ {{ weekly_rs.qqq_ret }} · {{ weekly_rs.scan_count }}종목 · 초과 = 종목 5거래일 수익률 − QQQ 5거래일 수익률</div>
+  <h3>이번 주 QQQ보다 강한 종목</h3>
+  <div class="scr-card">
+  {% if weekly_rs.top %}
+  <div class="scroll"><table>
+    <thead><tr><th class="nosort l">종목</th><th class="nosort l">이름</th><th class="nosort l">업종 묶음</th><th class="nosort">초과</th><th class="nosort">5일 수익률</th></tr></thead>
+    <tbody>{% for r in weekly_rs.top %}<tr><td class="l"><b>{{ r.ticker }}</b></td><td class="l">{{ r.name }}</td><td class="l">{{ r.group }}</td><td class="sc {{ r.excess_cls }}">{{ r.excess }}</td><td>{{ r.ret }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">계산할 수 있는 종목이 없습니다</div>{% endif %}
+  {% if weekly_rs.excluded %}<div class="mini">제외 {{ weekly_rs.excluded|length }}종목 (두 날짜 종가 없음): {{ weekly_rs.excluded|join(', ') }}</div>{% endif %}
+  </div>
+  <h3>이번 주 강한 업종</h3>
+  <div class="scr-card">
+  {% if weekly_rs.groups_top or weekly_rs.groups_bottom %}
+  <div class="scroll"><table class="fit">
+    <thead><tr><th class="nosort l">구분</th><th class="nosort l">업종 묶음</th><th class="nosort">종목 수</th><th class="nosort">QQQ 대비 평균 초과</th><th class="nosort l">종목</th></tr></thead>
+    <tbody>{% for x in weekly_rs.groups_top %}<tr><td class="l">상위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}{% for x in weekly_rs.groups_bottom %}<tr><td class="l">하위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">표시할 업종 묶음이 없습니다</div>{% endif %}
+  <div class="mini">업종 묶음은 미리 정한 목록(명단에 있는 종목만, 계산된 종목 2개 미만 묶음은 뺌). 평균 초과 = 묶음 종목 초과의 단순 평균.</div>
+  </div>
+  {% endif %}
+</section>
+</div>
+</details>
+{% endif %}
 
 {% macro scr_name(r) -%}<b>{{ r.kr }}</b><span class="tkr">{{ r.ticker }}</span>{%- endmacro %}
 {% macro scr_status(r) -%}<span class="tag {{ 'inf' if r.result == '대기' else r.tone }}">{{ r.result }}</span>{% if r.reason %} <span class="rs">{{ r.reason }}</span>{% endif %}{%- endmacro %}
