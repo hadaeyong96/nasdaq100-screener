@@ -38,7 +38,8 @@ def fetch_closes_and_dividends(
 
     입력: tickers(첫 번째가 신호 종목 — 인덱스 기준), start(받기 시작일), now_et(테스트용 시각),
          history_fn(ticker, start) -> yfinance history 형식 DataFrame(테스트 주입)
-    출력: (closes, dividends) — 둘 다 index=신호 종목 거래일(tz-naive), columns=tickers
+    출력: (closes, dividends) — 둘 다 index=신호 종목 거래일(tz-naive), columns=tickers.
+         맨 끝 종가가 빈 행은 잘라내고 그 경고를 closes.attrs["warnings"]에 담는다
     예외: 한 종목이라도 실패하면 VirtualBooksDataError(실패 목록)
     """
     history_fn = history_fn or _yf_history
@@ -66,7 +67,38 @@ def fetch_closes_and_dividends(
     base_index = closes[tickers[0]].index
     close_df = pd.DataFrame({t: closes[t].reindex(base_index) for t in tickers})
     div_df = pd.DataFrame({t: divs[t].reindex(base_index).fillna(0.0) for t in tickers})
+    close_df, div_df, warnings = trim_trailing_empty_closes(close_df, div_df)
+    close_df.attrs["warnings"] = warnings
     return close_df, div_df
+
+
+def trim_trailing_empty_closes(
+    close_df: pd.DataFrame, div_df: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """맨 끝에서부터 종가가 하나라도 빈 행을 잘라낸다 (중간 날짜의 빈 칸은 그대로 둔다).
+
+    마감 직후 yfinance가 그날 행을 종가 없이 주는 경우가 있다(2026-10-15 예약 실행, 10-14 행).
+    장부는 매 실행 시작일부터 다시 계산하므로 하루 늦게 반영해도 다음 실행에서 따라잡는다.
+    중간 날짜가 비면 여기서 채우지 않는다 — core가 멈춘다(조용히 채우지 않음).
+
+    입력: close_df, div_df(같은 인덱스)
+    출력: (잘라낸 close_df, 같은 날을 잘라낸 div_df, 경고 문구 목록)
+    예외: 다 잘려 남는 행이 없으면 VirtualBooksDataError
+    """
+    complete = close_df.notna().all(axis=1)
+    keep = len(close_df)
+    while keep and not complete.iloc[keep - 1]:
+        keep -= 1
+    if keep == len(close_df):
+        return close_df, div_df, []
+    dropped = close_df.index[keep:]
+    if keep == 0:
+        raise VirtualBooksDataError("가상 장부 가격 받기 실패 — 종가가 있는 날이 없습니다")
+    empty = {d: [t for t in close_df.columns if pd.isna(close_df.at[d, t])] for d in dropped}
+    detail = ", ".join(f"{d.date()}({'·'.join(ts)})" for d, ts in empty.items())
+    warning = (f"맨 끝 종가가 빈 날 {len(dropped)}일을 잘라 {close_df.index[keep - 1].date()} 기준으로 계산합니다: "
+               f"{detail} — 다음 실행에서 따라잡습니다")
+    return close_df.iloc[:keep].copy(), div_df.iloc[:keep].copy(), [warning]
 
 
 def year_end_trading_days(first_year: int, last_year: int) -> set:
