@@ -152,5 +152,3 @@ def test_not_in_telegram_caption_or_public_report(tmp_path):
     cfg = _cfg()
     text = briefing.build_briefing_text(s, cfg)
     assert "QQQ보다 강한" not in text and "QQQ보다 강한" not in telegram.report_caption(text)
-    pub = report_html.render_public_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "QQQ보다 강한" not in pub

@@ -20,7 +20,7 @@ import pandas as pd
 from core import macro_status
 from core import screening_view as sview
 from notify import macro_explain
-from notify.briefing import PUBLIC_DISCLAIMER, report_titles
+from notify.briefing import report_titles, title_line
 from core.sizing import format_krw
 from core.signals import levels
 
@@ -590,7 +590,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "fx_date_str": fx_date_str,
         "fx_is_fallback": fx_is_fallback,
         "live_judgment_rows": live_judgment_rows,
-        # 맨 위 "⚠ 확인할 것 n건" 한 줄 — 접기 안 경고 배너와 같은 목록의 건수만 센다(live 전용, 0건이면 숨김)
+        # 맨 위 "확인할 것: n건" 한 줄 — 접기 안 경고 배너와 같은 목록의 건수만 센다(live 전용, 0건이면 숨김)
         "check_items": [
             (label, len(rows))
             for label, rows in (("판정 변경", changed_judgment_rows), ("계획금액으로 1차 0주", one_share_warning_rows),
@@ -602,6 +602,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "plan_limit_exceeded_rows": plan_limit_exceeded_rows,
         "cfg_js": cfg_js,
         "titles": report_titles(cfg),
+        "header_line": title_line(summary, cfg),  # 맨 위 한 줄 "철수의 아침 편지 · 10/14(수)"
         "buy_count": buy_count,
         "sell_count": len(sell_rows),
         "held_count": summary.get("held_tickers_count", 0),
@@ -665,72 +666,5 @@ def render_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
     output_dir.mkdir(exist_ok=True, parents=True)
     mode = summary.get("mode", "live")
     path = output_dir / f"report_{mode}_{context['as_of_str']}.html"
-    path.write_text(html, encoding="utf-8")
-    return path
-
-
-# ── 단체방 공개용 HTML (투자클럽) ─────────────────────────────────────
-# 시장 온도 + 오늘의 추천(진입가·손절가·조건)만 담는다. 보유·수량·평단·손익·
-# 계획금액·체결 내역은 build_context와 달리 애초에 읽지 않는다 — 새는 값이
-# 없다는 걸 코드 구조로도 보장하기 위해서다 (build_context를 재사용하지 않음).
-#
-# 오늘의 추천은 신규 진입(b1, A1 정찰) 신호만 담는다 — b2·b3·b9는 라이브에서
-# 실제 보유했거나 보유 중인 종목에만 나오는 신호라 종목명 자체가 보유를 드러낸다
-# (notify.briefing 모듈 위 주석 참고).
-_PUBLIC_RECOMMEND_BUCKET = "b1"
-
-
-def _public_buy_row_ctx(r: dict) -> dict:
-    """buy_groups 행 하나 -> 공개용 템플릿 context. r["note"]·수량·금액은 담지 않는다."""
-    return {
-        "ticker": r["ticker"],
-        "kr": r["kr"],
-        "stage_label": r.get("stage_label", ""),
-        "limit": _num(r["limit"]),
-        "stop": _num(r["stop"]),
-        "stop_pct": r.get("stop_pct"),
-        "decision": r["decision"],
-        "condition": r.get("condition_summary") or "",
-    }
-
-
-def build_public_context(summary: dict, cfg: dict) -> dict:
-    """summary + cfg -> 단체방 공개용 Jinja2 템플릿 context.
-
-    build_context와 달리 funding_plan·hold_rows·sell_rows·pending_order_rows 등
-    보유·자금 관련 값은 아예 만들지 않는다 (P-group 지시문 — 공개용 결과물에 보유·
-    금액 정보가 새지 않아야 한다).
-    """
-    as_of = summary.get("as_of")
-    as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
-
-    buy_groups = summary.get("buy_groups", {"b1": [], "b2": [], "b3": [], "b9": []})
-    new_entry_rows = sorted(
-        buy_groups.get(_PUBLIC_RECOMMEND_BUCKET, []), key=lambda r: r.get("score", 0), reverse=True
-    )
-
-    return {
-        "as_of_str": as_of_str,
-        "titles": report_titles(cfg),
-        "generated_str": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "buy_rows": [_public_buy_row_ctx(r) for r in new_entry_rows],
-        "buy_count": len(new_entry_rows),
-        "macro_rows": [_macro_row_ctx(r) for r in summary.get("macro_rows", [])],
-        "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
-        "macro_disclaimer": macro_explain.DISCLAIMER,
-        "public_disclaimer": PUBLIC_DISCLAIMER,
-    }
-
-
-def render_public_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
-    """단체방 공개용 보고서 HTML을 outputs/report_public_YYYY-MM-DD.html로 저장하고 경로를 반환한다.
-
-    live 전용(호출부 책임) — paper는 애초에 텔레그램을 보내지 않으므로 부르지 않는다.
-    """
-    context = build_public_context(summary, cfg)
-    template = _env.get_template("report_public.html.j2")
-    html = template.render(**context)
-    output_dir.mkdir(exist_ok=True, parents=True)
-    path = output_dir / f"report_public_{context['as_of_str']}.html"
     path.write_text(html, encoding="utf-8")
     return path

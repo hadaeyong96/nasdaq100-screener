@@ -321,10 +321,11 @@ def test_live_mode_hides_total_krw_in_header(tmp_path, cfg):
 
 
 def test_paper_mode_still_shows_total_krw_in_header(tmp_path, cfg):
+    """머리말 정보는 2026-10-15부터 맨 아래 「보고서 정보」 접기 안에 있다 — 모의는 거기 총자금을 보인다."""
     path = report_html.render_report(_empty_summary(mode="paper"), cfg, tmp_path)
     html = path.read_text(encoding="utf-8")
-    header = html.split("<nav")[0]
-    assert "총자금" in header
+    info = html.split('id="fold-info"', 1)[1]
+    assert "총자금" in info
 
 
 def test_live_mode_renders_judgment_table_row(cfg):
@@ -609,7 +610,8 @@ def test_top_block_comes_before_all_folds_and_folds_are_closed(tmp_path, cfg):
     assert "로퍼" in today and "+3.1%" in today and "모멘텀 약화(E1, 데드크로스)" in today
     folds = re.findall(r"<details class=\"fold\"[^>]*>\s*<summary>([^<]+)</summary>", body)
     assert folds == ["▶ 전체 후보 목록 (오늘의 스크리닝)", "▶ 매수·매도 상세 · 보유 현황 · 경고 · 규칙",
-                     "▶ FRED 경제 그래프 (시장 온도)", "▶ 돈이 몰리는 종목", "▶ 가상 장부 현황", "▶ 지표 설명 (읽는 법·용어)"]
+                     "▶ FRED 경제 그래프 (시장 온도)", "▶ 돈이 몰리는 종목", "▶ 가상 장부 현황", "▶ 지표 설명 (읽는 법·용어)",
+                     "▶ 보고서 정보"]
     assert not re.search(r"<details class=\"fold\"[^>]*\bopen\b", body)  # 기본 닫힘
 
 
@@ -658,7 +660,7 @@ def test_check_line_counts_live_warnings_and_hides_when_zero(tmp_path, cfg):
     ]
     html = report_html.render_report(summary, cfg, tmp_path).read_text(encoding="utf-8")
     today = html[html.index('<section class="today"'):html.index('<details class="fold"')]
-    assert '<a class="check-line" href="#fold-detail">⚠ 확인할 것 2건: 판정 변경 1 · 계획 한도 초과 1</a>' in today
+    assert '<a class="check-line" href="#fold-detail">확인할 것: 2건 — 판정 변경 1 · 계획 한도 초과 1</a>' in today
     assert today.index("오늘 매도 추천") < today.index("check-line")
     detail = html[html.index('id="fold-detail"'):]
     assert "판정이 바뀐 종목" in detail and "계획 한도 초과" in detail  # 상세는 접기 안 그대로

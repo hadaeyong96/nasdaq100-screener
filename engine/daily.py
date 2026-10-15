@@ -921,10 +921,8 @@ def _build_buy_row(
 
     stage_note = _buy_stage_summary(event["kind"], base, earnings_date, date)
     base["note"] = " · ".join(part for part in (base["note"], stage_note) if part)
-    # 계획금액·자금 계획 관련 문구가 섞이기 전의 순수 지표 근거 (단체방 공개용 —
-    # notify.briefing.build_public_briefing_text / report_html.build_public_context가
-    # 이 필드만 쓴다. base["note"]는 이후 live/paper 사이징에서 "계획 없음"·"남은 한도
-    # 부족" 같은 개인 자금 관련 문구가 덧붙는다).
+    # 계획금액·자금 계획 관련 문구가 섞이기 전의 순수 지표 근거 (보고서 "왜?" 설명 등에서 쓴다.
+    # base["note"]는 이후 live/paper 사이징에서 "계획 없음"·"남은 한도 부족" 같은 개인 자금 관련 문구가 덧붙는다).
     base["condition_summary"] = stage_note
     return base
 
@@ -2144,10 +2142,6 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
     _write_outputs(summary, cfg)
     report_path = report_html.render_report(summary, cfg, OUTPUT_DIR)
     summary["report_path"] = report_path
-    if mode == "live":
-        # 단체방 공개용 보고서 (시장 온도 + 오늘의 추천만, 보유·수량·평단·손익·계획금액
-        # 없음) — paper는 텔레그램을 아예 보내지 않는 하드 가드가 있어 만들지 않는다.
-        summary["public_report_path"] = report_html.render_public_report(summary, cfg, OUTPUT_DIR)
     return summary
 
 
@@ -2290,16 +2284,23 @@ def main() -> None:
             sent_path = telegram.send_delay_notice(summary, cfg, force_no_send=args.no_send)
         else:
             text = briefing.build_briefing_text(summary, cfg)
-            sent_path = telegram.send_briefing(text, summary, cfg, force_no_send=args.no_send)
-
-            # 단체방 공개 발송 (live 전용) — 실패해도 개인 발송·실행에는 영향 없이
-            # 개인 채팅에 경고 한 줄만 남긴다.
+            # 개인 채팅·단체방에 같은 보고서·같은 첨부 설명 (2026-10-15). 한쪽이 실패해도 다른 쪽은 나간다.
+            # 오류 알림(ops)은 개인 채팅에만.
+            try:
+                sent_path = telegram.send_briefing(text, summary, cfg, force_no_send=args.no_send)
+            except Exception as exc:
+                sent_path = None
+                msg = f"개인 채팅 브리핑 발송 오류: {type(exc).__name__}: {exc}"
+                print(f"[daily] {msg}")
+                telegram.notify_ops_error(msg)
             if mode == "live":
-                public_text = briefing.build_public_briefing_text(summary, cfg)
-                group_result = telegram.send_group_briefing(
-                    public_text, summary.get("public_report_path"), summary, cfg, force_no_send=args.no_send
-                )
-                warning = telegram.group_send_warning_line(group_result)
+                try:
+                    group_result = telegram.send_group_briefing(
+                        text, summary.get("report_path"), summary, cfg, force_no_send=args.no_send
+                    )
+                    warning = telegram.group_send_warning_line(group_result)
+                except Exception as exc:
+                    warning = f"단체방 발송 실패: {type(exc).__name__}: {exc}"
                 if warning:
                     print(f"[daily] {warning}")
                     telegram.notify_ops_error(warning)

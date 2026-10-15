@@ -124,4 +124,3 @@ def test_accel_not_in_caption_or_public_report(tmp_path):
     s, cfg, _ = _summary()
     text = briefing.build_briefing_text(s, cfg)
     assert "힘이 세지는" not in text and "힘이 세지는" not in telegram.report_caption(text)
-    assert "힘이 세지는" not in report_html.render_public_report(s, cfg, tmp_path).read_text(encoding="utf-8")

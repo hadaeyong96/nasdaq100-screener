@@ -1,11 +1,11 @@
 """샘플 데이터로 개인용·공개용 보고서 미리보기를 만든다 (네트워크 없음).
 
 사용법:
-    python scripts/report_preview.py                  # outputs/report_preview.html, report_public_preview.html
+    python scripts/report_preview.py                  # outputs/report_preview.html
     python scripts/report_preview.py --screenshot after  # + 폰 폭(375)·PC 폭(1200) 스크린샷
 
 샘플: 오늘의 추천 4건(긴 조건 문구 포함) + 시장 온도 6칸. 실제 계좌·보유 정보는 없다.
-공개용 텔레그램 본문(build_public_briefing_text)도 outputs/telegram_public_preview.txt로 남긴다.
+단체방도 같은 보고서·첨부 설명을 받는다(2026-10-15) — 첨부 설명은 outputs/caption_preview.txt로 남긴다.
 """
 
 from __future__ import annotations
@@ -112,19 +112,16 @@ def main() -> None:
     summary = sample_summary(cfg)
     OUT.mkdir(exist_ok=True)
 
-    public = report_html.render_public_report(summary, cfg, OUT)
-    public_preview = public.replace(OUT / "report_public_preview.html")
     private = report_html.render_report(summary, cfg, OUT)
     private_preview = private.replace(OUT / "report_preview.html")
-    text = briefing.build_public_briefing_text(summary, cfg)
-    (OUT / "telegram_public_preview.txt").write_text(text, encoding="utf-8")
+    text = briefing.build_report_caption(summary, cfg)
+    (OUT / "caption_preview.txt").write_text(text, encoding="utf-8")
 
-    print(f"공개용 미리보기: {public_preview}")
-    print(f"개인용 미리보기: {private_preview}")
-    print("── 공개용 텔레그램 본문 ──")
+    print(f"미리보기: {private_preview}")
+    print("── 첨부 설명 ──")
     print(text)
     if args.screenshot:
-        for shot in _screenshot({"report_public": public_preview, "report": private_preview}, args.screenshot):
+        for shot in _screenshot({"report": private_preview}, args.screenshot):
             print(f"스크린샷: {shot}")
 
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>{{ titles.title }} · {{ as_of_str }} ({{ mode_label }})</title>
+<title>{{ header_line }}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
 <style>
 :root{
@@ -33,6 +33,7 @@ h1{font-size:24px;font-weight:800;margin:0;letter-spacing:-0.02em}
 .lead{color:var(--sub);font-size:13px;margin-top:4px}
 .meta{color:var(--sub);font-size:13px;text-align:right}
 .meta b{color:var(--ink)}
+.info{padding:2px 2px}.info .meta-info{color:var(--sub);font-size:13px;margin-top:8px;line-height:1.7}.info .meta-info b{color:var(--ink)}
 .fx-warn{color:var(--warn)}
 
 /* ── 자금 계획 줄 (P3.6 6-3번) ───────────────────────────────── */
@@ -354,16 +355,7 @@ details.exp[open]>summary{color:var(--info)}
 {% endif %}
 
 <header>
-  <div>
-    <h1>{{ titles.title }}<span class="mode-badge">{{ mode_label }}</span></h1>
-    <div class="subtitle">{{ titles.subtitle }}</div>
-    <div class="lead">MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준</div>
-  </div>
-  <div class="meta">
-    기준일 <b>{{ as_of_str }} 종가</b><br>
-    주문 가능일 <b>{{ order_date_str }}</b><br>
-    {% if not is_live %}총자금 <b>{{ total_krw_str }} 원</b> · {% endif %}환율 <b>₩{{ fx_rate_str }}/$</b>{% if fx_date_str %} ({{ fx_date_str }}){% endif %}{% if fx_is_fallback %} <span class="fx-warn">캐시값</span>{% endif %} · 생성 {{ generated_str }}
-  </div>
+  <h1>{{ header_line }}</h1>
 </header>
 
 {% if regime_line %}
@@ -387,7 +379,7 @@ details.exp[open]>summary{color:var(--info)}
   <div class="none-all">오늘 매수·매도 추천 없음</div>
 {% endif %}
 {% if check_items %}
-  <a class="check-line" href="#fold-detail">⚠ 확인할 것 {{ check_items|sum(attribute=1) }}건: {% for label, n in check_items %}{{ label }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</a>
+  <a class="check-line" href="#fold-detail">확인할 것: {{ check_items|sum(attribute=1) }}건 — {% for label, n in check_items %}{{ label }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</a>
 {% endif %}
 </section>
 
@@ -1080,6 +1072,21 @@ details.exp[open]>summary{color:var(--info)}
   <tr><td>쿨다운</td><td>손절·전량 매도 후 다시 사지 않는 기간. 지금 설정은 {{ guide.reentry_cooldown_days }}거래일이에요</td></tr>
   </tbody></table></div>
   </details>
+</section>
+</div>
+</details>
+
+<details class="fold" id="fold-info">
+<summary>▶ 보고서 정보</summary>
+<div class="fold-body">
+<section class="info" aria-label="보고서 정보">
+  <div class="subtitle">{{ titles.subtitle }}</div>
+  <div class="lead">MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준</div>
+  <div class="meta-info">
+    기준일 <b>{{ as_of_str }} 종가</b> · 주문 가능일 <b>{{ order_date_str }}</b><br>
+    {% if not is_live %}총자금 <b>{{ total_krw_str }} 원</b> · {% endif %}환율 <b>₩{{ fx_rate_str }}/$</b>{% if fx_date_str %} ({{ fx_date_str }}){% endif %}{% if fx_is_fallback %} <span class="fx-warn">캐시값</span>{% endif %}<br>
+    생성 {{ generated_str }} · 운용 모드 {{ mode_label }}
+  </div>
 </section>
 </div>
 </details>

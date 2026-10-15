@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 # 단체방 공개용 고지 문구 (텔레그램 본문·공개 HTML 맨 아래 모두 이 상수를 쓴다).
-PUBLIC_DISCLAIMER = "개인 학습용 참고 자료이며 투자 권유가 아닙니다. 투자 판단과 책임은 본인에게 있습니다."
 
 # 가상 장부 국면 한 줄(notify/virtual_books.regime_line)의 머리말 — 제목 바로 아래에 두고,
 # 텔레그램 첨부 설명(notify.telegram.report_caption)에도 남긴다.
@@ -16,15 +15,16 @@ REGIME_LINE_PREFIX = "오늘 국면:"
 
 # config.yaml report 섹션이 없을 때(구버전 테스트 fixture 등)만 쓰는 기본값 — 실제 값은 config.yaml에서 읽는다.
 _DEFAULT_REPORT_TITLES = {
-    "title": "데이터 투자 브리핑",
+    "title": "철수의 아침 편지",
     "subtitle": "미국 대형주 · 미국 종가 기준 · 규칙 기반 분석",
-    "short_title": "데이터브리핑",
-    "public_suffix": "투자클럽",
+    "short_title": "철수의 아침 편지",
 }
+REBUILT_PREFIX = "정정본:"  # 해당하는 날에만 쓰는 줄 머리 (이모지 대신 글자, 2026-10-15)
+CHECK_PREFIX = "확인할 것:"
 
 
 def report_titles(cfg: dict | None) -> dict:
-    """cfg -> {title, subtitle, short_title, public_suffix} (config.yaml report 섹션, 빠진 키는 기본값)."""
+    """cfg -> {title, subtitle, short_title} (config.yaml report 섹션, 빠진 키는 기본값)."""
     return {**_DEFAULT_REPORT_TITLES, **((cfg or {}).get("report") or {})}
 
 _STAGE_ORDER = ["b1", "b2", "b3", "b9"]
@@ -96,7 +96,7 @@ def _sell_short_label(row: dict) -> str:
 def build_input_error_line(errors: list[str], max_len: int = 80) -> str | None:
     """계획·체결 시트 읽기 오류 목록 -> 텔레그램 한 줄 경고 (없으면 None).
 
-    출력 예: "⚠️ 시트 오류: 계획 기록 오류: 1번째 줄 - ... 외 1건"
+    출력 예: "확인할 것: 시트 오류: 계획 기록 오류: 1번째 줄 - ... 외 1건"
     """
     if not errors:
         return None
@@ -104,44 +104,49 @@ def build_input_error_line(errors: list[str], max_len: int = 80) -> str | None:
     if len(first) > max_len:
         first = first[: max_len - 1] + "…"
     more = f" 외 {len(errors) - 1}건" if len(errors) > 1 else ""
-    return f"⚠️ 시트 오류: {first}{more}"
+    return f"{CHECK_PREFIX} 시트 오류: {first}{more}"
 
 
 def build_fred_missing_line(missing_codes: list[str]) -> str | None:
     """FRED 지표가 하나라도 빠졌으면 텔레그램 한 줄 경고 (없으면 None).
 
-    출력 예: "⚠️ FRED 지표 수집 실패: DGS10, T10Y2Y"
+    출력 예: "확인할 것: FRED 지표 수집 실패: DGS10, T10Y2Y"
     """
     if not missing_codes:
         return None
-    return f"⚠️ FRED 지표 수집 실패: {', '.join(missing_codes)}"
+    return f"{CHECK_PREFIX} FRED 지표 수집 실패: {', '.join(missing_codes)}"
+
+
+def date_label(as_of) -> str:
+    """기준일(미국 종가 기준) -> "10/14(수)". 없으면 "알수없음"."""
+    if as_of is None:
+        return "알수없음"
+    d = as_of.date()
+    return f"{d.month}/{d.day}({_KOREAN_WEEKDAY[as_of.dayofweek]})"
 
 
 def title_line(summary: dict, cfg: dict) -> str:
-    """제목 줄: "📊 {short_title} · 10/13(화) 마감 · 실전"."""
-    as_of = summary.get("as_of")
-    mode_label = summary.get("mode_label", "실전")
-    if as_of is not None:
-        d = as_of.date()
-        date_str = f"{d.month}/{d.day}({_KOREAN_WEEKDAY[as_of.dayofweek]})"
-    else:
-        date_str = "알수없음"
-    return f"📊 {report_titles(cfg)['short_title']} · {date_str} 마감 · {mode_label}"
+    """제목 줄(보고서 맨 위·첨부 설명 첫 줄): "철수의 아침 편지 · 10/14(수)". 이모지·"마감" 없음(2026-10-15).
+
+    모의(paper) 보고서는 보내지 않지만 파일을 헷갈리지 않게 끝에 " · 모의"를 붙인다.
+    """
+    line = f"{report_titles(cfg)['title']} · {date_label(summary.get('as_of'))}"
+    return line + " · 모의" if summary.get("mode") == "paper" else line
 
 
 def build_report_caption(summary: dict, cfg: dict) -> str:
     """개인 브리핑 보고서 첨부 설명 (브리핑 다이어트): 제목 + 국면 줄 + "매수 n · 매도 n" + 티커.
 
-    예: 세 줄 — "📊 데이터브리핑 · 10/13(화) 마감 · 실전" / "오늘 국면: …" / "매수 2(NVDA, AAPL) · 매도 1(ROP)"
+    예: 세 줄 — "철수의 아침 편지 · 10/13(화)" / "오늘 국면: …" / "매수 2(NVDA, AAPL) · 매도 1(ROP)"
     추천이 없으면 "매수 0 · 매도 0". 티커는 매수는 차수 순서·중복 제거, 매도는 매도 표 순서.
-    해당 있는 날에만 정정본(🔁, 국면 줄 아래)과 시트 입력 오류·FRED 누락(⚠️, 맨 아래) 줄을 덧붙인다
+    해당 있는 날에만 "정정본:"(국면 줄 아래)과 "확인할 것:"(시트 입력 오류·FRED 누락, 맨 아래) 줄을 덧붙인다
     (2026-10-14 사용자 확정) — 없는 날은 세 줄 그대로.
     """
     lines = [title_line(summary, cfg)]
     if summary.get("regime_line"):
         lines.append(summary["regime_line"])
     if summary.get("rebuilt_from"):
-        lines.append(f"🔁 체결 기록 변경 반영 정정본 ({summary['rebuilt_from']}부터 재계산)")
+        lines.append(f"{REBUILT_PREFIX} 체결 기록 변경 반영 ({summary['rebuilt_from']}부터 재계산)")
     buy_groups = summary.get("buy_groups", {})
     buys = list(dict.fromkeys(r["ticker"] for key in _STAGE_ORDER for r in buy_groups.get(key, [])))
     sells = list(dict.fromkeys(r["티커"] for r in summary.get("sell_rows", [])))
@@ -170,7 +175,7 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     if summary.get("regime_line"):  # 가상 장부 국면 한 줄 (live, engine.virtual_books — 실패하면 없음)
         lines.append(summary["regime_line"])
     if summary.get("rebuilt_from"):
-        lines.append(f"🔁 체결 기록 변경 반영 정정본 ({summary['rebuilt_from']}부터 재계산)")
+        lines.append(f"{REBUILT_PREFIX} 체결 기록 변경 반영 ({summary['rebuilt_from']}부터 재계산)")
 
     macro_rows = summary.get("macro_rows", [])
     if macro_rows:
@@ -248,76 +253,5 @@ def build_briefing_text(summary: dict, cfg: dict) -> str:
     if alert_lines:
         lines.append("")
         lines.extend(alert_lines)
-
-    return "\n".join(lines) + "\n"
-
-
-# ── 단체방 공개용 (투자클럽) ──────────────────────────────────────────
-# 개인 채팅과 달리 시장 온도 + 오늘의 추천(1차 진입가·손절가·조건)만 보낸다.
-# 보유 종목·수량·평단·손익·계획금액·체결 내역은 절대 넣지 않는다.
-#
-# 오늘의 추천은 신규 진입(b1, A1 정찰) 신호만 보여준다 — b2(2차 확인)·b3(3차
-# 확정)·b9(재진입)는 라이브 모드에서 실제 보유 중이거나 과거에 보유했던 종목에만
-# 나오는 신호라(core/state.py: A2·A3는 대기 상태에서 A1 이후에만 판정되고, B는
-# 이전에 보유했다가 나간 종목의 재진입이다) 종목명만으로도 내 보유가 드러난다.
-_PUBLIC_RECOMMEND_BUCKET = "b1"
-
-
-def _public_recommend_line(r: dict) -> str:
-    """buy_groups["b1"] 행 하나 -> "AAPL(1차 정찰) 진입가 $190.20 · 손절가 $182.10 · RSI 28 → 32".
-
-    limit·stop은 지표로만 정해지는 가격(개인 계획금액과 무관)이라 공개해도 된다.
-    조건 설명은 r["condition_summary"](engine.daily._build_buy_row가 자금 계획
-    문구가 섞이기 전에 따로 남겨 둔 필드)만 쓴다 — r["note"]는 "계획 없음"·
-    "남은 한도 부족" 같은 개인 자금 문구가 섞여 있어 쓰지 않는다.
-    """
-    stop = r.get("stop")
-    stop_str = f"${stop:,.2f}" if stop is not None else "미확인"
-    head = f"{r['ticker']}({r.get('stage_label', '')}) 진입가 ${r['limit']:,.2f}"
-    parts = [head, f"손절가 {stop_str}"]
-    condition = r.get("condition_summary")
-    if condition:
-        parts.append(condition)
-    return " · ".join(parts)
-
-
-def build_public_briefing_text(summary: dict, cfg: dict) -> str:
-    """summary + cfg -> 단체방(투자클럽)에 보낼 공개용 본문.
-
-    "📈 시장 온도"·"🎯 오늘의 추천" 두 묶음만 담는다. 오늘의 추천은 오늘 발생한
-    신규 진입(b1, A1 정찰) 신호만 점수순으로 보여준다 — 2차·3차·재진입은 보유가
-    드러나므로 뺀다(모듈 위 주석 참고). 종목·진입가·손절가·조건뿐이고 수량·
-    투입금액·최대손실은 넣지 않는다.
-    """
-    as_of = summary.get("as_of")
-    if as_of is not None:
-        d = as_of.date()
-        date_str = f"{d.month}/{d.day}({_KOREAN_WEEKDAY[as_of.dayofweek]})"
-    else:
-        date_str = "알수없음"
-
-    titles = report_titles(cfg)
-    lines = [f"📊 {titles['short_title']} · {date_str} 마감 · {titles['public_suffix']}"]
-
-    macro_rows = summary.get("macro_rows", [])
-    if macro_rows:
-        lines.append("")
-        lines.append("📈 시장 온도")
-        lines.extend(f"- {_macro_item_text(r)}" for r in macro_rows)
-
-    buy_groups = summary.get("buy_groups", {})
-    new_entry_rows = sorted(
-        buy_groups.get(_PUBLIC_RECOMMEND_BUCKET, []), key=lambda r: r.get("score", 0), reverse=True
-    )
-
-    lines.append("")
-    lines.append("🎯 오늘의 추천")
-    if not new_entry_rows:
-        lines.append("- 오늘 추천 종목 없음")
-    else:
-        lines.extend(f"- {_public_recommend_line(r)}" for r in new_entry_rows)
-
-    lines.append("")
-    lines.append(PUBLIC_DISCLAIMER)
 
     return "\n".join(lines) + "\n"
