@@ -281,3 +281,15 @@ virtual_books:
     top_n: 10
     lookback_days: 126
     min_price: 5.0 # 신호일 종가 5달러 이상만 대상
+  # ── 9번 장부 「한 달 가속 따라하기」 (core/accel.py + core/momentum_book.py, 작업 6-2 사전 등록 2026-10-15 — 임의 변경 금지) ──
+  # RS선 = 종가 ÷ QQQ, 점수 = RS(t)/RS(t−20) − RS(t−20)/RS(t−40). 60거래일 이상·종가 5달러 이상, 상위 10 같은 비중.
+  # 처음 돈 기준일이 첫 신호일, 그 뒤 20거래일(NYSE 달력)마다 교체 → 다음 거래일 종가 체결. 그 밖은 6개월 강세 장부와 같다.
+  accel:
+    enabled: true
+    name: "한 달 가속 따라하기"
+    start_date: null # null이면 처음 돈 기준일이 시작일(첫 신호일, DB에 저장). 시작 뒤 시트 "config 고정값(accel)"대로 고정
+    start_fx: null # null이면 시작일 원/달러 종가. 시작 뒤 위와 함께 고정
+    step: 20 # 최근·직전 힘 구간이자 교체 주기(거래일)
+    min_history: 60
+    min_price: 5.0
+    top_n: 10

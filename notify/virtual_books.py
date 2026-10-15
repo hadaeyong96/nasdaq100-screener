@@ -160,6 +160,10 @@ def trades_table(ledger: LedgerResult, books: list[BookSpec], extra: list[dict] 
     return rows
 
 
+# 정해진 신호일마다 상위 10을 같은 비중으로 맞추는 장부 kind → (시작 조건 줄 이름, 시작일 설명)
+REBALANCE_KINDS = {"momentum": ("6개월 강세", "첫 월말 신호일"), "accel": ("한 달 가속", "처음 돈 기준일 = 첫 신호일")}
+
+
 def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = None) -> list[list]:
     """전략요약 탭: 장부별 누적 수익·연환산·최대 낙폭·전환 횟수 + 세후 값, 아래에 시작 조건·가정.
 
@@ -182,8 +186,8 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
 
     for s in ledger.summaries:
         rows.append(base(s, int(s["switches"])) + ["", "", "", "", "", ""])
-    momentum = [x for x in extra if x.get("kind") == "momentum"]
-    picks = [x for x in extra if x.get("kind") != "momentum"]
+    momentum = [x for x in extra if x.get("kind") in REBALANCE_KINDS]
+    picks = [x for x in extra if x.get("kind") not in REBALANCE_KINDS]
     for x in picks:
         s = x["summary"]
         rows.append(base(s, "") + [int(s["completed"]), _r(s["win_rate_pct"], 1), _r(s["avg_hold_days"], 1), _r(s["sgov_value"]),
@@ -200,11 +204,12 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
         rows.append(["시작 조건(추천 따라하기)", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
                      f"= ${m['initial_usd']:,.2f}, 이후 달러 운용"])
         rows.append(["config 고정값(picks)", f"start_date: \"{_d(x['start'])}\"  start_fx: {m['start_fx']!r}"])
-    for x in momentum:  # 6개월 강세 따라하기는 첫 월말 신호일에 따로 시작한다
+    for x in momentum:  # 8·9번째 장부는 각자 첫 신호일에 따로 시작한다
         m = x["meta"]
-        rows.append(["시작 조건(6개월 강세)", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
-                     f"= ${m['initial_usd']:,.2f}, 이후 달러 운용 · 시작일 {_d(x['start'])}(첫 월말 신호일)"])
-        rows.append(["config 고정값(momentum)", f"start_date: \"{_d(x['start'])}\"  start_fx: {m['start_fx']!r}"])
+        label, first = REBALANCE_KINDS[x["kind"]]
+        rows.append([f"시작 조건({label})", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
+                     f"= ${m['initial_usd']:,.2f}, 이후 달러 운용 · 시작일 {_d(x['start'])}({first})"])
+        rows.append([f"config 고정값({x['kind']})", f"start_date: \"{_d(x['start'])}\"  start_fx: {m['start_fx']!r}"])
     rows.append(["갱신", meta["updated_at"]])
     rows.append(["연환산", f"시작 후 {meta['min_days_for_annualized']}일 미만이면 비움"])
     for n in meta.get("notes", []):

@@ -257,6 +257,7 @@ def cfg(monkeypatch):
     vb.update({"start_date": IDX[201].date().isoformat(), "start_fx": None, "sheet_id_env": "VB_TEST_SHEET_ID"})
     vb["picks"]["enabled"] = False
     vb["momentum"].update({"enabled": True, "start_fx": None})
+    vb["accel"]["enabled"] = False  # 9번 장부는 tests/test_accel_book.py에서 따로 본다
     return c
 
 

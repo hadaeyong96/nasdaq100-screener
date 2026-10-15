@@ -18,6 +18,7 @@ from datetime import timedelta
 
 import pandas as pd
 
+from core import accel
 from core import momentum_book as mb
 from core import picks_book as pb
 from core import state as st
@@ -309,12 +310,96 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
     출력: {"extra": [시트용 장부 묶음 0~1개], "errors": [str], "warnings": [str]}
     시작: start_date를 비워 두고, 처음 돈 기준일(armed_date) 이후 첫 월말 신호일에 시작한다(그날 원/달러 종가).
     """
-    vb = cfg["virtual_books"]
-    mo = vb.get("momentum") or {}
-    out = {"extra": [], "errors": [], "warnings": []}
+    mo = cfg["virtual_books"].get("momentum") or {}
     if not mo.get("enabled", False):
-        return out
+        return {"extra": [], "errors": [], "warnings": []}
     params = momentum_params(cfg)
+    cache: dict = {}
+
+    def is_month_end(d, book, first_year, last_year):
+        if "me" not in cache:
+            cache["me"] = (month_end_fn or vbdata.month_end_trading_days)(first_year, last_year)
+        return d in cache["me"]
+
+    def rank_fn(hist, qqq, d, universe):
+        return mb.rank(hist, qqq, d, universe, params)
+
+    return _run_rebalance_book(cfg, conn, ctx, mo, "momentum", params, is_start=is_month_end, is_signal=is_month_end,
+                               rank_fn=rank_fn, wait_text="첫 월말 신호", miss_text=f"QQQ {params.lookback_days}거래일",
+                               dry_run=dry_run, market_fn=market_fn, actions_fn=actions_fn, fx_fn=fx_fn, year_end_fn=year_end_fn)
+
+
+def accel_params(cfg: dict) -> tuple[mb.MomentumParams, accel.AccelParams]:
+    """9번째 장부 설정 → (체결·비용용 MomentumParams, 점수용 AccelParams)."""
+    vb, ac = cfg["virtual_books"], cfg["virtual_books"]["accel"]
+    mp = mb.MomentumParams(
+        name=str(ac["name"]), top_n=int(ac["top_n"]), lookback_days=int(ac["step"]), min_price=float(ac["min_price"]),
+        commission_pct=float(vb["commission_pct"]), slippage_pct=float(vb["slippage_pct"]),
+        tax_rate_pct=float(vb["capital_gains_rate_pct"]), dividend_withholding_pct=float(vb["dividend_withholding_pct"]),
+    )
+    ap = accel.AccelParams(step=int(ac["step"]), min_history=int(ac["min_history"]), min_price=float(ac["min_price"]),
+                           top_n=int(ac["top_n"]))
+    return mp, ap
+
+
+def accel_signal(hist: dict, qqq: pd.Series, d, universe: list[str], ap: accel.AccelParams) -> dict:
+    """core.accel.rank 결과를 core.momentum_book.process_day가 받는 신호 모양으로 (score_pp = 점수 × 100)."""
+    r = accel.rank(hist, qqq, d, universe, ap)
+    return {**r, "targets": [{**x, "score_pp": x["score"] * 100.0, "ret": x["recent"]} for x in r["targets"]]}
+
+
+def accel_cycle_days(start, end, step: int = 20) -> list[pd.Timestamp]:
+    """start(첫 신호일)부터 step 거래일마다의 신호일 목록 (NYSE 달력 — 주말·휴장 제외, end 이하)."""
+    from data.market_calendar import trading_days_between
+
+    days = trading_days_between(pd.Timestamp(start).date(), pd.Timestamp(end).date())
+    return [pd.Timestamp(d) for d in days[::step]]
+
+
+def run_accel(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, actions_fn=None, fx_fn=None,
+              year_end_fn=None, cycle_fn=None) -> dict:
+    """「한 달 가속 따라하기」(9번째) — 처음 돈 기준일이 첫 신호일, 그 뒤 20거래일(NYSE 달력)마다 교체.
+
+    cycle_fn(start, d) → start~d 거래일 수(둘 다 포함, 테스트 주입). 기본은 data.market_calendar.trading_days_between.
+    체결·재조정·비용·세금·분배금·빈 종가·따라잡기는 6개월 강세 장부와 같은 core.momentum_book.process_day.
+    """
+    ac = cfg["virtual_books"].get("accel") or {}
+    if not ac.get("enabled", False):
+        return {"extra": [], "errors": [], "warnings": []}
+    mp, ap = accel_params(cfg)
+
+    def n_days(start, d) -> int:
+        if cycle_fn is not None:
+            return cycle_fn(start, d)
+        from data.market_calendar import trading_days_between
+
+        return len(trading_days_between(pd.Timestamp(start).date(), pd.Timestamp(d).date()))
+
+    def is_start(d, book, *_):
+        return True  # 처음 돈 기준일(armed_date)이 바로 첫 신호일
+
+    def is_signal(d, book, *_):
+        return (n_days(book["start_date"], d) - 1) % ap.step == 0
+
+    def rank_fn(hist, qqq, d, universe):
+        return accel_signal(hist, qqq, d, universe, ap)
+
+    return _run_rebalance_book(cfg, conn, ctx, ac, "accel", mp, is_start=is_start, is_signal=is_signal, rank_fn=rank_fn,
+                               wait_text="첫 신호", miss_text=f"QQQ {ap.min_history}거래일",
+                               dry_run=dry_run, market_fn=market_fn, actions_fn=actions_fn, fx_fn=fx_fn, year_end_fn=year_end_fn)
+
+
+def _run_rebalance_book(cfg: dict, conn, ctx: dict, conf: dict, kind: str, params: mb.MomentumParams, *, is_start, is_signal,
+                        rank_fn, wait_text: str, miss_text: str, dry_run: bool, market_fn=None, actions_fn=None, fx_fn=None,
+                        year_end_fn=None) -> dict:
+    """정해진 신호일마다 상위 N을 같은 비중으로 다시 맞추는 장부(8·9번째) 공통 — 기준일까지 하루씩 이어 간다.
+
+    is_start(d, book, 첫 해, 끝 해): 대기 중 장부가 d에 시작하는지 / is_signal(d, book, 첫 해, 끝 해): 시작 뒤 d가 신호일인지 /
+    rank_fn(hist, qqq, d, universe) → {"ok", "targets": [{ticker, score_pp, ...}]}.
+    출력: {"extra": [시트용 장부 묶음 0~1개], "errors": [str], "warnings": [str]}
+    """
+    vb = cfg["virtual_books"]
+    out = {"extra": [], "errors": [], "warnings": []}
     name = params.name
     try:
         base = ctx["base_date"]
@@ -322,7 +407,7 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
         days_index = closes_all.index
         qqq = closes_all[str(vb["signal_ticker"])]
         book = vbstore.load_picks_book(conn, name)
-        start_cfg = mo.get("start_date")
+        start_cfg = conf.get("start_date")
         if book is None and start_cfg and pd.Timestamp(start_cfg) <= base:
             raise PicksStateMissingError(
                 f"{name}: 시작일 {start_cfg}이 고정돼 있는데 DB에 장부 상태가 없습니다 — 새로 시작하지 않습니다 "
@@ -347,19 +432,19 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
         if days:
             frames = market["frames"]
             hist = {t: df["close"] for t, df in frames.items()}
-            month_ends = (month_end_fn or vbdata.month_end_trading_days)(days[0].year, base.year)
-            year_ends = (year_end_fn or vbdata.year_end_trading_days)(days[0].year, base.year)
+            fy, ly = days[0].year, base.year
+            year_ends = (year_end_fn or vbdata.year_end_trading_days)(fy, ly)
             actions = (actions_fn or vbdata.fetch_actions)(held, (days[0] - timedelta(days=10)).date()) if held else {}
             for d in days:
                 closes = {t: float(df.at[d, "close"]) for t, df in frames.items() if d in df.index and not pd.isna(df.at[d, "close"])}
                 universe = _universe_for(conn, d, base, market["universe"])
-                if book["status"] == mb.WAITING and d in month_ends and d >= pd.Timestamp(book["armed_date"]):
-                    start_fx, fx_date = _momentum_fx(mo, d, fx_fn)
+                if book["status"] == mb.WAITING and d >= pd.Timestamp(book["armed_date"]) and is_start(d, book, fy, ly):
+                    start_fx, fx_date = _momentum_fx(conf, d, fx_fn)
                     book = mb.start_book(book, d, float(vb["start_krw"]) / start_fx)
                     book["start_fx"], book["fx_date"] = start_fx, fx_date
-                signal = mb.rank(hist, qqq, d, universe, params) if (d in month_ends and book["status"] == mb.RUNNING) else None
+                signal = rank_fn(hist, qqq, d, universe) if (book["status"] == mb.RUNNING and is_signal(d, book, fy, ly)) else None
                 if signal is not None and not signal["ok"]:
-                    out["warnings"].append(f"{name}: {d.date()} 월말 신호를 QQQ {params.lookback_days}거래일 가격이 없어 계산하지 못했습니다")
+                    out["warnings"].append(f"{name}: {d.date()} 신호를 {miss_text} 가격이 없어 계산하지 못했습니다")
                 divs, splits = _actions_for_day(actions, d)
                 book, row, trades = mb.process_day(book, d, closes=closes, dividends=divs, splits=splits, signal=signal,
                                                    universe=universe, params=params, year_end=d in year_ends)
@@ -373,7 +458,7 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
         if not dry_run and (days or vbstore.load_picks_book(conn, name) is None):
             vbstore.save_picks_day(conn, book, new_daily, new_trades, [])
         if book["status"] != mb.RUNNING:
-            out["warnings"].append(f"{name}: 첫 월말 신호({pd.Timestamp(book['armed_date']).date()} 이후) 대기 중")
+            out["warnings"].append(f"{name}: {wait_text}({pd.Timestamp(book['armed_date']).date()} 이후) 대기 중")
             return out
         daily_rows = vbstore.picks_rows(conn, "picks_daily", name)
         trade_rows = _db_trades(vbstore.picks_rows(conn, "picks_trades", name))
@@ -384,7 +469,7 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
         if daily.empty:
             return out
         out["extra"].append({
-            "name": name, "kind": "momentum", "start": pd.Timestamp(book["start_date"]), "daily": daily,
+            "name": name, "kind": kind, "start": pd.Timestamp(book["start_date"]), "daily": daily,
             "trades": trade_rows, "summary": summarize_momentum(book, daily, int(vb["min_days_for_annualized"])),
             "meta": {"start_krw": float(vb["start_krw"]), "start_fx": book.get("start_fx"),
                      "fx_date": book.get("fx_date", ""), "initial_usd": book["initial_usd"]},
@@ -404,7 +489,7 @@ def _universe_for(conn, d: pd.Timestamp, base: pd.Timestamp, today: list[str]) -
 
 
 def _momentum_fx(mo: dict, start: pd.Timestamp, fx_fn) -> tuple[float, str]:
-    """6개월 강세 장부 시작 환율: 설정값 → 시작일(첫 월말 신호일) 원/달러 종가."""
+    """8·9번째 장부 시작 환율: 설정값 → 시작일(첫 신호일) 원/달러 종가."""
     if mo.get("start_fx"):
         return float(mo["start_fx"]), "설정값"
     if fx_fn is None:
@@ -413,7 +498,7 @@ def _momentum_fx(mo: dict, start: pd.Timestamp, fx_fn) -> tuple[float, str]:
         fx_fn = _default_fx
     rate, fx_date, warning = fx_fn(start.date())
     if rate is None:
-        raise RuntimeError(f"6개월 강세 장부 시작일 {start.date()} 원/달러 환율을 구하지 못했습니다 ({warning})")
+        raise RuntimeError(f"시작일 {start.date()} 원/달러 환율을 구하지 못했습니다 ({warning})")
     return float(rate), str(fx_date or "")
 
 

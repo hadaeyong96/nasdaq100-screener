@@ -108,6 +108,7 @@ def cfg(monkeypatch):
     vb["picks"].update({"start_date": None, "start_fx": None,
                         "books": [{"name": B1, "rules": "stub"}, {"name": B2, "rules": "stub"}]})
     vb["momentum"]["enabled"] = False  # 8번 장부는 tests/test_momentum_book.py에서 따로 본다
+    vb["accel"]["enabled"] = False  # 9번 장부는 tests/test_accel_book.py에서 따로 본다
     return c
 
 
