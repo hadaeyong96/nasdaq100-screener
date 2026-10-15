@@ -346,3 +346,55 @@ def test_engine_defers_last_day_with_empty_closes(cfg, tmp_path):
     m.upto = me + 2
     _run(cfg, m, tmp_path)
     assert {t["fill_date"] for t in _rows(tmp_path, "picks_trades")} == {IDX[me + 1].date().isoformat()}
+
+
+def test_catch_up_uses_universe_saved_on_that_day(cfg, tmp_path):
+    """매 실행 그날 명단을 DB에 남기고, 따라잡기로 지난 월말을 처리할 때는 남긴 명단을 쓴다."""
+    me = _first_me_after(206)
+    m = Market(205)
+    _run(cfg, m, tmp_path)
+    _daily_runs(cfg, m, tmp_path, me - 1)  # 월말 전날까지 매일 실행 (그날 명단 저장)
+    m.universe = [f"S{i:02d}" for i in range(12) if i != 11]  # 월말 당일 명단에서 S11이 빠진다
+    m.upto = me
+    _run(cfg, m, tmp_path, dry_run=True)  # 월말 당일 실행은 저장하지 않음(실패한 셈)
+    conn = vbstore.connect(tmp_path / "vb.db")
+    try:
+        vbstore.save_universe(conn, IDX[me].date().isoformat(), m.universe)  # 월말 실제 명단이 남아 있었다면
+    finally:
+        conn.close()
+    m.universe = [f"S{i:02d}" for i in range(12)]  # 따라잡는 날의 명단에는 S11이 다시 있다
+    m.upto = me + 1
+    r = _run(cfg, m, tmp_path)
+    assert not r["errors"], r["errors"]
+    bought = {t["ticker"] for t in _rows(tmp_path, "picks_trades")}
+    assert "S11" not in bought and len(bought) == 10  # 월말 명단(S11 없음)으로 고른 10개
+
+
+def test_universe_on_returns_latest_saved_on_or_before(tmp_path):
+    conn = vbstore.connect(tmp_path / "u.db")
+    try:
+        vbstore.save_universe(conn, "2026-10-14", ["B", "A"])
+        vbstore.save_universe(conn, "2026-10-16", ["C"])
+        assert vbstore.universe_on(conn, "2026-10-15") == ("2026-10-14", ["A", "B"])
+        assert vbstore.universe_on(conn, "2026-10-16") == ("2026-10-16", ["C"])
+        assert vbstore.universe_on(conn, "2026-10-13") is None
+    finally:
+        conn.close()
+
+
+def test_fixed_start_without_db_state_refuses_to_restart(cfg, tmp_path):
+    cfg["virtual_books"]["momentum"]["start_date"] = IDX[206].date().isoformat()
+    m = Market(230)
+    r = _run(cfg, m, tmp_path)
+    assert any(NAME in e and "새로 시작하지 않습니다" in e for e in r["errors"])
+    assert _rows(tmp_path, "picks_daily") == []
+
+
+def test_config_fix_line_has_start_date_and_fx(cfg, tmp_path):
+    me = _first_me_after(206)
+    m = Market(205)
+    _run(cfg, m, tmp_path)
+    client = FakeClient()
+    _daily_runs(cfg, m, tmp_path, me + 1, client=client)
+    line = next(x for x in client.tabs["전략요약"].values if x and x[0] == "config 고정값(momentum)")
+    assert f'start_date: "{IDX[me].date().isoformat()}"' in line[1] and "start_fx: 1400.0" in line[1]

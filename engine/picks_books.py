@@ -322,6 +322,11 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
         days_index = closes_all.index
         qqq = closes_all[str(vb["signal_ticker"])]
         book = vbstore.load_picks_book(conn, name)
+        start_cfg = mo.get("start_date")
+        if book is None and start_cfg and pd.Timestamp(start_cfg) <= base:
+            raise PicksStateMissingError(
+                f"{name}: 시작일 {start_cfg}이 고정돼 있는데 DB에 장부 상태가 없습니다 — 새로 시작하지 않습니다 "
+                "(시트에서 복구하는 기능은 아직 없음, docs/design/virtual_books.md 나중에 할 일)")
         if book is None:
             book = mb.new_book(name, base)
             days = list(days_index[(days_index >= base) & (days_index <= base)])
@@ -334,6 +339,8 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
         if days:
             market = (market_fn or default_market)(cfg, held)
             out["warnings"].extend(market.get("warnings", []))
+            if not dry_run:  # 매 실행 그날 명단을 남긴다 — 다음 따라잡기는 이 기록을 쓴다
+                vbstore.save_universe(conn, base.date().isoformat(), list(market["universe"]))
             days, defer_warning = defer_incomplete_last_day(days, market["frames"], list(market["universe"]) + held, days_index)
             if defer_warning:
                 out["warnings"].append(f"{name}: {defer_warning}")
@@ -345,16 +352,17 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
             actions = (actions_fn or vbdata.fetch_actions)(held, (days[0] - timedelta(days=10)).date()) if held else {}
             for d in days:
                 closes = {t: float(df.at[d, "close"]) for t, df in frames.items() if d in df.index and not pd.isna(df.at[d, "close"])}
+                universe = _universe_for(conn, d, base, market["universe"])
                 if book["status"] == mb.WAITING and d in month_ends and d >= pd.Timestamp(book["armed_date"]):
                     start_fx, fx_date = _momentum_fx(mo, d, fx_fn)
                     book = mb.start_book(book, d, float(vb["start_krw"]) / start_fx)
                     book["start_fx"], book["fx_date"] = start_fx, fx_date
-                signal = mb.rank(hist, qqq, d, market["universe"], params) if (d in month_ends and book["status"] == mb.RUNNING) else None
+                signal = mb.rank(hist, qqq, d, universe, params) if (d in month_ends and book["status"] == mb.RUNNING) else None
                 if signal is not None and not signal["ok"]:
                     out["warnings"].append(f"{name}: {d.date()} 월말 신호를 QQQ {params.lookback_days}거래일 가격이 없어 계산하지 못했습니다")
                 divs, splits = _actions_for_day(actions, d)
                 book, row, trades = mb.process_day(book, d, closes=closes, dividends=divs, splits=splits, signal=signal,
-                                                   universe=market["universe"], params=params, year_end=d in year_ends)
+                                                   universe=universe, params=params, year_end=d in year_ends)
                 if row is not None:
                     new_daily.append(row)
                 new_trades.extend(trades)
@@ -385,6 +393,14 @@ def run_momentum(cfg: dict, conn, ctx: dict, *, dry_run: bool, market_fn=None, a
     except Exception as exc:  # 이 장부의 오류가 다른 장부·브리핑을 막지 않게
         out["errors"].append(f"{name} 오류: {type(exc).__name__}: {exc}")
     return out
+
+
+def _universe_for(conn, d: pd.Timestamp, base: pd.Timestamp, today: list[str]) -> list[str]:
+    """d일에 쓸 명단: 기준일이면 오늘 명단, 지난 날짜면 DB에 남긴 d 이하 가장 최근 명단(없으면 오늘 명단)."""
+    if d >= base:
+        return list(today)
+    rec = vbstore.universe_on(conn, d.date().isoformat())
+    return rec[1] if rec else list(today)
 
 
 def _momentum_fx(mo: dict, start: pd.Timestamp, fx_fn) -> tuple[float, str]:

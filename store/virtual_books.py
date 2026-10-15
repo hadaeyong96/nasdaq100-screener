@@ -155,6 +155,7 @@ def _ensure_picks_schema(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (book, date, ticker, kind, stage)
         );
         CREATE TABLE IF NOT EXISTS rec_log (date TEXT, side TEXT, ticker TEXT, PRIMARY KEY (date, side, ticker));
+        CREATE TABLE IF NOT EXISTS universe_log (date TEXT PRIMARY KEY, tickers TEXT);
         """
     )
 
@@ -230,6 +231,20 @@ def save_rec_log(conn: sqlite3.Connection, date: str, buys: list[str], sells: li
         conn.execute("DELETE FROM rec_log WHERE date = ?", (date,))
         conn.executemany("INSERT OR IGNORE INTO rec_log (date, side, ticker) VALUES (?, ?, ?)",
                          [(date, "day", "")] + [(date, "buy", t) for t in buys] + [(date, "sell", t) for t in sells])
+
+
+def save_universe(conn: sqlite3.Connection, date: str, tickers: list[str]) -> None:
+    """그날 스크리너 명단(나스닥 100)을 남긴다 — 따라잡기 때 지난 날짜의 명단으로 쓴다(같은 날 다시 쓰면 바꿔 쓴다)."""
+    _ensure_picks_schema(conn)
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO universe_log (date, tickers) VALUES (?, ?)", (date, ",".join(sorted(set(tickers)))))
+
+
+def universe_on(conn: sqlite3.Connection, date: str) -> tuple[str, list[str]] | None:
+    """date 이하로 가장 최근에 남긴 명단 (기록 날짜, 티커 목록). 없으면 None."""
+    _ensure_picks_schema(conn)
+    row = conn.execute("SELECT date, tickers FROM universe_log WHERE date <= ? ORDER BY date DESC LIMIT 1", (date,)).fetchone()
+    return (row[0], [t for t in row[1].split(",") if t]) if row else None
 
 
 def load_rec_log(conn: sqlite3.Connection) -> dict[str, dict]:

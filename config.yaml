@@ -276,8 +276,8 @@ virtual_books:
   momentum:
     enabled: true
     name: "6개월 강세 따라하기"
-    start_fx: null # null이면 시작일(첫 월말 신호일) 원/달러 종가. 시작 뒤 시트 "config 고정값(momentum)"으로 고정
-    # start_date는 두지 않는다 — 장부가 처음 돈 기준일 이후 첫 월말 신호일이 시작일(DB에 저장)
+    start_date: null # null이면 장부가 처음 돈 기준일 이후 첫 월말 신호일이 시작일(DB에 저장). 시작 뒤 시트 "config 고정값(momentum)"대로 고정
+    start_fx: null # null이면 시작일(첫 월말 신호일) 원/달러 종가. 시작 뒤 위와 함께 고정
     top_n: 10
     lookback_days: 126
     min_price: 5.0 # 신호일 종가 5달러 이상만 대상

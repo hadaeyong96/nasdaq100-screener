@@ -204,7 +204,7 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
         m = x["meta"]
         rows.append(["시작 조건(6개월 강세)", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
                      f"= ${m['initial_usd']:,.2f}, 이후 달러 운용 · 시작일 {_d(x['start'])}(첫 월말 신호일)"])
-        rows.append(["config 고정값(momentum)", f"start_fx: {m['start_fx']!r}"])
+        rows.append(["config 고정값(momentum)", f"start_date: \"{_d(x['start'])}\"  start_fx: {m['start_fx']!r}"])
     rows.append(["갱신", meta["updated_at"]])
     rows.append(["연환산", f"시작 후 {meta['min_days_for_annualized']}일 미만이면 비움"])
     for n in meta.get("notes", []):
