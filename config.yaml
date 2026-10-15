@@ -249,8 +249,8 @@ backtest:
 # 매일 live 실행 뒤에 따로 돌고, 오류가 나도 기존 브리핑은 그대로 나간다(오류는 따로 알림).
 virtual_books:
   enabled: true
-  start_date: null # 다섯 장부 공통 시작일(YYYY-MM-DD, 그날 종가 체결). null이면 첫 실행 기준일을
-  # data/virtual_books.db에 저장해 쓴다. DB가 사라져도 같은 장부가 나오도록 실제 시작 뒤 날짜를 여기 고정할 것.
+  start_date: "2026-10-14" # 다섯 장부 공통 시작일(그날 종가 체결) — 2026-10-15 사용자 결정으로 고정.
+  # null이면 첫 실행 기준일을 data/virtual_books.db에 저장해 쓴다(DB가 사라지면 시작일이 바뀌므로 고정해 둔다).
   start_krw: 100000000 # 장부당 가상 1억 원 — 시작일 원/달러 종가로 달러 환산, 이후 달러 운용
   start_fx: null # null이면 시작일 원/달러 종가(data/fx, KRW=X). 정한 뒤 고정 권장
   signal_ticker: QQQ # 국면 신호: t일 종가 > 200일 단순이동평균 → t+1 거래일 종가 체결 (sealed-a B1과 같은 방식)
