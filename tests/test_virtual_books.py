@@ -514,6 +514,78 @@ def test_fetch_collects_all_failures():
     assert "QLD" in str(e.value) and "SGOV" in str(e.value)
 
 
+def test_trailing_empty_close_row_is_trimmed_with_warning():
+    """마감 직후 yfinance가 마지막 날 행을 종가 없이 줄 때(2026-10-15 실제 사례) — 잘라내고 경고."""
+    from data import virtual_books_data as vbdata
+
+    closes, divs = _frames(n=260)
+    holed = closes.copy()
+    holed.iloc[-1] = np.nan  # 네 종목 모두 마지막 날 종가 없음
+    c, d = vbdata.fetch_closes_and_dividends(TICKERS, closes.index[0].date(), now_et=NOW_ET,
+                                             history_fn=_yf_like(holed, divs))
+    assert c.index[-1] == closes.index[-2] and d.index[-1] == closes.index[-2]
+    assert c.notna().all().all()
+    pd.testing.assert_frame_equal(c, closes.iloc[:-1], check_freq=False)
+    (w,) = c.attrs["warnings"]
+    assert str(closes.index[-1].date()) in w and "잘라" in w
+
+
+def test_trailing_empty_close_in_one_ticker_trims_whole_day():
+    from data import virtual_books_data as vbdata
+
+    closes, divs = _frames(n=260)
+    holed = closes.copy()
+    holed.iloc[-2:, holed.columns.get_loc("SGOV")] = np.nan  # 맨 끝 이틀 SGOV만 비어도 그 이틀을 자른다
+    c, _ = vbdata.fetch_closes_and_dividends(TICKERS, closes.index[0].date(), now_et=NOW_ET,
+                                             history_fn=_yf_like(holed, divs))
+    assert c.index[-1] == closes.index[-3]
+    assert "SGOV" in c.attrs["warnings"][0] and "2일" in c.attrs["warnings"][0]
+
+
+def test_no_trailing_hole_means_no_warning():
+    from data import virtual_books_data as vbdata
+
+    closes, divs = _frames(n=260)
+    c, _ = vbdata.fetch_closes_and_dividends(TICKERS, closes.index[0].date(), now_et=NOW_ET,
+                                             history_fn=_yf_like(closes, divs))
+    assert len(c) == len(closes) and c.attrs["warnings"] == []
+
+
+def test_middle_empty_close_after_start_still_raises(tmp_path):
+    """중간 날짜가 비면 채우지 않고 지금처럼 멈춘다 (run_safely가 잡아 오류 알림)."""
+    closes, divs = _frames(n=300)
+    holed = closes.copy()
+    holed.iloc[-5, holed.columns.get_loc("QLD")] = np.nan
+    with pytest.raises(ValueError, match="종가가 빈 날"):
+        vbe.run(_cfg(str(closes.index[250].date())), **_run_kwargs(holed, divs, tmp_path, None))
+
+
+def test_run_with_trailing_hole_succeeds_and_catches_up_next_run(tmp_path, monkeypatch):
+    """끝 빈 행이 있는 날은 전날 기준으로 계산·경고, 다음 실행에서 그날까지 따라잡는다."""
+    monkeypatch.delenv("VB_TEST_SHEET_ID", raising=False)
+    closes, divs = _frames(n=300)
+    holed = closes.copy()
+    holed.iloc[-1] = np.nan
+    cfg = _cfg(str(closes.index[250].date()))
+    r1 = vbe.run(cfg, **_run_kwargs(holed, divs, tmp_path, None))
+    assert r1["status"] == "ok" and r1["base_date"] == closes.index[-2]
+    assert any("잘라" in w for w in r1["warnings"])
+    r2 = vbe.run(cfg, **_run_kwargs(closes, divs, tmp_path, None))
+    assert r2["base_date"] == closes.index[-1] and not any("잘라" in w for w in r2["warnings"])
+    full = vbe.run(cfg, **_run_kwargs(closes, divs, tmp_path / "fresh", None))
+    for name in r2["ledger"].books:
+        pd.testing.assert_frame_equal(r2["ledger"].books[name].daily, full["ledger"].books[name].daily)
+
+
+def test_start_day_itself_empty_is_not_started(tmp_path):
+    """시작일 당일 종가가 아직 비어 있으면 시작 전으로 처리(장부·시작값 저장 안 함)."""
+    closes, divs = _frames(n=300)
+    holed = closes.copy()
+    holed.iloc[-1] = np.nan
+    r = vbe.run(_cfg(str(closes.index[-1].date())), **_run_kwargs(holed, divs, tmp_path, None))
+    assert r["status"] == "not_started"
+
+
 # ── daily 연결: 국면 줄 붙이기 실패해도 브리핑 보호 ──────────────────────────
 
 

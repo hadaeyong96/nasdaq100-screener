@@ -97,6 +97,7 @@ def compute(cfg: dict, conn, *, now_et: datetime | None = None, history_fn=None,
     closes, divs = vbdata.fetch_closes_and_dividends(
         tickers, anchor - timedelta(days=vbdata.WARMUP_CALENDAR_DAYS), now_et=now_et, history_fn=history_fn
     )
+    warnings.extend(closes.attrs.get("warnings", []))
     base_date = closes.index[-1]
     start = pd.Timestamp(known_start) if known_start else base_date
     if start > base_date:
