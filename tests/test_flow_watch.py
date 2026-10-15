@@ -305,12 +305,6 @@ def test_report_renders_flow_tables_below_screening(tmp_path, mode):
     assert "기술" in html and "제외 0종목" in html
 
 
-def test_public_report_has_no_flow_table(tmp_path):
-    summary, _ = _flow_summary("live")
-    html = report_html.render_public_report(summary, _cfg(), tmp_path).read_text(encoding="utf-8")
-    assert "돈이 몰리는 종목" not in html
-
-
 # ── 판정 스크립트 ─────────────────────────────────────────────────────────
 
 

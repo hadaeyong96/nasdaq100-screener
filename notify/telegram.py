@@ -38,7 +38,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from notify.briefing import REGIME_LINE_PREFIX, report_titles
+from notify.briefing import CHECK_PREFIX, REBUILT_PREFIX, REGIME_LINE_PREFIX, build_report_caption, report_titles, title_line
 from store import db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,15 +82,20 @@ def report_caption(text: str, limit: int = MAX_CAPTION_LEN) -> str:
     """브리핑 본문 -> 보고서 첨부에 붙일 짧은 설명 (순수 함수).
 
     텔레그램은 보고서 파일 한 통만 보낸다(본문 글은 보내지 않는다, 2026-10-01 사용자 확정).
-    첨부만 봐도 무슨 파일인지 알 수 있게 본문 첫 줄(📊 제목 · 날짜 · 모드)과, 놓치면
-    안 되는 가상 장부 국면 줄("오늘 국면:")·정정본(🔁)·오류 경고(⚠️) 줄만 남긴다. limit자를 넘으면 자른다.
-    출력 예: "📊 데이터브리핑 · 9/30(수) 마감 · 실전"
+    첨부만 봐도 무슨 파일인지 알 수 있게 본문 첫 줄(제목 · 날짜)과, 놓치면 안 되는 가상 장부
+    국면 줄("오늘 국면:")·"정정본:"·"확인할 것:" 줄만 남긴다. limit자를 넘으면 자른다.
+    출력 예: "철수의 아침 편지 · 9/30(수)"
     """
     lines = [line for line in text.strip().split("\n") if line.strip()]
     if not lines:
         return ""
-    kept = [lines[0]] + [line for line in lines[1:] if line.startswith(("🔁", "⚠️", REGIME_LINE_PREFIX))]
+    kept = [lines[0]] + [line for line in lines[1:] if line.startswith((REBUILT_PREFIX, CHECK_PREFIX, REGIME_LINE_PREFIX))]
     caption = "\n".join(kept)
+    return caption if len(caption) <= limit else caption[: limit - 1] + "…"
+
+
+def _limit_caption(caption: str, limit: int = MAX_CAPTION_LEN) -> str:
+    """첨부 설명 글자 수 한도(1024자)를 넘으면 자른다."""
     return caption if len(caption) <= limit else caption[: limit - 1] + "…"
 
 
@@ -250,7 +255,7 @@ def report_attachment_name(as_of_str: str, cfg: dict | None = None) -> str:
     """휴대폰 파일 목록에서 알아보기 쉬운 첨부 파일 이름 (P3.4 2번).
 
     입력: as_of_str(기준일 YYYY-MM-DD), cfg(config.yaml — report.short_title을 쓴다)
-    출력: "{short_title}_YYYY-MM-DD.html" (예: 데이터브리핑_2026-09-23.html)
+    출력: "{short_title}_YYYY-MM-DD.html" (예: 철수의 아침 편지_2026-09-23.html)
     """
     return f"{report_titles(cfg)['short_title']}_{as_of_str}.html"
 
@@ -262,8 +267,8 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
          as_of, mode, report_path 포함), cfg, force_no_send(--no-send 플래그)
     출력: 저장한 txt 파일 경로
 
-    본문 글은 따로 보내지 않고, report_caption(text)(제목 줄 + 정정본·경고 줄)을 첨부
-    설명으로만 붙인다(2026-10-01 사용자 확정). 보고서 파일이 없을 때만 본문 글을 대신
+    본문 글은 따로 보내지 않고, notify.briefing.build_report_caption(제목 + 국면 줄 + "매수 n · 매도 n"
+    + 티커)을 첨부 설명으로만 붙인다(2026-10-14 브리핑 다이어트, 사용자 확정). 보고서 파일이 없을 때만 본문 글을 대신
     보낸다 — 아무것도 못 받는 날이 없게 하기 위해서다.
 
     모의(paper) 모드는 --no-send 여부와 관계없이 절대 텔레그램을 보내지 않는다(하드
@@ -296,7 +301,8 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
         report_path = summary.get("report_path")
         if report_path and Path(report_path).exists():
             ok = _send_document(
-                token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg), caption=report_caption(text)
+                token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
+                caption=_limit_caption(build_report_caption(summary, cfg)),
             )
         else:
             print("[telegram] 보고서 파일이 없어 본문 글을 대신 보냅니다.")
@@ -327,7 +333,7 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
     """
     expected = summary.get("expected_date") or "알수없음"
     actual = summary.get("actual_date") or "알수없음"
-    text = f"데이터 지연: 기대 기준일 {expected}, 실제 {actual}. 오늘은 매매 신호 없음\n"
+    text = f"{title_line(summary, cfg)}\n데이터 지연: 기대 기준일 {expected}, 실제 {actual}. 오늘은 매매 신호 없음\n"
 
     mode = summary.get("mode", "live")
     out_dir = ROOT / "outputs"
@@ -370,17 +376,15 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
 def send_group_briefing(
     text: str, report_path: Path | None, summary: dict, cfg: dict, force_no_send: bool = False
 ) -> dict:
-    """단체방(투자클럽, TELEGRAM_GROUP_CHAT_ID)에 공개용 브리핑을 보낸다.
+    """단체방(투자클럽, TELEGRAM_GROUP_CHAT_ID)에 **개인 채팅과 같은** 보고서·첨부 설명을 보낸다(2026-10-15 사용자 결정).
 
-    입력: text(notify.briefing.build_public_briefing_text 결과), report_path(공개용
-         HTML — engine.daily가 render_public_report로 만든 경로, 없으면 첨부 생략),
+    입력: text(개인 브리핑 본문 — 보고서 파일이 없을 때만 대신 보낸다), report_path(개인과 같은 보고서 HTML),
          summary, cfg, force_no_send(--no-send 플래그)
     출력: {"attempted": bool, "ok": bool, "skipped_reason": str|None, "error": str|None,
           "migrate_to_chat_id": int|None, "out_path": Path}
 
-    개인 발송과 같이 공개용 보고서 파일 한 통만 보내고 본문 글은 보내지 않는다
-    (report_caption(text) = 제목 줄만 첨부 설명으로, 2026-10-01). 보고서 파일이 없을
-    때만 본문 글을 대신 보낸다.
+    첨부 설명은 개인 발송과 같은 build_report_caption. 따로 만들던 공개용 보고서는 없앴다.
+    발송 기록(중복 방지)은 개인("YYYY-MM-DD")과 따로("YYYY-MM-DD:group") 남긴다.
 
     TELEGRAM_GROUP_CHAT_ID가 없으면(Secret 미설정) 조용히 건너뛴다(skipped_reason =
     "no_group_chat_id") — 이 기능을 아직 안 쓰는 사용자에게 영향이 없어야 한다.
@@ -435,10 +439,10 @@ def send_group_briefing(
         if report_path and Path(report_path).exists():
             ok, migrate_id, error = _send_document_checked(
                 token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
-                caption=report_caption(text),
+                caption=_limit_caption(build_report_caption(summary, cfg)),
             )
         else:
-            print("[telegram] 공개용 보고서 파일이 없어 본문 글을 대신 보냅니다.")
+            print("[telegram] 보고서 파일이 없어 단체방에 본문 글을 대신 보냅니다.")
             for chunk in split_message(text):
                 c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
                 ok = ok and c_ok
@@ -469,10 +473,10 @@ def group_send_warning_line(result: dict | None) -> str | None:
         return None
     if result.get("migrate_to_chat_id"):
         return (
-            f"⚠️ 단체방 발송 실패: 그룹이 슈퍼그룹으로 전환됐습니다. "
+            f"단체방 발송 실패: 그룹이 슈퍼그룹으로 전환됐습니다. "
             f"TELEGRAM_GROUP_CHAT_ID를 {result['migrate_to_chat_id']}로 바꿔주세요."
         )
-    return f"⚠️ 단체방 발송 실패: {result.get('error') or '알 수 없는 오류'}"
+    return f"단체방 발송 실패: {result.get('error') or '알 수 없는 오류'}"
 
 
 def resend_last(

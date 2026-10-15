@@ -158,13 +158,13 @@ alerts:
 orders:
   stop_fallback_type: 시장가 # 손절 예약이 미체결일 때 다음 거래일 안내 문구에 쓸 주문 방식
 
-# ── 보고서·브리핑 이름 ────────────────────────────────────────────────────
-# 텔레그램 첫 줄, HTML 보고서 제목·부제, 첨부 파일 이름에 쓴다 (notify.briefing.report_titles).
+# ── 보고서·브리핑 이름 (2026-10-15 "철수의 아침 편지"로 변경) ─────────────────
+# 보고서 맨 위 한 줄·HTML title·텔레그램 첨부 설명 첫 줄("철수의 아침 편지 · 10/14(수)")·첨부 파일 이름에 쓴다
+# (notify.briefing.report_titles). 이모지는 쓰지 않는다. 개인 채팅과 단체방에 같은 보고서·같은 설명을 보낸다.
 report:
-  title: "데이터 투자 브리핑" # 보고서 제목, HTML title
-  subtitle: "미국 대형주 · 미국 종가 기준 · 규칙 기반 분석" # 제목 아래 부제
-  short_title: "데이터브리핑" # 텔레그램 첫 줄, 첨부 파일 이름
-  public_suffix: "투자클럽" # 공개용 표시
+  title: "철수의 아침 편지" # 보고서 맨 위·HTML title·첨부 설명 첫 줄
+  subtitle: "미국 대형주 · 미국 종가 기준 · 규칙 기반 분석" # 맨 아래 「보고서 정보」 접기 안에만
+  short_title: "철수의 아침 편지" # 첨부 파일 이름(철수의 아침 편지_YYYY-MM-DD.html)
 
 # ── 자금 흐름 관찰 (F2, docs/design/flow_watch.md) ──────────────────────────
 # 표시·주간 기록 전용(참고용, 매수 신호 아님). 여기 값은 신호·필터·수량 계산에 쓰지 않는다.
@@ -176,6 +176,29 @@ flow_watch:
   base_days: 60 # 직전 비교 구간(거래일)
   top_n: 10 # TOP 표·주간 목록 크기
   exclude_tickers: [QQQ, QQQM, TQQQ, QLD, SQQQ, PSQ] # 대상에서 뺄 ETF
+
+# ── 이번 주 QQQ보다 강한 종목·업종 (작업 5-1, core/weekly_rs.py, docs/design/weekly_rs.md) ──
+# 관찰용 표시 전용 — 신호·필터·수량 계산에 쓰지 않는다. 묶음은 사용자 지정(2026-10-15), 명단에 있는 종목만 쓴다.
+weekly_rs:
+  days: 5 # 최근 거래일 수 (QQQ 거래일 기준)
+  top_n: 10 # 표 1 상위 종목 수
+  group_top: 3 # 표 2 상위 묶음 수
+  group_bottom: 3 # 표 2 하위 묶음 수
+  group_min: 2 # 계산된 종목이 이보다 적은 묶음은 표시 안 함
+  caption: "관찰용 · 매수 신호 아님 (1주 강세는 과거 시험에서 다음 상승을 예측하지 못함)"
+  groups:
+    메모리: [MU, WDC, STX, SNDK]
+    반도체장비: [AMAT, LRCX, KLAC, ASML, TER]
+    반도체: [NVDA, AMD, AVGO, QCOM, ADI, TXN, MCHP, NXPI, INTC, MRVL, MPWR, ARM]
+    식음료: [PEP, KDP, MDLZ, MNST, CCEP]
+    유틸리티: [AEP, EXC, XEL, CEG]
+    소프트웨어: [MSFT, ADBE, INTU, ADSK, CDNS, SNPS, WDAY, ROP, PANW, FTNT, CRWD, DDOG]
+    인터넷: [GOOGL, META, AMZN, NFLX, BKNG, ABNB, DASH, MELI, PDD, SHOP]
+    헬스: [AMGN, GILD, REGN, VRTX, ISRG, IDXX, DXCM, ALNY, GEHC]
+    산업: [CSX, ODFL, PCAR, FAST, CTAS, CPRT, HON, AXON]
+    소비: [COST, WMT, ROST, ORLY, SBUX, MAR]
+    에너지: [FANG, BKR]
+    급여: [ADP, PAYX]
 
 # ── 시장 온도 (P3.8) ────────────────────────────────────────────────────────
 # 표시 전용. 여기 값은 신호·필터·수량 계산에 쓰지 않는다.

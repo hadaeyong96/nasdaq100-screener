@@ -384,18 +384,18 @@ def test_resend_last_ignores_dedup_record(tmp_path, monkeypatch):
 
 def test_report_caption_keeps_title_and_alert_lines_only():
     text = (
-        "📊 데이터브리핑 · 9/30(수) 마감 · 실전\n🔁 체결 기록 변경 반영 정정본 (2026-09-25부터 재계산)\n\n"
+        "철수의 아침 편지 · 9/30(수)\n정정본: 체결 기록 변경 반영 (2026-09-25부터 재계산)\n\n"
         "📈 시장 온도\n- 공포·탐욕 38(공포) 🟡주의\n\n🎯 오늘의 신호\n- 매수 1 : NVDA(1차)\n\n"
-        "⚠️ 시트 오류: 체결 2번째 줄\n⚠️ FRED 지표 수집 실패: DGS10\n"
+        "확인할 것: 시트 오류: 체결 2번째 줄\n확인할 것: FRED 지표 수집 실패: DGS10\n"
     )
     assert telegram.report_caption(text) == (
-        "📊 데이터브리핑 · 9/30(수) 마감 · 실전\n🔁 체결 기록 변경 반영 정정본 (2026-09-25부터 재계산)\n"
-        "⚠️ 시트 오류: 체결 2번째 줄\n⚠️ FRED 지표 수집 실패: DGS10"
+        "철수의 아침 편지 · 9/30(수)\n정정본: 체결 기록 변경 반영 (2026-09-25부터 재계산)\n"
+        "확인할 것: 시트 오류: 체결 2번째 줄\n확인할 것: FRED 지표 수집 실패: DGS10"
     )
 
 
 def test_report_caption_is_cut_to_telegram_limit():
-    caption = telegram.report_caption("📊 제목\n" + "⚠️ " + "가" * 2000)
+    caption = telegram.report_caption("제목\n" + "확인할 것: " + "가" * 2000)
     assert len(caption) == telegram.MAX_CAPTION_LEN and caption.endswith("…")
 
 
@@ -418,9 +418,10 @@ def test_send_briefing_sends_only_report_file_with_caption(tmp_path, monkeypatch
     report_path.write_text("<html></html>", encoding="utf-8")
     summary = {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-30"), "report_path": report_path}
 
-    telegram.send_briefing("📊 데이터브리핑 · 9/30(수) 마감 · 실전\n\n🎯 오늘의 신호\n- 오늘 매매 신호 없음\n", summary, cfg)
+    telegram.send_briefing("철수의 아침 편지 · 9/30(수)\n\n🎯 오늘의 신호\n- 오늘 매매 신호 없음\n", summary, cfg)
 
-    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html", "📊 데이터브리핑 · 9/30(수) 마감 · 실전")]
+    # 브리핑 다이어트(2026-10-14): 첨부 설명 = 제목 + (국면 줄) + "매수 n · 매도 n" + 티커
+    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html", "철수의 아침 편지 · 9/30(수)\n매수 0 · 매도 0")]
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-09-30") is True  # 보고서 한 통 성공이면 발송 기록
     conn.close()
@@ -448,3 +449,42 @@ def test_send_briefing_failed_document_does_not_record_notification(tmp_path, mo
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-09-30") is False
     conn.close()
+
+
+def test_build_report_caption_compact_format():
+    """브리핑 다이어트: 제목 + 국면 줄 + "매수 n(티커) · 매도 n(티커)". 경고·정정본이 없는 날은 이 세 줄뿐."""
+    from notify import briefing
+
+    summary = {
+        "as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전",
+        "regime_line": "오늘 국면: QQQ 200일선 위(+10.4%) · 전환 장부 QLD·TQQQ 보유 중",
+        "buy_groups": {"b1": [{"ticker": "NVDA"}], "b2": [{"ticker": "AAPL"}, {"ticker": "NVDA"}], "b3": [], "b9": []},
+        "buy_count": 3, "sell_rows": [{"티커": "ROP"}],
+    }
+    assert briefing.build_report_caption(summary, {}).split("\n") == [
+        "철수의 아침 편지 · 10/13(화)",
+        "오늘 국면: QQQ 200일선 위(+10.4%) · 전환 장부 QLD·TQQQ 보유 중",
+        "매수 3(NVDA, AAPL) · 매도 1(ROP)",
+    ]
+    empty = {"as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전"}
+    assert briefing.build_report_caption(empty, {}).split("\n")[1] == "매수 0 · 매도 0"
+
+
+def test_build_report_caption_adds_rebuilt_and_warning_lines_only_when_present():
+    """해당 있는 날에만: 🔁 정정본(국면 줄 아래), ⚠️ 시트 입력 오류·FRED 누락(맨 아래)."""
+    from notify import briefing
+
+    summary = {
+        "as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전",
+        "regime_line": "오늘 국면: QQQ 200일선 아래(-0.4%) · 전환 장부 SGOV 보유 중",
+        "buy_groups": {}, "buy_count": 0, "sell_rows": [], "rebuilt_from": "2026-10-10",
+        "input_errors": ["계획 기록 오류: 3번째 줄", "체결 기록 오류: 5번째 줄"], "fred_missing": ["DGS10"],
+    }
+    assert briefing.build_report_caption(summary, {}).split("\n") == [
+        "철수의 아침 편지 · 10/13(화)",
+        "오늘 국면: QQQ 200일선 아래(-0.4%) · 전환 장부 SGOV 보유 중",
+        "정정본: 체결 기록 변경 반영 (2026-10-10부터 재계산)",
+        "매수 0 · 매도 0",
+        "확인할 것: 시트 오류: 계획 기록 오류: 3번째 줄 외 1건",
+        "확인할 것: FRED 지표 수집 실패: DGS10",
+    ]

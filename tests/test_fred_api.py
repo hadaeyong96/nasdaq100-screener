@@ -89,7 +89,7 @@ def test_fred_missing_codes_flags_failed_or_absent_indicators():
 def test_briefing_shows_fred_and_sheet_alert_lines():
     summary = {"as_of": None, "fred_missing": ["DGS10", "T10Y2Y"], "input_errors": ["체결 기록 오류: 헤더 오류 - x"]}
     text = briefing.build_briefing_text(summary, {})
-    assert "⚠️ FRED 지표 수집 실패: DGS10, T10Y2Y" in text
-    assert "⚠️ 시트 오류: 체결 기록 오류: 헤더 오류 - x" in text
+    assert "확인할 것: FRED 지표 수집 실패: DGS10, T10Y2Y" in text
+    assert "확인할 것: 시트 오류: 체결 기록 오류: 헤더 오류 - x" in text
     clean = briefing.build_briefing_text({"as_of": None}, {})
     assert "⚠️" not in clean

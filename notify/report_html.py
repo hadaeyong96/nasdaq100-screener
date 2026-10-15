@@ -20,7 +20,7 @@ import pandas as pd
 from core import macro_status
 from core import screening_view as sview
 from notify import macro_explain
-from notify.briefing import PUBLIC_DISCLAIMER, report_titles
+from notify.briefing import report_titles, title_line
 from core.sizing import format_krw
 from core.signals import levels
 
@@ -283,6 +283,61 @@ _SECTOR_KO = {
 _FLOW_STATUS_CLS = {"유입": "ok", "투매": "no", "보통": ""}
 
 
+# 보고서 맨 위 "오늘 매수 추천"의 한 줄 이유 (표시 전용 — 규칙 탭의 조건 요약과 같은 내용)
+_TOP_BUY_REASON = {
+    "A1": "RSI 30 상향 돌파 · 1차 정찰",
+    "A2": "MACD 골든크로스 · 2차 확인",
+    "A3": "일목 구름 4요소 충족 · 3차 확정",
+    "B": "구름 위 골든크로스 · 재진입",
+}
+
+
+def _top_buy_rows(all_rows: list[dict]) -> list[dict]:
+    """매수 신호 행(점수 내림차순) → 맨 위 추천 표 행: 종목, 현재가(기준일 종가), 이유, 신호 강도(점수·등급)."""
+    out = []
+    for r in all_rows:
+        close = r.get("close")
+        grade = r.get("grade") or ""
+        out.append({
+            "ticker": r["ticker"], "kr": r.get("kr") or r["ticker"],
+            "close_str": f"${close:,.2f}" if close is not None else "-",
+            "reason": _TOP_BUY_REASON.get(r.get("stage", ""), r.get("stage_label", "")),
+            "strength": f"{r.get('score', 0)}점" + (f" · {grade}등급" if grade else ""),
+            "hold": r.get("decision") not in (None, "매수"),
+        })
+    return out
+
+
+def _top_sell_rows(sell_rows: list[dict]) -> list[dict]:
+    """매도·손절 행 → 맨 위 추천 표 행: 종목, 보유 수익률(손익률), 이유(신호)."""
+    out = []
+    for r in sell_rows:
+        ret = r.get("손익률")
+        out.append({
+            "ticker": r["티커"], "kr": r.get("종목명") or r["티커"],
+            "ret_str": f"{ret:+.1f}%" if ret is not None else "-",
+            "ret_cls": "" if ret is None else ("ok" if ret >= 0 else "no"),
+            "reason": r.get("신호") or "",
+        })
+    return out
+
+
+def _vbooks_ctx(vbooks: dict | None) -> tuple[list[dict], str]:
+    """summary["vbooks"]({start, benchmark, rows: 장부 요약}) → 접기 안 가상 장부 표 행, 시작일."""
+    if not vbooks or not vbooks.get("rows"):
+        return [], ""
+    bench = next((r for r in vbooks["rows"] if r["book"] == vbooks.get("benchmark")), None)
+    rows = []
+    for r in vbooks["rows"]:
+        vs = None if bench is None or r is bench else r["cum_return_pct"] - bench["cum_return_pct"]
+        rows.append({
+            "book": r["book"], "value_str": f"{r['value']:,.0f}", "cum_str": f"{r['cum_return_pct']:+.2f}%",
+            "vs_qqq_str": "-" if vs is None else f"{vs:+.2f}%p", "mdd_str": f"{r['mdd_pct']:.1f}%",
+            "switches": r["switches"], "holding": r["holding"],
+        })
+    return rows, vbooks.get("start", "")
+
+
 def _pct(v, digits: int = 1, sign: bool = True) -> str:
     if v is None or (isinstance(v, float) and pd.isna(v)):
         return "-"
@@ -319,6 +374,64 @@ def _flow_watch_ctx(summary: dict) -> dict | None:
         })
     return {"caption": _FLOW_CAPTION, "as_of_str": view["as_of_str"], "scan_count": view["scan_count"],
             "top": top, "sectors": sectors, "excluded": view["excluded"]}
+
+
+def _pp(v: float) -> str:
+    r = round(v, 1) + 0.0  # 반올림 후 0이면 "-0.0" 대신 "0.0"
+    return f"{r:+.1f}%p" if r else "0.0%p"
+
+
+def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
+    """summary["weekly_rs"](engine.daily.build_weekly_rs_view) -> 템플릿 context. 없으면 None (작업 5-1)."""
+    view = summary.get("weekly_rs")
+    if not view:
+        return None
+    caption = (cfg.get("weekly_rs") or {}).get("caption", "")
+    names = view.get("names") or {}
+    from core import weekly_rs as _wrs
+
+    wrs_group = _wrs.group_of(_wrs.settings(cfg)["groups"])
+
+    def cls(v):
+        return "up" if round(v, 1) > 0 else ("down" if round(v, 1) < 0 else "")
+
+    top = [{"rank": i + 1, "ticker": r["ticker"], "name": names.get(r["ticker"], r["ticker"]), "group": r["group"],
+            "excess": _pp(r["excess_pp"]), "excess_cls": cls(r["excess_pp"]), "ret": _pct(r["ret"])}
+           for i, r in enumerate(view["top"])]
+
+    def grp(x):
+        return {"group": x["group"], "count": x["count"], "avg": _pp(x["avg_excess_pp"]),
+                "avg_cls": cls(x["avg_excess_pp"]), "tickers": ", ".join(x["tickers"])}
+
+    window = view.get("window")
+    acc = view.get("accel") or {}
+
+    def pct_pp(v):  # 소수 → %p
+        return _pp(v * 100.0)
+
+    accel_top = [{"rank": i + 1, "ticker": r["ticker"], "name": names.get(r["ticker"], r["ticker"]),
+                  "group": wrs_group.get(r["ticker"], "-"), "score": pct_pp(r["score"]), "score_cls": cls(r["score"] * 100),
+                  "recent": _pct(r["recent"]), "prior": _pct(r["prior"])} for i, r in enumerate(acc.get("targets", []))]
+
+    def agrp(x):
+        return {"group": x["group"], "count": x["count"], "avg": pct_pp(x["avg_score"]), "avg_cls": cls(x["avg_score"] * 100),
+                "tickers": ", ".join(x["tickers"])}
+
+    d = acc.get("dates")
+    accel_ctx = {"ok": bool(acc.get("ok")), "top": accel_top,
+                 "groups_top": [agrp(x) for x in acc.get("groups_top", [])],
+                 "groups_bottom": [agrp(x) for x in acc.get("groups_bottom", [])],
+                 "dates_str": " → ".join(x.date().isoformat() for x in d) if d else "",
+                 "scan_count": len(acc.get("ranked", [])), "excluded_n": len(acc.get("excluded", {}))} if acc else None
+    return {
+        "accel": accel_ctx,
+        "caption": caption, "error": view.get("error"), "ok": view.get("status") == "ok",
+        "window_str": f"{window[0].date().isoformat()} → {window[1].date().isoformat()}" if window else "",
+        "qqq_ret": _pct(view["qqq_return"]) if view.get("qqq_return") is not None else "-",
+        "scan_count": len(view.get("rows", [])), "top": top,
+        "groups_top": [grp(x) for x in view["groups_top"]], "groups_bottom": [grp(x) for x in view["groups_bottom"]],
+        "excluded": view.get("excluded", []),
+    }
 
 
 def build_context(summary: dict, cfg: dict) -> dict:
@@ -370,6 +483,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
             }
         )
     buy_count = summary.get("buy_count", len(all_rows))
+    vbooks_rows, vbooks_start = _vbooks_ctx(summary.get("vbooks"))
 
     stage_label = {"정찰": "1차 정찰", "확인": "2차 확인", "확정": "3차 확정", "추세보유": "재진입", "청산중": "청산중"}
     hold_rows = [
@@ -476,11 +590,19 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "fx_date_str": fx_date_str,
         "fx_is_fallback": fx_is_fallback,
         "live_judgment_rows": live_judgment_rows,
+        # 맨 위 "확인할 것: n건" 한 줄 — 접기 안 경고 배너와 같은 목록의 건수만 센다(live 전용, 0건이면 숨김)
+        "check_items": [
+            (label, len(rows))
+            for label, rows in (("판정 변경", changed_judgment_rows), ("계획금액으로 1차 0주", one_share_warning_rows),
+                                ("계획 한도 초과", plan_limit_exceeded_rows))
+            if is_live and rows
+        ],
         "changed_judgment_rows": changed_judgment_rows,
         "one_share_warning_rows": one_share_warning_rows,
         "plan_limit_exceeded_rows": plan_limit_exceeded_rows,
         "cfg_js": cfg_js,
         "titles": report_titles(cfg),
+        "header_line": title_line(summary, cfg),  # 맨 위 한 줄 "철수의 아침 편지 · 10/14(수)"
         "buy_count": buy_count,
         "sell_count": len(sell_rows),
         "held_count": summary.get("held_tickers_count", 0),
@@ -492,6 +614,11 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "buy_risk_sum_str": _won(buy_risk_sum_krw),
         "buy_risk_pct": f"{buy_risk_pct:.2f}" if buy_risk_pct is not None else "0.00",
         "sell_rows": sell_rows,
+        # 맨 위 오늘 추천 (브리핑 다이어트 — 아래 상세 표와 같은 행을 짧게만 보여 준다)
+        "top_buys": _top_buy_rows(all_rows),
+        "top_sells": _top_sell_rows(summary.get("sell_rows", [])),
+        "vbooks_rows": vbooks_rows,
+        "vbooks_start": vbooks_start,
         "hold_rows": hold_rows,
         "hold_totals": hold_totals,
         "watch_rows": summary.get("watch_rows", []),
@@ -523,6 +650,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "macro_disclaimer": macro_explain.DISCLAIMER,
         "screening": _screening_ctx(summary, cfg),
         "flow_watch": _flow_watch_ctx(summary),
+        "weekly_rs": _weekly_rs_ctx(summary, cfg),
     }
 
 
@@ -538,72 +666,5 @@ def render_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
     output_dir.mkdir(exist_ok=True, parents=True)
     mode = summary.get("mode", "live")
     path = output_dir / f"report_{mode}_{context['as_of_str']}.html"
-    path.write_text(html, encoding="utf-8")
-    return path
-
-
-# ── 단체방 공개용 HTML (투자클럽) ─────────────────────────────────────
-# 시장 온도 + 오늘의 추천(진입가·손절가·조건)만 담는다. 보유·수량·평단·손익·
-# 계획금액·체결 내역은 build_context와 달리 애초에 읽지 않는다 — 새는 값이
-# 없다는 걸 코드 구조로도 보장하기 위해서다 (build_context를 재사용하지 않음).
-#
-# 오늘의 추천은 신규 진입(b1, A1 정찰) 신호만 담는다 — b2·b3·b9는 라이브에서
-# 실제 보유했거나 보유 중인 종목에만 나오는 신호라 종목명 자체가 보유를 드러낸다
-# (notify.briefing 모듈 위 주석 참고).
-_PUBLIC_RECOMMEND_BUCKET = "b1"
-
-
-def _public_buy_row_ctx(r: dict) -> dict:
-    """buy_groups 행 하나 -> 공개용 템플릿 context. r["note"]·수량·금액은 담지 않는다."""
-    return {
-        "ticker": r["ticker"],
-        "kr": r["kr"],
-        "stage_label": r.get("stage_label", ""),
-        "limit": _num(r["limit"]),
-        "stop": _num(r["stop"]),
-        "stop_pct": r.get("stop_pct"),
-        "decision": r["decision"],
-        "condition": r.get("condition_summary") or "",
-    }
-
-
-def build_public_context(summary: dict, cfg: dict) -> dict:
-    """summary + cfg -> 단체방 공개용 Jinja2 템플릿 context.
-
-    build_context와 달리 funding_plan·hold_rows·sell_rows·pending_order_rows 등
-    보유·자금 관련 값은 아예 만들지 않는다 (P-group 지시문 — 공개용 결과물에 보유·
-    금액 정보가 새지 않아야 한다).
-    """
-    as_of = summary.get("as_of")
-    as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
-
-    buy_groups = summary.get("buy_groups", {"b1": [], "b2": [], "b3": [], "b9": []})
-    new_entry_rows = sorted(
-        buy_groups.get(_PUBLIC_RECOMMEND_BUCKET, []), key=lambda r: r.get("score", 0), reverse=True
-    )
-
-    return {
-        "as_of_str": as_of_str,
-        "titles": report_titles(cfg),
-        "generated_str": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "buy_rows": [_public_buy_row_ctx(r) for r in new_entry_rows],
-        "buy_count": len(new_entry_rows),
-        "macro_rows": [_macro_row_ctx(r) for r in summary.get("macro_rows", [])],
-        "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
-        "macro_disclaimer": macro_explain.DISCLAIMER,
-        "public_disclaimer": PUBLIC_DISCLAIMER,
-    }
-
-
-def render_public_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
-    """단체방 공개용 보고서 HTML을 outputs/report_public_YYYY-MM-DD.html로 저장하고 경로를 반환한다.
-
-    live 전용(호출부 책임) — paper는 애초에 텔레그램을 보내지 않으므로 부르지 않는다.
-    """
-    context = build_public_context(summary, cfg)
-    template = _env.get_template("report_public.html.j2")
-    html = template.render(**context)
-    output_dir.mkdir(exist_ok=True, parents=True)
-    path = output_dir / f"report_public_{context['as_of_str']}.html"
     path.write_text(html, encoding="utf-8")
     return path

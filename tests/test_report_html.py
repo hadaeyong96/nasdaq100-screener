@@ -321,10 +321,11 @@ def test_live_mode_hides_total_krw_in_header(tmp_path, cfg):
 
 
 def test_paper_mode_still_shows_total_krw_in_header(tmp_path, cfg):
+    """머리말 정보는 2026-10-15부터 맨 아래 「보고서 정보」 접기 안에 있다 — 모의는 거기 총자금을 보인다."""
     path = report_html.render_report(_empty_summary(mode="paper"), cfg, tmp_path)
     html = path.read_text(encoding="utf-8")
-    header = html.split("<nav")[0]
-    assert "총자금" in header
+    info = html.split('id="fold-info"', 1)[1]
+    assert "총자금" in info
 
 
 def test_live_mode_renders_judgment_table_row(cfg):
@@ -559,14 +560,112 @@ def test_why_row_follows_sorted_signal_row_in_browser(tmp_path, cfg):
             browser = p.chromium.launch()
             page = browser.new_page()
             page.goto(path.resolve().as_uri(), wait_until="domcontentloaded", timeout=15000)
+            page.locator("#fold-detail > summary").click()  # 상세 표는 접기(기본 닫힘) 안에 있다
             table = page.locator("#all table")  # "전체" 탭이 기본으로 보임(b1은 하위 탭이라 숨김)
             table.locator("thead th", has_text="점수").click()  # 오름차순
             rows = table.locator("tbody tr")
             classes = rows.evaluate_all("els => els.map(e => e.className)")
             tickers = rows.evaluate_all("els => els.map(e => e.dataset.key || '')")
-            # sig/why가 번갈아 나오고, 각 why 앞의 sig가 같은 종목이어야 한다(정렬 후에도 짝이 안 깨짐).
-            assert classes == ["sig", "why"] * 3
-            assert [tickers[i] for i in range(0, 6, 2)] == ["CCC-A1", "AAA-A1", "BBB-A1"]  # 점수 5<20<60
             browser.close()
     except Exception as e:  # pragma: no cover - 브라우저 바이너리가 없는 환경 대비
         pytest.skip(f"playwright 브라우저를 쓸 수 없어 건너뜀: {e}")
+    # sig/why가 번갈아 나오고, 각 why 앞의 sig가 같은 종목이어야 한다(정렬 후에도 짝이 안 깨짐).
+    assert classes == ["sig", "why"] * 3
+    assert [tickers[i] for i in range(0, 6, 2)] == ["CCC-A1", "AAA-A1", "BBB-A1"]  # 점수 5<20<60
+
+
+# ── 브리핑 다이어트 (2026-10-14): 맨 위 오늘 추천 + 나머지는 접기(기본 닫힘) ──────────────
+
+
+def _compact_summary():
+    summary = _empty_summary()
+    summary["regime_line"] = "오늘 국면: QQQ 200일선 위(+10.4%) · 전환 장부 QLD·TQQQ 보유 중"
+    summary["buy_groups"]["b2"] = [{
+        "ticker": "NVDA", "kr": "엔비디아", "stage": "A2", "bucket": "b2", "stage_label": "2차 확인",
+        "key": "NVDA-A2", "is_new_position": False, "limit": 120.0, "stop": 110.0, "qty": 3, "amount_krw": 0,
+        "max_loss_krw": 0, "stop_pct": -8.3, "decision": "매수", "note": "", "score": 65, "grade": "S", "close": 118.81,
+    }]
+    summary["buy_count"] = 1
+    summary["sell_rows"] = [{
+        "티커": "ROP", "종목명": "로퍼", "kind": "E1", "신호": "모멘텀 약화(E1, 데드크로스)", "매도범위": "1차분",
+        "수량": 2, "평균단가": 400.0, "종가": 412.3, "손익률": 3.1, "주문안내": "", "비고": "",
+    }]
+    summary["vbooks"] = {"start": "2026-10-14", "benchmark": "QQQ 그냥 보유", "rows": [
+        {"book": "QQQ 그냥 보유", "value": 75000.0, "cum_return_pct": 0.5, "mdd_pct": -1.0, "switches": 0, "holding": "QQQ"},
+        {"book": "TQQQ 200일선 전환", "value": 76000.0, "cum_return_pct": 1.6, "mdd_pct": -3.0, "switches": 1, "holding": "SGOV"},
+    ]}
+    return summary
+
+
+def test_top_block_comes_before_all_folds_and_folds_are_closed(tmp_path, cfg):
+    html = report_html.render_report(_compact_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+    body = html[html.index("<header>"):]
+    i_head, i_regime = body.index("<header>"), body.index('<div class="regime-line">')
+    i_today = body.index('<section class="today"')
+    i_fold = body.index('<details class="fold"')
+    assert i_head < i_regime < i_today < i_fold
+    today = body[i_today:i_fold]
+    assert "엔비디아" in today and "NVDA" in today and "$118.81" in today
+    assert "MACD 골든크로스 · 2차 확인" in today and "65점 · S등급" in today
+    assert "로퍼" in today and "+3.1%" in today and "모멘텀 약화(E1, 데드크로스)" in today
+    folds = re.findall(r"<details class=\"fold\"[^>]*>\s*<summary>([^<]+)</summary>", body)
+    assert folds == ["▶ 전체 후보 목록 (오늘의 스크리닝)", "▶ 매수·매도 상세 · 보유 현황 · 경고 · 규칙",
+                     "▶ FRED 경제 그래프 (시장 온도)", "▶ 돈이 몰리는 종목", "▶ 가상 장부 현황", "▶ 지표 설명 (읽는 법·용어)",
+                     "▶ 보고서 정보"]
+    assert not re.search(r"<details class=\"fold\"[^>]*\bopen\b", body)  # 기본 닫힘
+
+
+def test_existing_sections_kept_inside_folds(tmp_path, cfg):
+    """기존 내용은 지우지 않고 위치만 옮겼다: 탭 패널·읽는 법·체결 안내가 모두 접기 안에 있다."""
+    html = report_html.render_report(_compact_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+    first_fold = html.index('<details class="fold"')
+    for marker in ['id="buy"', 'id="sell"', 'id="hold"', 'id="watch"', 'id="filtered"', 'id="warn"', 'id="rules"',
+                   'id="guide"', "이 프로그램이 쓰는 지표 4가지", "용어 사전", "탭에 한 줄씩 기록하세요",
+                   'aria-label="오늘의 스크리닝"', "주문 안내"]:
+        assert marker in html and html.index(marker) > first_fold, marker
+    assert 'data-tab="guide"' not in html  # 읽는 법은 탭이 아니라 "지표 설명" 접기로
+    assert 'class="panel gd"' not in html
+
+
+def test_no_recommendation_line_when_nothing_today(tmp_path, cfg):
+    html = report_html.render_report(_empty_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+    today = html[html.index('<section class="today"'):html.index('<details class="fold"')]
+    assert "오늘 매수·매도 추천 없음" in today and "<table" not in today
+    assert "가상 장부 정보 없음" in html
+
+
+def test_vbooks_fold_table(tmp_path, cfg):
+    html = report_html.render_report(_compact_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+    vb = html[html.index('id="fold-vbooks"'):html.index('id="fold-guide"')]
+    assert "TQQQ 200일선 전환" in vb and "76,000" in vb and "+1.10%p" in vb and "SGOV" in vb and "시작 2026-10-14" in vb
+
+
+def test_explanations_are_collapsed_by_default(tmp_path, cfg):
+    """설명은 항상 접힌 채로 (2026-10-14 사용자 요청): 어떤 details도 open으로 렌더하지 않고,
+    전략 설명·지표 설명 소제목은 각각 접기 안에 있다. 페이지를 열 때 앵커로 자동 펼치지 않는다."""
+    html = report_html.render_report(_compact_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+    assert not re.search(r"<details[^>]*\bopen\b", html)
+    assert '<details class="exp"><summary>① 우리 전략 한눈에 (설명)</summary>' in html
+    guide = html[html.index('id="guide"'):html.index("</section>", html.index('id="guide"'))]
+    assert guide.count('<details class="exp">') == 7 and "<h2>" not in guide
+    assert "openTarget(location.hash)" not in html and "openFoldFor" not in html
+
+
+def test_check_line_counts_live_warnings_and_hides_when_zero(tmp_path, cfg):
+    """맨 위 "⚠ 확인할 것 n건" 한 줄: 추천 바로 아래, 접기 안 경고 배너와 같은 목록의 건수. 0건이면 없음."""
+    summary = _compact_summary()
+    summary["live_judgment_rows"] = [
+        _live_judgment_row(ticker="AAA", changed=True),
+        _live_judgment_row(ticker="BBB", plan_limit_exceeded=True),
+    ]
+    html = report_html.render_report(summary, cfg, tmp_path).read_text(encoding="utf-8")
+    today = html[html.index('<section class="today"'):html.index('<details class="fold"')]
+    assert '<a class="check-line" href="#fold-detail">확인할 것: 2건 — 판정 변경 1 · 계획 한도 초과 1</a>' in today
+    assert today.index("오늘 매도 추천") < today.index("check-line")
+    detail = html[html.index('id="fold-detail"'):]
+    assert "판정이 바뀐 종목" in detail and "계획 한도 초과" in detail  # 상세는 접기 안 그대로
+
+    html0 = report_html.render_report(_compact_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+    assert 'class="check-line"' not in html0
+    paper = {**summary, "mode": "paper", "mode_label": "모의"}
+    assert 'class="check-line"' not in report_html.render_report(paper, cfg, tmp_path).read_text(encoding="utf-8")
