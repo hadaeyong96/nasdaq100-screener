@@ -388,6 +388,9 @@ def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
         return None
     caption = (cfg.get("weekly_rs") or {}).get("caption", "")
     names = view.get("names") or {}
+    from core import weekly_rs as _wrs
+
+    wrs_group = _wrs.group_of(_wrs.settings(cfg)["groups"])
 
     def cls(v):
         return "up" if round(v, 1) > 0 else ("down" if round(v, 1) < 0 else "")
@@ -401,7 +404,27 @@ def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
                 "avg_cls": cls(x["avg_excess_pp"]), "tickers": ", ".join(x["tickers"])}
 
     window = view.get("window")
+    acc = view.get("accel") or {}
+
+    def pct_pp(v):  # 소수 → %p
+        return _pp(v * 100.0)
+
+    accel_top = [{"rank": i + 1, "ticker": r["ticker"], "name": names.get(r["ticker"], r["ticker"]),
+                  "group": wrs_group.get(r["ticker"], "-"), "score": pct_pp(r["score"]), "score_cls": cls(r["score"] * 100),
+                  "recent": _pct(r["recent"]), "prior": _pct(r["prior"])} for i, r in enumerate(acc.get("targets", []))]
+
+    def agrp(x):
+        return {"group": x["group"], "count": x["count"], "avg": pct_pp(x["avg_score"]), "avg_cls": cls(x["avg_score"] * 100),
+                "tickers": ", ".join(x["tickers"])}
+
+    d = acc.get("dates")
+    accel_ctx = {"ok": bool(acc.get("ok")), "top": accel_top,
+                 "groups_top": [agrp(x) for x in acc.get("groups_top", [])],
+                 "groups_bottom": [agrp(x) for x in acc.get("groups_bottom", [])],
+                 "dates_str": " → ".join(x.date().isoformat() for x in d) if d else "",
+                 "scan_count": len(acc.get("ranked", [])), "excluded_n": len(acc.get("excluded", {}))} if acc else None
     return {
+        "accel": accel_ctx,
         "caption": caption, "error": view.get("error"), "ok": view.get("status") == "ok",
         "window_str": f"{window[0].date().isoformat()} → {window[1].date().isoformat()}" if window else "",
         "qqq_ret": _pct(view["qqq_return"]) if view.get("qqq_return") is not None else "-",

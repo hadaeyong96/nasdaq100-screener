@@ -61,6 +61,7 @@ from core import explain as expl  # noqa: E402
 from core import filters as filt  # noqa: E402
 from core import flow_watch as fw  # noqa: E402
 from core import weekly_rs as wrs  # noqa: E402
+from core import accel  # noqa: E402
 from core import macro_status  # noqa: E402
 from core import screening_view as sview  # noqa: E402
 from core import sizing  # noqa: E402
@@ -1761,7 +1762,16 @@ def build_weekly_rs_view(prices: dict, as_of, cfg: dict, name_map, qqq_fetch=Non
     if view["status"] != "ok":
         print(f"[daily] 이번 주 강세 표: QQQ에 기준일 {pd.Timestamp(as_of).date()}·5거래일 전 종가가 없어 만들지 않습니다")
     view["error"] = None
-    view["names"] = {r["ticker"]: (name_map.get(r["ticker"], "") or r["ticker"]) for r in view["top"]}
+    # 작업 6-1: 「QQQ 이기는 힘이 세지는 종목」 — 같은 접기 안 표 2개(관찰용). 위 계산은 바꾸지 않는다
+    q_idx = qqq.copy()
+    q_idx.index = pd.DatetimeIndex(q_idx.index).normalize()
+    closes = {t: (df["close"] if isinstance(df, pd.DataFrame) else df) for t, df in prices.items()}
+    acc = accel.rank(closes, q_idx, pd.Timestamp(as_of).normalize(), list(prices))
+    if not acc["ok"]:
+        print(f"[daily] 힘이 세지는 종목 표: QQQ에 기준일·40거래일 전 종가가 없어 만들지 않습니다")
+    g_top, g_bottom = accel.group_scores(acc["ranked"], wrs.group_of(wrs.settings(cfg)["groups"]))
+    view["accel"] = {**acc, "groups_top": g_top, "groups_bottom": g_bottom}
+    view["names"] = {r["ticker"]: (name_map.get(r["ticker"], "") or r["ticker"]) for r in view["top"] + acc["targets"]}
     return view
 
 

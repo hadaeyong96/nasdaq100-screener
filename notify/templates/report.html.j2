@@ -423,6 +423,29 @@ details.exp[open]>summary{color:var(--info)}
   <div class="mini">업종 묶음은 미리 정한 목록(명단에 있는 종목만, 계산된 종목 2개 미만 묶음은 뺌). 평균 초과 = 묶음 종목 초과의 단순 평균.</div>
   </div>
   {% endif %}
+  {% if weekly_rs.accel %}
+  <h3>QQQ 이기는 힘이 세지는 종목 상위 10</h3>
+  <div class="scr-card">
+  {% if weekly_rs.accel.ok and weekly_rs.accel.top %}
+  <div class="scr-sub">RS선 = 종목 종가 ÷ QQQ 종가 · 최근 힘 = 최근 20거래일 RS 변화, 직전 힘 = 그 전 20거래일 RS 변화 · 점수 = 최근 힘 − 직전 힘 · {{ weekly_rs.accel.dates_str }} · {{ weekly_rs.accel.scan_count }}종목 (60거래일 이상·5달러 이상)</div>
+  <div class="scroll"><table>
+    <thead><tr><th class="nosort l">종목</th><th class="nosort l">이름</th><th class="nosort l">업종 묶음</th><th class="nosort">점수</th><th class="nosort">최근 힘</th><th class="nosort">직전 힘</th></tr></thead>
+    <tbody>{% for r in weekly_rs.accel.top %}<tr><td class="l"><b>{{ r.ticker }}</b></td><td class="l">{{ r.name }}</td><td class="l">{{ r.group }}</td><td class="sc {{ r.score_cls }}">{{ r.score }}</td><td>{{ r.recent }}</td><td>{{ r.prior }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% if weekly_rs.accel.excluded_n %}<div class="mini">제외 {{ weekly_rs.accel.excluded_n }}종목 (60거래일 가격 없음·5달러 미만)</div>{% endif %}
+  {% else %}<div class="empty2">QQQ 기준일·40거래일 전 종가가 없어 계산하지 않았습니다</div>{% endif %}
+  </div>
+  <h3>힘이 세지는 업종</h3>
+  <div class="scr-card">
+  {% if weekly_rs.accel.groups_top or weekly_rs.accel.groups_bottom %}
+  <div class="scroll"><table class="fit">
+    <thead><tr><th class="nosort l">구분</th><th class="nosort l">업종 묶음</th><th class="nosort">종목 수</th><th class="nosort">점수 평균</th><th class="nosort l">종목</th></tr></thead>
+    <tbody>{% for x in weekly_rs.accel.groups_top %}<tr><td class="l">상위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}{% for x in weekly_rs.accel.groups_bottom %}<tr><td class="l">하위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">표시할 업종 묶음이 없습니다</div>{% endif %}
+  <div class="mini">같은 12개 업종 묶음, 계산된 종목 2개 미만 묶음은 뺌. 점수 평균 = 묶음 종목 점수의 단순 평균.</div>
+  </div>
+  {% endif %}
 </section>
 </div>
 </details>
