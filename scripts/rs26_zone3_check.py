@@ -72,10 +72,22 @@ def load_fja() -> pd.DataFrame:
     return df
 
 
-def load_sp100() -> dict[str, set[str]]:
+def load_sp100() -> tuple[dict[str, set[str]], dict[str, int], dict[str, set[str]]]:
+    """매달 말 S&P 100 (위키 옛 판). 결정 4(2026-10-15): 위키에 변경 표가 없어, 그달 말 뒤 **처음 새로 고쳐진 판**의
+    명단을 더해 뺀다(옛 판이 늦게 고쳐진 사이 편입된 종목을 놓치지 않게 — 더 많이 빼는 쪽). 2021-12-31 뒤 판은 쓰지 않는다.
+    출력: (그달 명단, 판 나이, 그달 명단 ∪ 다음 새 판 명단)"""
     df = pd.read_csv(SP100_CSV)
-    return {str(r["month_end"])[:7]: {norm(x) for x in str(r["tickers"]).split(";")} for _, r in df.iterrows()}, \
-        {str(r["month_end"])[:7]: int(r["rev_age_days"]) for _, r in df.iterrows()}
+    df["me"] = pd.to_datetime(df["month_end"])
+    df["rd"] = pd.to_datetime(df["rev_date"])
+    lists = {str(r["month_end"])[:7]: {norm(x) for x in str(r["tickers"]).split(";")} for _, r in df.iterrows()}
+    ages = {str(r["month_end"])[:7]: int(r["rev_age_days"]) for _, r in df.iterrows()}
+    filled = {}
+    for _, r in df.iterrows():
+        key = str(r["month_end"])[:7]
+        later = df[(df["rd"] > r["me"]) & (df["rd"] <= ZONE_LAST)].sort_values("rd")
+        nxt = lists[str(later.iloc[0]["month_end"])[:7]] if len(later) else set()
+        filled[key] = lists[key] | nxt
+    return lists, ages, filled
 
 
 def ndx_on(d: pd.Timestamp, cur: set[str]) -> set[str]:
@@ -144,6 +156,108 @@ def read_closes_guarded(ticker: str, path: Path, allowed: set[str]) -> tuple[pd.
     return s[~s.index.duplicated(keep="last")], beyond
 
 
+def read_prices_guarded(ticker: str, path: Path, allowed: set[str]) -> pd.DataFrame:
+    """가드를 지키며(2021-12-31 넘는 줄에서 멈춤) 분할 반영 종가·그날 실제 종가를 읽는다.
+
+    출력: DataFrame(index=날짜, close=분할 반영 종가, raw_close=그날 실제 종가, split=그날 분할 비율(없으면 1)).
+    yfinance 저장분은 close가 이미 분할 반영이다(raw_close는 비움). Tiingo 저장분은 raw_close를 그날 이후
+    (2021-12-31까지) 분할 비율의 곱으로 나눈다 — 2022년 이후 분할은 구간 안 수익 비율에 영향이 없어 보지 않는다.
+    """
+    if ticker not in allowed:
+        raise ZoneGuardError(f"{ticker}: 구역 ③ 후보가 아닌 종목의 가격을 열려고 했습니다")
+    rows, prev = [], None
+    with open(path, encoding="utf-8-sig") as f:
+        rd = csv.reader(f)
+        head = [h.strip().lower() for h in next(rd)]
+        i_d = head.index("date") if "date" in head else 0
+        tiingo = "raw_close" in head
+        i_c = head.index("raw_close") if tiingo else head.index("close")
+        i_s = head.index("split_factor") if tiingo else None
+        for row in rd:
+            d = pd.Timestamp(row[i_d][:10])
+            if prev is not None and d < prev:
+                raise ZoneGuardError(f"{ticker}: 날짜가 오름차순이 아니라 줄 단위 가드를 쓸 수 없습니다")
+            prev = d
+            if d > ZONE_LAST:
+                break
+            if d < ZONE_FIRST or row[i_c] == "":
+                continue
+            sp = float(row[i_s]) if tiingo and row[i_s] not in ("", "0", "0.0") else 1.0
+            rows.append((d, float(row[i_c]), sp))
+    df = pd.DataFrame(rows, columns=["date", "px", "split"]).drop_duplicates("date", keep="last").set_index("date")
+    if tiingo:
+        later = df["split"][::-1].cumprod()[::-1].shift(-1).fillna(1.0)  # 다음 날부터 2021-12-31까지 분할 곱
+        df["close"], df["raw_close"] = df["px"] / later, df["px"]
+    else:
+        df["close"], df["raw_close"] = df["px"], float("nan")
+    return df[["close", "raw_close", "split"]]
+
+
+def zone_windows(m: pd.DataFrame) -> dict[str, tuple[pd.Timestamp, pd.Timestamp]]:
+    """종목별 보유 가능 창 (zone3_monthly.csv + 신호월 명단 재계산 없이 zone3_members.csv 사용)."""
+    mem = pd.read_csv(OUT / "zone3_members.csv", encoding="utf-8-sig", parse_dates=["signal_date"])
+    sig = sorted(m["signal_date"])
+    look = dict(zip(m["signal_date"], m["lookback_start"]))
+    out = {}
+    for t, g in mem.groupby("ticker"):
+        first, last = g["signal_date"].min(), g["signal_date"].max()
+        nxt = [d for d in sig if d > last]
+        hi = (nxt[0] + pd.offsets.MonthEnd(1)) if nxt else ZONE_LAST
+        out[t] = (look[first], min(hi, ZONE_LAST))
+    return out
+
+
+SPLIT_RATIOS = [2, 3, 4, 5, 6, 7, 8, 10, 1.5, 2.5, 1.25, 4 / 3]
+JUMP_LIMIT = 0.5  # 하루 ±50%
+SPLIT_TOL = 0.01  # 흔한 분할 비율과 1% 안이면 분할 모양 (5%는 실제 급등락도 많이 걸렸다)
+
+
+def jump_rows(ticker: str, src: str, df: pd.DataFrame) -> list[dict]:
+    """하루 종가 비율이 1.5 초과·0.5 미만인 날. split_like = 흔한 분할 비율(또는 그 역수)과 5% 안."""
+    r = df["close"] / df["close"].shift(1)
+    out = []
+    for d in r.index[(r > 1 + JUMP_LIMIT) | (r < 1 - JUMP_LIMIT)]:
+        x = float(r[d])
+        cands = SPLIT_RATIOS + [1 / q for q in SPLIT_RATIOS]
+        near = min(cands, key=lambda q: abs(x / q - 1))
+        out.append({"ticker": ticker, "source": src, "date": d.date(), "ratio": round(x, 4), "near_split_ratio": round(near, 4),
+                    "split_like": abs(x / near - 1) < SPLIT_TOL, "split_recorded_that_day": float(df.at[d, "split"])})
+    return out
+
+
+def step_jumps() -> None:
+    """사전 등록 전 점검(결정 3): 구역 ③ 가격 하루 ±50% 움직임 전부 → data/cache/rs26/jumps.csv. 수익 비교 없음."""
+    for st in (sys.stdout, sys.stderr):
+        st.reconfigure(encoding="utf-8")
+    tk = pd.read_csv(OUT / "zone3_tickers.csv", encoding="utf-8-sig")
+    gap = pd.read_csv(SP500 / "final_gap.csv", encoding="utf-8-sig").set_index("ticker")
+    renames = {norm(r["old"]): norm(r["final_ticker"]) for _, r in pd.read_csv(SP500 / "renames.csv", encoding="utf-8-sig").iterrows()}
+    allowed = set(tk["ticker"])
+    m = pd.read_csv(OUT / "zone3_monthly.csv", encoding="utf-8-sig", parse_dates=["signal_date", "lookback_start"])
+    # 종목별 보유 가능 창: 첫 소속 신호월의 126거래일 전 ~ 마지막 소속 신호월 다음 달 말(다음 교체일에 판다)
+    win = zone_windows(m)
+    rows, n_t, n_split = [], {"tiingo": 0, "yfinance": 0}, 0
+    for t in tk.loc[tk["price_loaded"], "ticker"]:
+        path = price_path(t, gap, renames)
+        src = "tiingo" if str(gap.at[t, "price_source"]) == "tiingo" else "yfinance"
+        n_t[src] += 1
+        df = read_prices_guarded(t, path, allowed)
+        n_split += int((df["split"] != 1).sum())
+        lo, hi = win[t]
+        rows += [dict(r, in_window=lo <= pd.Timestamp(r["date"]) <= hi) for r in jump_rows(t, src, df)]
+    j = pd.DataFrame(rows, columns=["ticker", "source", "date", "ratio", "near_split_ratio", "split_like",
+                                    "split_recorded_that_day", "in_window"])
+    j.to_csv(OUT / "jumps.csv", index=False, encoding="utf-8-sig")
+    print(f"[점프] 구역 ③ 가격 종목 tiingo {n_t['tiingo']} · yfinance {n_t['yfinance']}, Tiingo 분할 기록 {n_split}건 반영")
+    print(f"[점프] 하루 ±50% 넘는 날 전체 {len(j)}건 · {j['ticker'].nunique()}종목, 보유 가능 창 안 {int(j['in_window'].sum())}건")
+    jw = j[j["in_window"]]
+    print(jw.to_string(index=False) if len(jw) else "(창 안 없음)")
+    bad = sorted(jw.loc[jw["split_like"] & (jw["source"] == "tiingo"), "ticker"].unique())
+    print(f"[제외 후보: Tiingo 분할 모양 점프(창 안)] {len(bad)}개 {bad}")
+    yb = sorted(jw.loc[jw["split_like"] & (jw["source"] == "yfinance"), "ticker"].unique())
+    print(f"[참고: yfinance 분할 모양 점프(창 안)] {len(yb)}개 {yb}")
+
+
 def main() -> None:
     for st in (sys.stdout, sys.stderr):
         st.reconfigure(encoding="utf-8")
@@ -151,7 +265,7 @@ def main() -> None:
     sigs = signal_days()
     cal = trading_days_between(date(2011, 6, 1), date(2022, 1, 31))
     fja = load_fja()
-    sp100, sp100_age = load_sp100()
+    sp100_plain, sp100_age, sp100 = load_sp100()
     cur = {norm(t) for t in pd.read_csv(ROOT / "data" / "universe_fallback.csv", comment="#")["ticker"]}
     aliases = alias_map()
     gap = pd.read_csv(SP500 / "final_gap.csv", encoding="utf-8-sig").set_index("ticker")
@@ -164,6 +278,7 @@ def main() -> None:
         fja_age = (d - fja_rows.index[-1]).days
         key = d.strftime("%Y-%m")
         s100 = sp100.get(key)
+        sp100_added = len((s100 or set()) - (sp100_plain.get(key) or set()))
         ndx = ndx_on(d, cur)
         excl = ndx | (s100 or set())
         zone = set()
@@ -179,7 +294,7 @@ def main() -> None:
         members[d] = zone
         month_rows.append({"signal_date": d.date(), "sp500_n": len(sp), "fja_row_age_days": fja_age,
                            "sp100_available": s100 is not None, "sp100_n": len(s100 or ()),
-                           "sp100_rev_age_days": sp100_age.get(key), "ndx_n": len(ndx),
+                           "sp100_rev_age_days": sp100_age.get(key), "sp100_fill_added": sp100_added, "ndx_n": len(ndx),
                            "zone3_n": len(zone), "alias_excluded": alias_excluded})
 
     all_zone = sorted(set().union(*members.values()))
@@ -233,6 +348,8 @@ def main() -> None:
 
     m = pd.DataFrame(month_rows)
     m.to_csv(OUT / "zone3_monthly.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame([{"signal_date": d.date(), "ticker": t} for d in sigs for t in sorted(members[d])]).to_csv(
+        OUT / "zone3_members.csv", index=False, encoding="utf-8-sig")
     tick_rows = []
     for t in all_zone:
         months_in = sum(t in members[d] for d in sigs)
@@ -248,6 +365,8 @@ def main() -> None:
           f"S&P 500 종목 수 {m['sp500_n'].min()}~{m['sp500_n'].max()}")
     print(f"[명단] S&P 100 있음 {int(m['sp100_available'].sum())}/{len(m)}, 옛 판 나이 중앙값 {m['sp100_rev_age_days'].median():.0f}일·최대 {m['sp100_rev_age_days'].max()}일, "
           f"종목 수 {m['sp100_n'].min()}~{m['sp100_n'].max()}")
+    print(f"[명단] S&P 100 보완(다음 새 판)으로 더 뺀 종목: 월 {m['sp100_fill_added'].min()}~{m['sp100_fill_added'].max()}, "
+          f"보완이 있었던 달 {int((m['sp100_fill_added'] > 0).sum())}개")
     print(f"[명단] 나스닥 100 종목 수 {m['ndx_n'].min()}~{m['ndx_n'].max()}")
     print(f"[구역 ③] 월별 종목 수 {m['zone3_n'].min()}~{m['zone3_n'].max()} (중앙값 {m['zone3_n'].median():.0f}), "
           f"이름 변경 짝으로 더 뺀 종목 월평균 {m['alias_excluded'].mean():.1f}, 한 번이라도 속한 종목 {len(all_zone)}")
@@ -268,5 +387,69 @@ def main() -> None:
     print("[연도별 월평균]\n" + by_year.to_string())
 
 
+
+
+# ── 계산 전 준비 데이터 (사전 등록 전, 수익 계산 없음) ───────────────────────────
+RAW_DIR = OUT / "tiingo_raw"
+QQQ_CSV = OUT / "QQQ.csv"
+
+
+def step_prepare(tickers: list[str]) -> None:
+    """QQQ(yfinance, 2011-06-01 ~ 2021-12-31)와, 5달러 판정용 그날 실제 종가(Tiingo raw_close, 같은 기간)를 받는다.
+
+    yfinance 저장분 close는 2021년 뒤 분할까지 반영돼 과거 가격 수준이 작게 보인다(NFLX 2012 $1.32 등) —
+    5달러 판정은 그날 실제 가격이어야 하므로, 분할 반영 종가가 5달러 미만인 소속월이 있던 종목만 Tiingo 원시 종가를 받는다.
+    받은 줄이 2021-12-31을 넘으면 저장하지 않고 멈춘다. 키 값은 출력하지 않는다.
+    """
+    import os
+
+    import requests
+    import yfinance as yf
+    from dotenv import load_dotenv
+
+    for st in (sys.stdout, sys.stderr):
+        st.reconfigure(encoding="utf-8")
+    OUT.mkdir(parents=True, exist_ok=True)
+    if not QQQ_CSV.exists():
+        h = yf.Ticker("QQQ").history(start="2011-06-01", end="2022-01-01", auto_adjust=False, actions=True)
+        h.index = pd.DatetimeIndex(h.index).tz_localize(None).normalize()
+        if h.index.max() > ZONE_LAST:
+            raise ZoneGuardError("QQQ: 2021-12-31 뒤 줄을 받았습니다 — 저장하지 않고 멈춥니다")
+        h[["Close", "Dividends", "Stock Splits"]].rename(columns={"Close": "close", "Dividends": "div", "Stock Splits": "split"}).to_csv(QQQ_CSV)
+        print(f"[준비] QQQ {len(h)}줄 {h.index.min().date()} ~ {h.index.max().date()}")
+    load_dotenv(ROOT / ".env")
+    key = os.environ.get("TIINGO_API_KEY") or ""
+    if not key:
+        raise RuntimeError("TIINGO_API_KEY가 없습니다")
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    failed = []
+    for t in tickers:
+        f = RAW_DIR / f"{t}.csv"
+        if f.exists():
+            continue
+        r = requests.get(f"https://api.tiingo.com/tiingo/daily/{t.lower()}/prices",
+                         params={"startDate": "2011-06-01", "endDate": "2021-12-31"},
+                         headers={"Authorization": f"Token {key}", "Content-Type": "application/json"}, timeout=60)
+        body = r.json() if r.headers.get("content-type", "").startswith("application/json") else None
+        if r.status_code != 200 or not isinstance(body, list) or not body:
+            detail = body.get("detail", "") if isinstance(body, dict) else ""
+            failed.append(f"{t}(HTTP {r.status_code} {str(detail)[:80]})")
+            continue
+        df = pd.DataFrame(body)
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.normalize()
+        if df["date"].max() > ZONE_LAST:
+            raise ZoneGuardError(f"{t}: 2021-12-31 뒤 줄을 받았습니다 — 저장하지 않고 멈춥니다")
+        df.rename(columns={"close": "raw_close", "splitFactor": "split_factor", "divCash": "div_cash"})[
+            ["date", "raw_close", "volume", "split_factor", "div_cash"]].to_csv(f, index=False)
+        print(f"[준비] {t} Tiingo 원시 종가 {len(df)}줄 {df['date'].min().date()} ~ {df['date'].max().date()}")
+    if failed:
+        print(f"[준비] 받지 못함: {failed}")
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "jumps":
+        step_jumps()
+    elif len(sys.argv) > 1 and sys.argv[1] == "prepare":
+        step_prepare(sys.argv[2].split(","))
+    else:
+        main()
