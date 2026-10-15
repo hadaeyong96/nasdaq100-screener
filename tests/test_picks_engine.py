@@ -278,3 +278,105 @@ def test_bollinger_rules_path_runs_on_real_indicators(cfg, tmp_path, monkeypatch
     r = _days(cfg, m, tmp_path, S + 15)
     assert not r["errors"], r["errors"]
     assert len(_db(tmp_path, "picks_daily", B2)) == 16
+
+
+# ── 빈 종가·따라잡기 (2026-10-15 수정) ────────────────────────────────────────
+
+
+def _ledger(tmp_path, book=B1):
+    """비교용: 일별 행(날짜·총자산·현금)과 매매 행(체결일·구분·종목·수량)."""
+    daily = [(r["date"], round(float(r["value"]), 6)) for r in _db(tmp_path, "picks_daily", book)]
+    trades = [(t["fill_date"], t["side"], t["ticker"], t["qty"]) for t in _db(tmp_path, "picks_trades", book)]
+    return daily, trades
+
+
+def _signal_market():
+    m = Market()
+    m.on("AAA", "x_a1", S)
+    m.on("BBB", "x_b", S + 2)
+    m.on("AAA", "dc", S + 4)
+    return m
+
+
+def test_skipped_runs_catch_up_in_order_same_as_daily_runs(cfg, tmp_path):
+    """실행이 며칠 빠져도(예약 실패·지연) 다음 실행이 빠진 날을 순서대로 처리 — 매일 돈 것과 같다."""
+    daily_path, gap_path = tmp_path / "daily", tmp_path / "gap"
+    m1 = _signal_market()
+    _run(cfg, m1, daily_path)
+    _days(cfg, m1, daily_path, S + 6)
+    m2 = _signal_market()
+    _run(cfg, m2, gap_path)
+    m2.upto = S + 6  # S+1 ~ S+5 실행 없음
+    r = _run(cfg, m2, gap_path)
+    assert not r["errors"], r["errors"]
+    assert [d for d, _ in _ledger(gap_path)[0]] == [IDX[i].date().isoformat() for i in range(S, S + 7)]
+    assert _ledger(gap_path) == _ledger(daily_path)
+    assert _ledger(gap_path, B2) == _ledger(daily_path, B2)
+    assert any(side == "매수" for _, side, _, _ in _ledger(gap_path)[1])
+
+
+def test_failed_run_is_caught_up_next_run(cfg, tmp_path):
+    m = _signal_market()
+    _run(cfg, m, tmp_path)
+    _days(cfg, m, tmp_path, S + 2)
+    good = m.market_fn
+    m.upto = S + 3
+    m.market_fn = lambda c, e: (_ for _ in ()).throw(ConnectionError("prices down"))
+    r_fail = _run(cfg, m, tmp_path)
+    assert r_fail["errors"] and _db(tmp_path, "picks_daily", B1)[-1]["date"] == IDX[S + 2].date().isoformat()
+    m.market_fn = good
+    m.upto = S + 4
+    _run(cfg, m, tmp_path)
+    ref = _signal_market()
+    _run(cfg, ref, tmp_path / "ref")
+    _days(cfg, ref, tmp_path / "ref", S + 4)
+    assert _ledger(tmp_path) == _ledger(tmp_path / "ref")
+
+
+def test_last_day_with_empty_closes_is_deferred_then_processed(cfg, tmp_path):
+    """맨 끝 날 종목 종가가 비면 그날은 미루고 경고 — 다음 실행에서 채워진 값으로 처리, 매일 돈 것과 같다."""
+    m = _signal_market()
+    _run(cfg, m, tmp_path)
+    _days(cfg, m, tmp_path, S + 2)
+    m.upto = S + 3
+    clean = {t: df.copy() for t, df in m.frames.items()}
+    for t in ("AAA", "BBB"):
+        m.on(t, "close", S + 3, np.nan)
+    r = _run(cfg, m, tmp_path)
+    assert any("다음 실행에서 처리" in w and "AAA" in w for w in r["warnings"])
+    assert _db(tmp_path, "picks_daily", B1)[-1]["date"] == IDX[S + 2].date().isoformat()
+    m.frames = clean  # 다음 실행 때는 종가가 들어와 있다
+    m.upto = S + 4
+    _run(cfg, m, tmp_path)
+    ref = _signal_market()
+    _run(cfg, ref, tmp_path / "ref")
+    _days(cfg, ref, tmp_path / "ref", S + 4)
+    assert _ledger(tmp_path) == _ledger(tmp_path / "ref")
+
+
+def test_ticker_already_missing_before_last_day_does_not_defer():
+    """전 거래일부터 이미 없던 종목(거래 정지 등)은 미루기 사유가 아니다 — 많아야 하루만 미룬다."""
+    idx = IDX[:5]
+    frames = {"AAA": pd.DataFrame({"close": [1.0, 1.0, 1.0, 1.0, 1.0]}, index=idx),
+              "HALT": pd.DataFrame({"close": [1.0, 1.0, 1.0, np.nan, np.nan]}, index=idx)}
+    days, w = picks_books.defer_incomplete_last_day(list(idx[3:]), frames, ["AAA", "HALT"], idx)
+    assert days == list(idx[3:]) and w is None
+    frames["AAA"].iloc[-1, 0] = np.nan
+    days, w = picks_books.defer_incomplete_last_day(list(idx[3:]), frames, ["AAA", "HALT"], idx)
+    assert days == [idx[3]] and "AAA" in w and "HALT" not in w
+
+
+def test_start_day_deferred_keeps_fixed_start_without_restart_error(cfg, tmp_path):
+    """시작일 당일이 미뤄져도 고정 시작일 장부가 '상태 없음' 오류로 막히지 않고 다음 실행에서 시작일부터 처리."""
+    cfg["virtual_books"]["picks"]["start_date"] = IDX[S].date().isoformat()
+    m = _signal_market()
+    clean = {t: df.copy() for t, df in m.frames.items()}
+    m.on("AAA", "close", S, np.nan)
+    r0 = _run(cfg, m, tmp_path)
+    assert not r0["errors"], r0["errors"]
+    assert _db(tmp_path, "picks_daily", B1) == []
+    m.frames = clean
+    m.upto = S + 1
+    r1 = _run(cfg, m, tmp_path)
+    assert not r1["errors"], r1["errors"]
+    assert [r["date"] for r in _db(tmp_path, "picks_daily", B1)] == [IDX[S].date().isoformat(), IDX[S + 1].date().isoformat()]

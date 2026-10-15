@@ -123,6 +123,38 @@ def _db_daily(rows: list[dict]) -> pd.DataFrame:
     return df.set_index("date")
 
 
+def defer_incomplete_last_day(days: list, frames: dict, tickers: list[str],
+                              days_index: pd.DatetimeIndex) -> tuple[list, str | None]:
+    """처리할 날 중 맨 끝 하루의 종가가 덜 들어왔으면 그날을 다음 실행으로 미룬다.
+
+    마감 직후 yfinance가 그날 행을 종가 없이 주는 일이 있다(2026-10-15). 이 장부는 하루씩 이어 가며
+    한 번 처리한 날을 다시 계산하지 않으므로, 구멍 난 채로 처리하면 그날 체결·신호가 영영 틀린다.
+    판정: 전 거래일 종가가 있던 종목(tickers 중)이 맨 끝 날 종가가 없으면 미완성 — 그날만 뺀다.
+    전 거래일부터 이미 없던 종목(거래 정지·상장 폐지 등)은 따지지 않으므로 미루기는 많아야 하루다.
+    중간 날짜는 미루지 않는다(종목 구멍은 core.picks_book.process_day가 지금처럼 처리).
+
+    입력: days(처리할 거래일 오름차순), frames({티커: close 열이 있는 DataFrame}), tickers(볼 종목),
+         days_index(신호 종목 거래일 전체)
+    출력: (days — 미루면 맨 끝 하루를 뺀 목록, 경고 문구 또는 None)
+    """
+    if not days:
+        return days, None
+    d = days[-1]
+    pos = days_index.get_loc(d)
+    if pos == 0:
+        return days, None
+    prev = days_index[pos - 1]
+
+    def has_close(df, day):
+        return df is not None and day in df.index and not pd.isna(df.at[day, "close"])
+
+    missing = sorted({t for t in tickers if has_close(frames.get(t), prev) and not has_close(frames.get(t), d)})
+    if not missing:
+        return days, None
+    shown = ", ".join(missing[:10]) + (f" 외 {len(missing) - 10}개" if len(missing) > 10 else "")
+    return days[:-1], (f"{d.date()} 종가가 빈 종목 {len(missing)}개({shown})라 그날은 다음 실행에서 처리합니다")
+
+
 def run_picks(cfg: dict, conn, ctx: dict, *, briefing: dict | None, dry_run: bool, market_fn=None,
               actions_fn=None, fx_fn=None, year_end_fn=None) -> dict:
     """추천 따라하기 장부들을 기준일까지 이어 간다.
@@ -167,9 +199,15 @@ def run_picks(cfg: dict, conn, ctx: dict, *, briefing: dict | None, dry_run: boo
                 book = pb.new_book(name, start, float(vb["start_krw"]) / start_fx)
                 book["start_fx"], book["fx_date"] = start_fx, fx_date
                 days = list(days_index[(days_index >= start) & (days_index <= base)])
+                is_new = True
+            elif book.get("last_date") is None:  # 시작일 당일이 미뤄져 상태만 저장된 장부 — 시작일부터
+                start = pd.Timestamp(book["start_date"])
+                days = list(days_index[(days_index >= start) & (days_index <= base)])
+                is_new = False
             else:
                 last = pd.Timestamp(book["last_date"])
                 days = list(days_index[(days_index > last) & (days_index <= base)])
+                is_new = False
             extra = sorted(set(book["positions"]) | {o["ticker"] for o in book["pending_buys"] + book["pending_sells"]})
             if days:
                 if market is None:
@@ -180,6 +218,15 @@ def run_picks(cfg: dict, conn, ctx: dict, *, briefing: dict | None, dry_run: boo
                     more = (market_fn or default_market)(cfg, missing)
                     market["frames"].update({t: more["frames"][t] for t in missing if t in more["frames"]})
                     market.pop("_bb_frames", None)
+                days, defer_warning = defer_incomplete_last_day(
+                    days, market["frames"],
+                    list(market["universe"]) + extra, days_index,
+                )
+                if defer_warning:
+                    out["warnings"].append(f"{name}: {defer_warning}")
+                    if not days and is_new and not dry_run:  # 시작일·시작 환율은 지금 정한 값으로 남긴다
+                        vbstore.save_picks_day(conn, book, [], [], [])
+            if days:
                 frames = _frames_for(market, spec["rules"], pk["bollinger"])
                 actions = (actions_fn or vbdata.fetch_actions)(list(book["positions"]) + [o["ticker"] for o in book["pending_buys"]],
                                                                 (days[0] - timedelta(days=10)).date()) if extra else {}
