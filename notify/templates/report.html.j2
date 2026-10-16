@@ -960,6 +960,18 @@ details.exp[open]>summary{color:var(--info)}
 </div>
 </details>
 
+{% if scorecard %}
+<details class="fold" id="fold-scorecard">
+<summary>▶ 가상 장부 월간 성적표</summary>
+<div class="fold-body">
+<section class="vb" aria-label="가상 장부 월간 성적표">
+  <p class="mini">{{ scorecard.month }} 성적 · 관찰 전용 가상 장부(실제 주문 아님) · 전략 · 누적 QQQ 대비 · QQQ를 이긴 달</p>
+  <ul class="mini">{% for line in scorecard.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+</section>
+</div>
+</details>
+{% endif %}
+
 <details class="fold" id="fold-vbooks">
 <summary>▶ 가상 장부 현황</summary>
 <div class="fold-body">

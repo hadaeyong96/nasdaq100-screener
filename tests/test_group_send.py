@@ -52,8 +52,8 @@ def test_group_gets_same_file_and_same_caption(setup, monkeypatch, cfg):
     res = telegram.send_group_briefing("본문", report, summary, cfg)
     assert res["ok"] and [s["chat"] for s in sent] == ["personal", "group"]
     p, g = sent
-    assert p["path"] == g["path"] == report and p["filename"] == g["filename"] == "철수의 아침 편지_2026-10-14.html"
-    assert p["caption"] == g["caption"] == "철수의 아침 편지 · 10/14(수)\n오늘 국면: QQQ 200일선 위\n매수 1(NVDA) · 매도 0"
+    assert p["path"] == g["path"] == report and p["filename"] == g["filename"] == "오빠의 아침 편지_2026-10-14.html"
+    assert p["caption"] == g["caption"] == "오빠의 아침 편지 · 10/14(수)\n오늘 국면: QQQ 200일선 위\n매수 1(NVDA) · 매도 0"
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-10-14") and db.has_notified(conn, "2026-10-14:group")
     conn.close()

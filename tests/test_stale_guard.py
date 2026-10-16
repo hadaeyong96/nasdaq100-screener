@@ -109,7 +109,7 @@ def test_stale_summary_sends_single_delay_report_with_notice_caption(monkeypatch
 
     assert len(calls) == 1 and calls[0][0] == "doc"  # 보고서 한 통만
     first, second = calls[0][1].split("\n")[:2]
-    assert first.startswith("철수의 아침 편지 · ") and "📊" not in first and second.startswith("데이터 지연:")
+    assert first.startswith("오빠의 아침 편지 · ") and "📊" not in first and second.startswith("데이터 지연:")
     assert "데이터 지연" in path.read_text(encoding="utf-8")
 
 

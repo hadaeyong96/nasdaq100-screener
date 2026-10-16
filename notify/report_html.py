@@ -602,7 +602,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "plan_limit_exceeded_rows": plan_limit_exceeded_rows,
         "cfg_js": cfg_js,
         "titles": report_titles(cfg),
-        "header_line": title_line(summary, cfg),  # 맨 위 한 줄 "철수의 아침 편지 · 10/14(수)"
+        "header_line": title_line(summary, cfg),  # 맨 위 한 줄 "오빠의 아침 편지 · 10/14(수)"
         "buy_count": buy_count,
         "sell_count": len(sell_rows),
         "held_count": summary.get("held_tickers_count", 0),
@@ -651,6 +651,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "screening": _screening_ctx(summary, cfg),
         "flow_watch": _flow_watch_ctx(summary),
         "weekly_rs": _weekly_rs_ctx(summary, cfg),
+        "scorecard": summary.get("scorecard"),  # 전략공장 F2 — 매달 첫 거래일만 있음 (factory/scorecard_run.py)
     }
 
 

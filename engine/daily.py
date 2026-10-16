@@ -2278,6 +2278,14 @@ def main() -> None:
     if mode == "live" and not args.dry_run and not summary.get("stale"):
         vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send, briefing=_briefing_recs(summary))
         _attach_regime_line(summary, vb_result, cfg)
+        # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 (읽기 전용, 실패해도 브리핑 본문은 그대로)
+        try:
+            from factory import scorecard_run
+
+            scorecard_run.attach_scorecard(summary, cfg, datetime.now(KST).date(), lambda: _fetch_qqq_close_series(cfg),
+                                           lambda s: report_html.render_report(s, cfg, OUTPUT_DIR))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[daily] 월간 성적표 연결 오류(브리핑은 그대로): {type(exc).__name__}: {exc}")
 
     if not args.dry_run:
         if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 배너 보고서 한 통만 보낸다(지연 문구는 첨부 설명)
@@ -2295,8 +2303,9 @@ def main() -> None:
                 telegram.notify_ops_error(msg)
             if mode == "live":
                 try:
-                    group_result = telegram.send_group_briefing(
-                        text, summary.get("report_path"), summary, cfg, force_no_send=args.no_send
+                    group_result = telegram.send_group_briefing(  # 단체방은 월간 성적표 없는 보고서(전략공장 F2)
+                        text, summary.get("group_report_path") or summary.get("report_path"), summary, cfg,
+                        force_no_send=args.no_send,
                     )
                     warning = telegram.group_send_warning_line(group_result)
                 except Exception as exc:

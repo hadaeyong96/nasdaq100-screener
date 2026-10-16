@@ -1,6 +1,6 @@
 """보고서·브리핑 이름(config.yaml report) 테스트. 네트워크 없음.
 
-- "철수의 아침 편지 · 10/14(수)" 한 줄 머리말·HTML 제목·첨부 설명 첫 줄·첨부 파일 이름·신호 요약 제목 (2026-10-15)
+- "오빠의 아침 편지 · 10/14(수)" 한 줄 머리말·HTML 제목·첨부 설명 첫 줄·첨부 파일 이름·신호 요약 제목 (2026-10-15)
 - 지운 머리말 정보는 맨 아래 「보고서 정보」 접기 안으로
 - 시장 온도 판정 기준 목록·머리글의 🟢🟡🔴 이모지 -> CSS 원(.dot)
 (단체방용 공개 보고서는 2026-10-15 없앴다 — 단체방도 같은 보고서를 받는다)
@@ -66,7 +66,7 @@ def _private_html(tmp_path, cfg, **kw):
 def test_config_has_report_titles(titles):
     for key in ("title", "subtitle", "short_title"):
         assert titles[key]
-    assert titles["title"] == "철수의 아침 편지" and titles["short_title"] == "철수의 아침 편지"
+    assert titles["title"] == "오빠의 아침 편지" and titles["short_title"] == "오빠의 아침 편지"
     assert "public_suffix" not in titles
 
 
@@ -84,14 +84,14 @@ def test_private_briefing_first_line_uses_short_title(cfg, titles):
 def test_briefing_first_line_follows_changed_config(cfg):
     changed = {**cfg, "report": {"title": "테스트 편지"}}
     assert briefing.build_briefing_text(_summary(cfg), changed).startswith("테스트 편지 · 9/30(수)\n")
-    assert briefing.title_line({**_summary(cfg), "mode": "paper"}, cfg) == "철수의 아침 편지 · 9/30(수) · 모의"
+    assert briefing.title_line({**_summary(cfg), "mode": "paper"}, cfg) == "오빠의 아침 편지 · 9/30(수) · 모의"
 
 
 def test_private_report_title_h1_and_subtitle(tmp_path, cfg, titles):
     html = _private_html(tmp_path, cfg)
-    assert "<title>철수의 아침 편지 · 9/30(수)</title>" in html
+    assert "<title>오빠의 아침 편지 · 9/30(수)</title>" in html
     header = re.search(r"<header>(.*?)</header>", html, re.S).group(1)
-    assert re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", header)).strip() == "철수의 아침 편지 · 9/30(수)"  # 날짜 한 줄만
+    assert re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", header)).strip() == "오빠의 아침 편지 · 9/30(수)"  # 날짜 한 줄만
     assert "마감" not in header and "📊" not in html.split("<body", 1)[1].split("</header>", 1)[0]
     # 지운 머리말 정보는 맨 아래 「보고서 정보」 접기(기본 닫힘) 안으로
     info = html.split('<details class="fold" id="fold-info">', 1)[1].split("</details>", 1)[0]
