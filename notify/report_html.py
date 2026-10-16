@@ -651,6 +651,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "screening": _screening_ctx(summary, cfg),
         "flow_watch": _flow_watch_ctx(summary),
         "weekly_rs": _weekly_rs_ctx(summary, cfg),
+        "scorecard": summary.get("scorecard"),  # 전략공장 F2 — 매달 첫 거래일만 있음 (factory/scorecard_run.py)
     }
 
 
