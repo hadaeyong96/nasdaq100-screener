@@ -1,0 +1,51 @@
+# 전략공장 v4 전략 목록 (F1, 2026-10-16). 공장은 "제안까지만" — 브리핑·가상 장부·main 코드를 스스로 바꾸지 않는다.
+# 상태: 기본값 | 관찰 중 | 탈락 보관 | 확정 습관 | 대기 후보
+# 각 항목: id, name(한글 이름), status, zone, result(한 줄), evidence(근거 문서/태그, 없으면 빈칸)
+# 결과 숫자는 근거 문서에 있는 것만 적는다. 시험 기록 전체는 docs/factory/trial_ledger.csv.
+
+strategies:
+  # ── 기본값 (실제 돈은 여기만) ──────────────────────────────────────────
+  - id: base_qqqm_dca
+    name: QQQM 매달 그대로 사기 + 세금 계좌
+    status: 기본값
+    zone: 실제 운용
+    result: "실제 돈은 QQQM만. 매수 시점 바꾸기(D1~D5)는 매달 그대로 사기(D0)를 못 이김"
+    evidence: "docs/results/d1.md (d1-prereg)"
+
+  # ── 관찰 중 (가상 장부 9개, 실제 주문 없음) ────────────────────────────
+  - {id: vb1_qqq_hold, name: QQQ 그냥 보유, status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 1번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
+  - {id: vb2_qld_hold, name: QLD 그냥 보유, status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 2번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
+  - {id: vb3_tqqq_hold, name: TQQQ 그냥 보유, status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 3번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
+  - {id: vb4_qld_sma200, name: QLD 200일선 전환(SGOV), status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 4번 (2026-10-14 시작). 같은 규칙 2배는 봉인 ⓐ FAIL", evidence: "docs/design/virtual_books.md, docs/results/sealed_a_b1.md"}
+  - {id: vb5_tqqq_sma200, name: TQQQ 200일선 전환(SGOV), status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 5번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
+  - {id: vb6_picks, name: "추천 종목 따라하기(RSI·MACD·일목)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 6번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
+  - {id: vb7_bollinger, name: "볼린저·RSI·MACD 따라하기", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 7번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
+  - {id: vb8_rs26, name: "6개월 강세 따라하기(RS26)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 검증 ③ FAIL(세후 7.45% vs QQQ 18.70%), 관찰만 계속. 시작일 = 첫 월말", evidence: "rs26-prereg, research/rs26-zone3 docs/results/rs26_zone3.md"}
+  - {id: vb9_accel, name: "한 달 가속 따라하기(ACCEL)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 9번 — 검증 ③ FAIL(세후 5.25% vs QQQ 19.29%), 관찰만 계속", evidence: "accel-prereg, research/rs26-zone3 docs/results/accel_zone3.md"}
+
+  # ── 탈락 보관 ──────────────────────────────────────────────────────────
+  - {id: x_macd126, name: "MACD 1:2:6 분할(P5)", status: 탈락 보관, zone: "구역 정책 전 (2015~2021, 2007~2014)", result: "우위 없음 — P5-4 최종 후보 없음, P5-5 판정 불가(데이터 부족)", evidence: "docs/results/trial_log.md 이전 기록, configs/p5_5_preregistration.yaml"}
+  - {id: x_moat_h4, name: "해자 넓음 골라 담기(H4)", status: 탈락 보관, zone: "구역 정책 전 (2019-04~2021-12 정식구간)", result: "QQQM 대비 −4.6%p (25.05% vs 29.69%)", evidence: "moat-v1.1-locked, feature/moat docs/results/moat_h4.md"}
+  - {id: x_kjb1, name: "김종봉식 위성 매매(KJB-1)", status: 탈락 보관, zone: "구역 정책 전 (2016~2021)", result: "무작위 4.8백분위 (사전 등록 판정은 표본 부족)", evidence: "configs/kjb1_preregistration.yaml, outputs/backtest/kjb1 report(이 PC에만)"}
+  - {id: x_e1, name: "이익 성장 골라 담기 적립(E1)", status: 탈락 보관, zone: "구역 정책 전 (2012~2021)", result: "QQQM 적립 대비 −17~−26%", evidence: "e1-prereg, docs/results/e1.md"}
+  - {id: x_pead_large, name: "실적급등 다음날 매수·3달 보유 대형", status: 탈락 보관, zone: 봉인 ⓐ, result: "봉인 ⓐ FAIL — 평균 초과 −0.21%, 무작위 94.6백분위 (2012~2021은 SW1 합격)", evidence: "sealed-a-prereg, docs/results/sealed_a_sw1.md"}
+  - {id: x_pead_small, name: "실적급등 다음날 매수·3달 보유 중소형", status: 탈락 보관, zone: "검증 ① 1/5", result: "검증 ① FAIL — 평균 초과 −2.19%, 무작위 98.8백분위", evidence: "pead-smallmid-prereg, docs/results/pead_smallmid.md"}
+  - {id: x_cash_wait, name: "현금 대기·폭락 투입 / 200일선 40% 전환(P6-1 P3·P4)", status: 탈락 보관, zone: "구역 정책 전 (1999-03~2021-12)", result: "P3 −2.4%p, P4 −0.6%p (excess_a −2.43·−0.58%p)", evidence: "configs/p6_1_preregistration.yaml, docs/results/trial_log.md 이전 기록"}
+  - {id: x_l3_b2_b3, name: "국면 전환 L3·B2·B3", status: 탈락 보관, zone: "구역 정책 전 (QQQ 1999~2021, ^IXIC·미국 시장 1998까지)", result: "불합격 — L3 MDD −95.56%, L1b B2·B3 불합격", evidence: "l1-prereg, l1b-prereg, docs/results/l1.md, docs/results/l1b.md"}
+  - {id: x_defensive_assets, name: "고배당·1배 방어 자산", status: 탈락 보관, zone: "구역 정책 전 (프렌치 시장 1927~1998)", result: "국채보다 더 빠짐 — M2 고배당 MDD −93.07% 등 월별 M1~M3 불합격", evidence: "l1b-prereg, docs/results/l1b.md"}
+  - {id: x_weekly_rs, name: "1주 강세 + 3% 익절, 1~3주 강세", status: 탈락 보관, zone: "탐색 (현재 명단)", result: "무작위와 같음 (숫자 기록 없음 — 문서 기록만)", evidence: "docs/design/weekly_rs.md"}
+  - {id: x_rs26, name: "6개월 강세 따라하기(RS26)", status: 탈락 보관, zone: "검증 ③ 1/5", result: "FAIL 7.45% (QQQ 18.70%)", evidence: "rs26-prereg, research/rs26-zone3 docs/results/rs26_zone3.md"}
+  - {id: x_accel, name: "한 달 가속 따라하기(ACCEL)", status: 탈락 보관, zone: "검증 ③ 2/5", result: "FAIL 5.25% (QQQ 19.29%)", evidence: "accel-prereg, research/rs26-zone3 docs/results/accel_zone3.md"}
+  - {id: x_sector_pullback, name: "강한 업종 속 강한 종목 첫 눌림(탐색 B)", status: 탈락 보관, zone: "탐색 (시점별 나스닥100 ∪ S&P 100, 2012~2021)", result: "B0 16.29% vs QQQ 19.98%, 가짜 1등 95백분위 18.32% 미달 (B0~B3 모두 기준 미충족, 판정 아님)", evidence: "sector-pullback-prereg, docs/factory/explore/sector_pullback.md"}
+
+  # ── 확정 습관 ──────────────────────────────────────────────────────────
+  - {id: h_pension_first, name: 연금저축 먼저, status: 확정 습관, zone: 실제 운용, result: "세금 계좌 순서: 연금저축부터 채운다", evidence: ""}
+  - {id: h_december_deduction, name: 12월 공제 소진, status: 확정 습관, zone: 실제 운용, result: "12월에 그해 세액공제 한도를 다 쓴다", evidence: ""}
+
+  # ── 대기 후보 (순위 순) ────────────────────────────────────────────────
+  - {id: c1_explore_a, rank: 1, name: "탐색 A — 시점별 나스닥100으로 3단계 규칙(1주·4주)·ACCEL 재확인", status: 대기 후보, zone: 탐색, result: "", evidence: ""}
+  - {id: c2_lead_radar, rank: 2, name: "선행 레이더 (FRED, QQQ 타이밍)", status: 대기 후보, zone: "", result: "", evidence: ""}
+  - {id: c3_revenue_r1, rank: 3, name: "매출 성장 R1", status: 대기 후보, zone: "", result: "참고: E1 매출 버전은 E0보다 높았음(판정 외, 새 등록 필요)", evidence: "docs/results/e1.md"}
+  - {id: c4_peg_pg1, rank: 4, name: "과거 PEG 1 미만 PG1", status: 대기 후보, zone: "", result: "", evidence: ""}
+  - {id: c5_winner_anatomy, rank: 5, name: "승자 해부기·매집 흔적", status: 대기 후보, zone: "탐색 ② (중소형 2012~2016) 후보", result: "", evidence: "docs/validation_zones.md"}
+  - {id: c6_news_radar, rank: 6, name: "시사·사건 레이더", status: 대기 후보, zone: "", result: "", evidence: ""}
