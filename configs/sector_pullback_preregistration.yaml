@@ -1,0 +1,45 @@
+# 탐색 B 「강한 업종 속 강한 종목, 첫 눌림 매수」 사전 등록 (전략공장 v4 첫 탐색 · 판정 아님)
+# 2026-10-16 결과 보기 전에 고정. 변형은 B0~B3 4개만, 결과 보고 규칙·숫자를 바꿔 다시 돌리지 않는다.
+# 브랜치 research/sector-pullback, main 병합 금지.
+id: sector_pullback
+status: 탐색 (판정 아님)
+fixed_at: "2026-10-16"
+
+universe:
+  lists: ["시점별 나스닥100 (data.universe_history)", "S&P 100 (위키 옛 판 매달 말, data/cache/sw1/sp100_monthly.csv)"]
+  combine: union
+  period: {start: "2012-01-01", end: "2021-12-31"}
+  data_guard: "2022-01-01 이후 가격·신호 금지 (코드 가드)"
+
+sectors:
+  source: "EDGAR submissions의 SIC 코드"
+  map_file: configs/sector_pullback_sic_map.csv
+  groups: [기술, 통신, 소비재량, 필수소비, 헬스, 금융, 산업, 에너지, 소재, 유틸리티, 부동산]
+  min_members: 3 # 3종목 미만 업종은 그 판정에서 제외
+
+b0:
+  strong_sector: "업종 평균 126거래일 수익률 − QQQ 126거래일 수익률 상위 3개 (매주 마지막 거래일 판정)"
+  strong_stock: "강한 업종 안, 126거래일 QQQ 대비 초과 > 0 이고 업종 평균보다 높음"
+  macd: {fast: 12, slow: 26, signal: 9, cross_within_days: 20} # MACD 선 0선 상향 돌파 후 20거래일 이내
+  first_pullback: "돌파 후 고점 대비 −3% 이상, 종가 ≤ 20일선 × 1.01, 종가 > 50일선, MACD > 0"
+  buy: "첫 눌림 다음 날 종가, 같은 돌파에서 1회만"
+  sell: "먼저 오는 것: 업종이 상위 5개 밖 / 종가 < 50일선 / MACD < 0 → 다음 날 종가"
+  portfolio: {max_positions: 10, weight: "총자산 1/10", no_slot: "자리 없음 기록", idle_cash: QQQ}
+  costs: {one_way_pct: 0.1, sensitivity_one_way_pct: 0.3, tax: "연 순이익 22%", dividends: "원천 15% 뒤 현금"}
+
+variants:
+  B1: "눌림 없이 돌파 다음 날 매수"
+  B2: "업종 조건 없이 대상 전체"
+  B3: "업종 강도를 63거래일로"
+
+compare: [QQQ, "같은 시점 대상 전체 동일 비중", "같은 날 같은 대상 무작위 1,000회",
+          "가짜 신호 조립 대조: 4개 변형을 가짜 신호로 200번 → 가짜 1등 95백분위"]
+regime: "QQQ 기준 폭락장(252일 고점 대비 −20% 이하 또는 20일 −10% 이하) > 하락장(200일선 아래) > 상승장(200일선 위), 그날까지 정보만"
+next_step_rule: "가짜 1등 95백분위 초과 + 동일 비중보다 높음 + 2012~16·2017~21 두 구간 모두 QQQ 초과인 변형이 있으면 '검증 구역 ③ 판정 제안'만 쓰고 멈춤"
+
+# 0단계 해석 (사용자 확인 대상)
+interpretations:
+  - "명단 시점: 신호일이 속한 달의 전 달 말 명단 (SW1·봉인 ⓐ와 같은 방법). 0단계 '월 평균 종목 수'도 이 기준으로 센다"
+  - "SIC는 EDGAR submissions의 현재 값 하나를 전 기간에 쓴다 (시점별 SIC 이력은 무료로 없음)"
+  - "티커→CIK는 SW1 cik.csv(시점별 명단 합집합, 같은 회사 확인 완료)를 그대로 쓴다"
+  - "GOOGL·GOOG처럼 한 회사 두 주식은 0단계에서 각각 센다 — 업종 평균에서 합칠지는 0단계 보고 후 확인"
