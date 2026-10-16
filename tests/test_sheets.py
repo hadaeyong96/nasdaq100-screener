@@ -380,7 +380,7 @@ def test_read_sheets_fx_network_failure_is_reported(monkeypatch):
 def test_briefing_input_error_line():
     assert briefing.build_input_error_line([]) is None
     line = briefing.build_input_error_line(["계획 기록 오류: 1번째 줄 - 계획금액이 올바르지 않음('')", "x"])
-    assert line.startswith("⚠️ 시트 오류: 계획 기록 오류")
+    assert line.startswith("확인할 것: 시트 오류: 계획 기록 오류")
     assert line.endswith("외 1건")
     assert "\n" not in line
 

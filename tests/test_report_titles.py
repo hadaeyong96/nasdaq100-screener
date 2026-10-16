@@ -1,8 +1,9 @@
-"""보고서·브리핑 이름(config.yaml report), 공개용 보고서 표시 정리 테스트. 네트워크 없음.
+"""보고서·브리핑 이름(config.yaml report) 테스트. 네트워크 없음.
 
-- 텔레그램 첫 줄·HTML 제목·부제·첨부 파일 이름·신호 요약 제목이 config.yaml report 값을 쓰는지
-- 공개용: 오늘의 추천 티커 finviz 링크, 시장 온도 칸 아래 상태 표시(.stb) 제거, 폰 폭 카드 배치
-- 시장 온도 판정 기준 목록·머리글의 🟢🟡🔴 이모지 -> CSS 원(.dot), 개인용·공개용 모두
+- "철수의 아침 편지 · 10/14(수)" 한 줄 머리말·HTML 제목·첨부 설명 첫 줄·첨부 파일 이름·신호 요약 제목 (2026-10-15)
+- 지운 머리말 정보는 맨 아래 「보고서 정보」 접기 안으로
+- 시장 온도 판정 기준 목록·머리글의 🟢🟡🔴 이모지 -> CSS 원(.dot)
+(단체방용 공개 보고서는 2026-10-15 없앴다 — 단체방도 같은 보고서를 받는다)
 """
 
 from __future__ import annotations
@@ -55,10 +56,6 @@ def titles(cfg):
     return cfg["report"]
 
 
-def _public_html(tmp_path, cfg, **kw):
-    return report_html.render_public_report(_summary(cfg, **kw), cfg, tmp_path).read_text(encoding="utf-8")
-
-
 def _private_html(tmp_path, cfg, **kw):
     return report_html.render_report(_summary(cfg, **kw), cfg, tmp_path).read_text(encoding="utf-8")
 
@@ -67,8 +64,10 @@ def _private_html(tmp_path, cfg, **kw):
 
 
 def test_config_has_report_titles(titles):
-    for key in ("title", "subtitle", "short_title", "public_suffix"):
+    for key in ("title", "subtitle", "short_title"):
         assert titles[key]
+    assert titles["title"] == "철수의 아침 편지" and titles["short_title"] == "철수의 아침 편지"
+    assert "public_suffix" not in titles
 
 
 def test_report_titles_falls_back_to_defaults_without_report_section(cfg):
@@ -78,37 +77,28 @@ def test_report_titles_falls_back_to_defaults_without_report_section(cfg):
 
 def test_private_briefing_first_line_uses_short_title(cfg, titles):
     text = briefing.build_briefing_text(_summary(cfg), cfg)
-    assert text.splitlines()[0] == f"📊 {titles['short_title']} · 9/30(수) 마감 · 실전"
+    assert text.splitlines()[0] == f"{titles['title']} · 9/30(수)"  # 이모지·"마감"·모드 없음 (2026-10-15)
     assert "나스닥100" not in text
 
 
-def test_public_briefing_first_line_uses_short_title_and_public_suffix(cfg, titles):
-    text = briefing.build_public_briefing_text(_summary(cfg), cfg)
-    assert text.splitlines()[0] == f"📊 {titles['short_title']} · 9/30(수) 마감 · {titles['public_suffix']}"
-    assert "공개용" not in text and "나스닥100" not in text
-
-
 def test_briefing_first_line_follows_changed_config(cfg):
-    changed = {**cfg, "report": {"short_title": "테스트브리핑", "public_suffix": "모임"}}
-    assert briefing.build_public_briefing_text(_summary(cfg), changed).startswith("📊 테스트브리핑 · 9/30(수) 마감 · 모임\n")
+    changed = {**cfg, "report": {"title": "테스트 편지"}}
+    assert briefing.build_briefing_text(_summary(cfg), changed).startswith("테스트 편지 · 9/30(수)\n")
+    assert briefing.title_line({**_summary(cfg), "mode": "paper"}, cfg) == "철수의 아침 편지 · 9/30(수) · 모의"
 
 
 def test_private_report_title_h1_and_subtitle(tmp_path, cfg, titles):
     html = _private_html(tmp_path, cfg)
-    assert f"<title>{titles['title']} · 2026-09-30 (실전)</title>" in html
-    assert re.search(rf"<h1>{titles['title']}<span class=\"mode-badge\">실전</span></h1>", html)
-    assert f'<div class="subtitle">{titles["subtitle"]}</div>' in html
-    assert "나스닥 100 일일 브리핑" not in html
-    assert "MACD 중심 1:2:6 분할 전략" in html
-
-
-def test_public_report_title_h1_subtitle_and_suffix(tmp_path, cfg, titles):
-    html = _public_html(tmp_path, cfg)
-    assert f"<title>{titles['title']} ({titles['public_suffix']}) · 2026-09-30</title>" in html
-    assert f'<h1>{titles["title"]} <span class="suffix">({titles["public_suffix"]})</span></h1>' in html
-    assert f'<div class="subtitle">{titles["subtitle"]}</div>' in html
-    assert "(공개용)" not in html and "나스닥 100 일일 브리핑" not in html
-    assert "MACD 중심 1:2:6 분할 전략" in html  # 리드 문구는 그대로
+    assert "<title>철수의 아침 편지 · 9/30(수)</title>" in html
+    header = re.search(r"<header>(.*?)</header>", html, re.S).group(1)
+    assert re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", header)).strip() == "철수의 아침 편지 · 9/30(수)"  # 날짜 한 줄만
+    assert "마감" not in header and "📊" not in html.split("<body", 1)[1].split("</header>", 1)[0]
+    # 지운 머리말 정보는 맨 아래 「보고서 정보」 접기(기본 닫힘) 안으로
+    info = html.split('<details class="fold" id="fold-info">', 1)[1].split("</details>", 1)[0]
+    assert "▶ 보고서 정보" in info and f'<div class="subtitle">{titles["subtitle"]}</div>' in info
+    assert "MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준" in info
+    assert "기준일 <b>2026-09-30 종가</b>" in info and "주문 가능일" in info and "환율" in info and "생성" in info
+    assert html.index('id="fold-guide"') < html.index('id="fold-info"') < html.index("<footer>")
 
 
 def test_signal_summary_md_title_uses_short_title(tmp_path, monkeypatch, cfg, titles):
@@ -121,46 +111,10 @@ def test_signal_summary_md_title_uses_short_title(tmp_path, monkeypatch, cfg, ti
 # ── 2. 공개용 티커 finviz 링크 ──────────────────────────────────────────────
 
 
-def test_public_recommend_ticker_links_to_finviz(tmp_path, cfg):
-    html = _public_html(tmp_path, cfg)
-    assert '<a class="tk" href="https://finviz.com/quote.ashx?t=NVDA" target="_blank" rel="noopener"' in html
-    assert "a.tk{color:inherit;text-decoration:none;border-bottom:1px dotted var(--mute)}" in html
-
-
-def test_public_report_prices_have_thousands_separator(tmp_path, cfg):
-    html = _public_html(tmp_path, cfg)
-    assert "$1,234.50" in html and "$1,180.05 (-4.4%)" in html
-
-
 # ── 3. 오늘의 추천 폰 폭 카드 배치 ─────────────────────────────────────────
 
 
-def test_public_mobile_cards_use_grid_not_table_cells(tmp_path, cfg):
-    """폰 폭에서 tr만 block이고 td가 table-cell로 남으면 칸이 옆으로 끼여 깨진다 (회귀 방지)."""
-    html = _public_html(tmp_path, cfg)
-    mobile = html.split("@media (max-width:640px){\n  .wrap", 1)[1].split("\n}\n", 1)[0]
-    tr_rule = re.search(r"\n  tr\{(.*?)\}", mobile, re.S).group(1)
-    assert "display:grid" in tr_rule and "display:block" not in tr_rule
-    assert "td.note{grid-column:1/-1;min-width:0" in mobile
-    assert "td.note:empty{display:none}" in mobile
-
-
 # ── 4. 공개용 시장 온도 칸 아래 상태 표시 제거 ──────────────────────────────
-
-
-def test_public_macro_tile_has_no_status_badge_but_keeps_notes(tmp_path, cfg):
-    th = cfg["macro"]["thresholds"]
-    rows = [_macro_row(th, is_stale=True, short_range=True)]
-    html = _public_html(tmp_path, cfg, macro_rows=rows)
-    assert 'class="stb' not in html
-    assert '<span class="mr">지연(2026-09-29) · 기간 짧음 · 지금 구간: 공포</span>' in html
-    badge = rows[0]["badge"]["text"]
-    assert re.search(rf"<h3>.*— 오늘 38 {badge}</h3>", html)  # 설명 섹션 제목의 상태 표시는 그대로
-
-
-def test_public_macro_tile_without_notes_omits_note_line(tmp_path, cfg):
-    html = _public_html(tmp_path, cfg, macro_rows=[_macro_row(cfg["macro"]["thresholds"], note=None)])
-    assert 'class="mr"' not in html
 
 
 def test_private_macro_tile_keeps_status_badge(tmp_path, cfg):
@@ -170,9 +124,8 @@ def test_private_macro_tile_keeps_status_badge(tmp_path, cfg):
 # ── 5. 🟢🟡🔴 -> CSS 원 ────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("render", [_public_html, _private_html], ids=["public", "private"])
-def test_macro_scale_and_header_use_css_dots(tmp_path, cfg, render):
-    html = render(tmp_path, cfg)
+def test_macro_scale_and_header_use_css_dots(tmp_path, cfg):
+    html = _private_html(tmp_path, cfg)
     head = re.search(r'<div class="mhead">.*?</div>', html, re.S).group(0)
     scale = re.search(r'<ol class="mscale".*?</ol>', html, re.S).group(0)
     for part in (head, scale):
@@ -183,28 +136,7 @@ def test_macro_scale_and_header_use_css_dots(tmp_path, cfg, render):
     assert ".dot-ok{background:var(--buy)}.dot-warn{background:var(--warn)}.dot-bad{background:var(--sell)}" in html
 
 
-def test_telegram_macro_lines_keep_emoji(cfg):
-    text = briefing.build_public_briefing_text(_summary(cfg), cfg)
-    assert "🟡주의" in text
-
-
 # ── 시장 온도 그래프: 공개용 = 개인용 ─────────────────────────────────────
-
-
-def test_public_macro_chart_matches_private(tmp_path, cfg):
-    """공개용 시장 온도 그래프(스파크라인·설명 링크·CSS)가 개인용과 같은지."""
-    pub = _public_html(tmp_path, cfg)
-    priv = _private_html(tmp_path, cfg)
-    chart = lambda html: re.search(r'<a class="mchart".*?</a>', html, re.S).group(0)
-    assert chart(pub) == chart(priv)
-    assert "<small>1년 그래프 · 설명 보기 ↓</small>" in chart(pub)
-    assert '<span class="q">ⓘ</span>' in pub and '<a href="#macro-explain">지표 설명 ↓</a>' in pub
-    css = lambda html: {
-        line for line in html.split("<style>", 1)[1].split("</style>", 1)[0].splitlines()
-        if re.match(r"\.(spark|mchart|mbody|mgrid|mt|mn|mv|mhead)\b", line)
-    }
-    assert css(pub) - {".mt{scroll-margin-top:16px}"} <= css(priv)
-    assert ".wrap{max-width:1560px" in pub  # 칸 폭이 같아야 그래프 크기도 같다
 
 
 # ── 개인용 안내 문구 (구글 시트) ──────────────────────────────────────────
@@ -224,11 +156,6 @@ def test_private_guide_points_fills_to_google_sheet(tmp_path, cfg):
     html = _private_html(tmp_path, cfg)
     assert "<b>체결 기록</b>구글 시트 '체결' 탭에 체결 내역을 적어요." in html
     assert "fills.xlsx에 체결 내역을 적어요" not in html
-
-
-def test_public_report_has_no_private_sheet_notes(tmp_path, cfg):
-    html = _public_html(tmp_path, cfg)
-    assert "구글 시트" not in html
 
 
 def test_private_fills_notice_points_to_google_sheet_fills_tab(tmp_path, cfg):
