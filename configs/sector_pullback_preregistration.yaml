@@ -98,3 +98,14 @@ step1_interpretations:
     - "업종별 기여 = 매매 손익(비용 뒤, 세전) 업종별 합 + QQQ(쉬는 돈) 손익"
     - "상위 5건 제외 = 손익 상위 5건만 빼고(그 돈은 QQQ에 둠) 나머지 매매 일정은 그대로 다시 돌린 값"
     - "현재 명단 = 나스닥100(data/universe_fallback.csv, 2026-09-23) ∪ S&P 100(위키 현재 판)을 전 기간에 고정. 같은 규칙·비교는 QQQ·동일 비중(같은 명단)만 (무작위·가짜는 시점별 명단에서만)"
+
+# 1단계 데이터 보완 (2026-10-16, 가격 출처 확보율만 보고 정함 — 수익·신호는 아직 계산 전)
+data_amendments:
+  1: "(가) S&P 500 점검 final_gap: status 있음이고 그 점검의 CIK가 비었거나 우리 CIK와 같으면, 그 점검이 고른 출처(Tiingo 캐시 또는 yfinance, 바뀐 티커는 renames 기준)를 쓴다 — 그 점검이 날짜·시가총액으로 같은 회사를 확인했기 때문"
+  2: "(나') 우리 CIK가 지금 다른 티커로 거래되면(SEC 현재 티커 목록 역조회) 그 티커의 yfinance를 쓴다 (RIMM→BB, VIP→VEON, DWDP→DD 등)"
+  3: "(라) 지주회사 개편: 같은 티커의 지금 CIK가 다르고, 그 새 CIK의 EDGAR 이름이 기대 이름과 유사도 0.6 이상이며, 옛 CIK에 지금 거래되는 티커가 없을 때만 그 티커의 yfinance (XOM·AVGO·BLK·APA·PRGO·XRX). 옛 Alcoa(AA)처럼 옛 회사가 다른 티커로 살아 있으면 쓰지 않는다"
+  coverage: "가격 없음 23종목(명단 달 합 896, 종목·달의 약 4%) — CA·EMC·YHOO·SNDK·MON·QRTEA·BBBY 등 상장폐지·인수. 생존 편향으로 기록"
+  known_limits:
+    - "같은 CIK의 트래킹 주식(Liberty Media 1560385: LMCA·LMCK·BATRA·BATRK)은 한 회사로 묶여 FWONA 가격(옛 LMCA 이어짐)을 쓴다"
+    - "티커와 CIK의 시점 불일치(FOXA 2012~2019 = 21st Century Fox, DD 2012~2017 = E. I. du Pont 등)는 지금 CIK 기준 — 가격은 같은 주식 흐름(yfinance)을 따른다"
+    - "Tiingo 출처(2011-06부터)는 지표 준비 기간이 짧다. SW1 Tiingo 15종목은 분배금 없음"
