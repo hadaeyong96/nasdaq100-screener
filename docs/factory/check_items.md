@@ -47,15 +47,18 @@
 | 분할 (재무 사실) | `core/e1.py:33` `_split_factor` | filed 다음 날 ~ 판단일 분할만 반영 |
 | 분사 | 처리 없음 | 분할 반영 종가라 분사일에 가격이 떨어진 것으로 보인다(예: 탐색 B 점검 6건) |
 | 상장폐지·편입 제외 | `data/universe_history.py:123` `reconstruct_membership`, `:220` `point_in_time_universe` | 위키 변경 표로 시점별 나스닥100 명단 재구성 |
-| 상장폐지 (가격 끝) | research/rs26-zone3 `scripts/rs26_zone3_run.py` `simulate`, research/sector-pullback `core/sector_pullback.py` `run_book` | 마지막 종가에 판 것으로 본다(파산은 낙관적) |
+| 상장폐지 (가격 끝) | `scripts/rs26_zone3_run.py` `simulate`, research/sector-pullback `core/sector_pullback.py` `run_book` | 마지막 종가에 판 것으로 본다(파산은 낙관적) |
 | 가격 공백 | `data/backtest_prices.py:116` | 복구 못 한 날 `data_gap` 처리 |
 | 티커 변경 | `scripts/sw1_data_check.py:42` `EXTRA_RENAMES`, `:521` `renames()`(S&P 500 점검 `data/cache/sp500/renames.csv`), `data/universe.py:64` `_to_yfinance_ticker`(BRK.B → BRK-B 등) | 옛 티커 → 지금 티커 |
 | 합병·지주회사 개편·같은 회사 확인 | `scripts/sw1_data_check.py` `step_events`(CIK·이름 유사도·공시 2건), research/sector-pullback `scripts/sector_pullback_data.py` `choose_source`(같은 CIK·지주회사 개편 규칙) | CIK 기준으로 같은 회사 확인 |
 | 같은 회사 여러 주식 | research/sector-pullback `core/sector_pullback.py` `combine_shares` | 회사당 한 종목 (탐색 B 결정 3) |
 
-## 4. F4 전에 정할 것 (제안, 결정은 사용자)
+## 4. 공장 공용 규칙 — 확정 2026-10-16 (사용자 결정)
 
-1. 공장 공용 세금 규칙 하나: 원화·250만 원 공제·5월 납부(옛 엔진) 또는 달러·공제 없음·연말(최근 코드).
-2. 구간·연도별 비교 때 QQQ 기준선도 해마다 "팔았다고 치고" 세금을 매긴 곡선을 같이 보여 줄지.
-3. 재무 데이터: 접수 시각 기준(SW1 방식)을 공장 기본값으로 할지.
-4. 분사 처리: 그대로 둘지(보수적), 분사 목록을 만들어 보정할지.
+1. **세금**: 과세연도 원화 실현손익 통산 − 기본공제 250만 원 → 22%, 다음 해 5월 납부(`core/tax.py` 방식)로 공장 시험을 통일한다.
+   과거 판정은 다시 계산하지 않는다. 가상 장부 세금 통일(지금은 달러·공제 없음·연말)은 2026-12-31 전에 별도 작업으로 한다 — 지금은 하지 않는다.
+2. **연도별·구간별 비교**: 전략과 QQQ 모두 "그날 전부 팔았다면 세후 가치" 곡선을 쓴다(1장의 "구간 비교가 전략에 불리" 문제를 없앤다).
+3. **재무 데이터**: EDGAR 접수일 다음 거래일 종가부터 신호를 계산하고, 체결은 그다음 거래일 종가.
+4. **분사**: 조정 종가를 쓴다. 시험 대상 중 하루 −15% 이상 하락이면서 분사 공시가 있는 날을 자동 목록으로 만들어 보고하고, 판정 전에 사람이 확인한다.
+
+(이전 4장 "F4 전에 정할 것" 제안 4개는 위 결정으로 닫는다.)

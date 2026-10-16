@@ -99,13 +99,13 @@ strategies:
     result: ""
     evidence: ""
     source: 외부 AI 1·2 + 기존 ('선행 레이더' 흡수)
-    planned_trials: null  # 후보 신호마다 따로 센다 — 사전 등록 때 확정
+    planned_trials: 3  # 2026-10-16 사용자 결정: T10Y2Y ≥ 0 / 시카고 연준 NFCI / M2 증가율 (실질금리 제외)
     draft_rule: "대상 QQQ/현금 대용, 1999~2021 지수 데이터, 월 1회"
-    candidate_signals: ["장단기 금리차 T10Y2Y ≥ 0", "신용 경보·금융 여건 지표", "M2·실질금리"]
+    candidate_signals: ["장단기 금리차 T10Y2Y ≥ 0", "시카고 연준 NFCI", "M2 증가율"]
     notes:
       - "나중에 수정되는 지표(M2 등)는 ALFRED의 당시 발표값만 사용"
       - "200일선 1배 전환은 과거에 그냥 보유보다 −0.6%p였음 (P6-1 P4)"
-      - "'실질금리 또는 M2'처럼 둘 중 하나를 고르는 규칙은 두 가설로 따로 셈"
+      - "'실질금리 또는 M2'처럼 둘 중 하나를 고르는 규칙은 두 가설로 따로 셈 — 실질금리는 2026-10-16 결정으로 제외"
   - {id: revenue_growth_r1, rank: 6, name: "매출 성장 R1", status: 대기 후보, zone: "", result: "참고: E1 매출 버전은 E0보다 높았음(판정 외, 새 등록 필요)", evidence: "docs/results/e1.md", source: 기존, planned_trials: 1}
   - {id: winner_anatomy, rank: 7, name: "승자 해부기·매집 흔적", status: 대기 후보, zone: "탐색 ② (중소형 2012~2016) 후보", result: "", evidence: "docs/validation_zones.md", source: 기존, planned_trials: 1}
   - {id: event_radar, rank: 8, name: "시사·사건 레이더", status: 대기 후보, zone: "", result: "", evidence: "", source: 기존, planned_trials: 1}
