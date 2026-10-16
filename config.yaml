@@ -252,7 +252,7 @@ virtual_books:
   start_date: "2026-10-14" # 다섯 장부 공통 시작일(그날 종가 체결) — 2026-10-15 사용자 결정으로 고정.
   # null이면 첫 실행 기준일을 data/virtual_books.db에 저장해 쓴다(DB가 사라지면 시작일이 바뀌므로 고정해 둔다).
   start_krw: 100000000 # 장부당 가상 1억 원 — 시작일 원/달러 종가로 달러 환산, 이후 달러 운용
-  start_fx: null # null이면 시작일 원/달러 종가(data/fx, KRW=X). 정한 뒤 고정 권장
+  start_fx: 1340.31005859375 # 2026-10-14 원/달러 종가(KRW=X, 전략요약 탭 값) — 2026-10-16 사용자 결정으로 고정. null이면 시작일 종가를 다시 받는다
   signal_ticker: QQQ # 국면 신호: t일 종가 > 200일 단순이동평균 → t+1 거래일 종가 체결 (sealed-a B1과 같은 방식)
   sma_days: 200
   defensive_ticker: SGOV # 200일선 아래일 때 전환 장부가 들고 있는 종목
