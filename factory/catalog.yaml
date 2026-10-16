@@ -20,8 +20,8 @@ strategies:
   - {id: vb5_tqqq_sma200, name: TQQQ 200일선 전환(SGOV), status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 5번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
   - {id: vb6_picks, name: "추천 종목 따라하기(RSI·MACD·일목)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 6번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
   - {id: vb7_bollinger, name: "볼린저·RSI·MACD 따라하기", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 7번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
-  - {id: vb8_rs26, name: "6개월 강세 따라하기(RS26)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 검증 ③ FAIL(세후 7.45% vs QQQ 18.70%), 관찰만 계속. 시작일 = 첫 월말", evidence: "rs26-prereg, research/rs26-zone3 docs/results/rs26_zone3.md"}
-  - {id: vb9_accel, name: "한 달 가속 따라하기(ACCEL)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 9번 — 검증 ③ FAIL(세후 5.25% vs QQQ 19.29%), 관찰만 계속", evidence: "accel-prereg, research/rs26-zone3 docs/results/accel_zone3.md"}
+  - {id: vb8_rs26, name: "6개월 강세 따라하기(RS26)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 검증 ③ FAIL(세후 7.45% vs QQQ 18.70%), 관찰만 계속. 시작일 = 첫 월말", evidence: "rs26-prereg, docs/results/rs26_zone3.md"}
+  - {id: vb9_accel, name: "한 달 가속 따라하기(ACCEL)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 9번 — 검증 ③ FAIL(세후 5.25% vs QQQ 19.29%), 관찰만 계속", evidence: "accel-prereg, docs/results/accel_zone3.md"}
 
   # ── 탈락 보관 ──────────────────────────────────────────────────────────
   - {id: x_macd126, name: "MACD 1:2:6 분할(P5)", status: 탈락 보관, zone: "구역 정책 전 (2015~2021, 2007~2014)", result: "우위 없음 — P5-4 최종 후보 없음, P5-5 판정 불가(데이터 부족)", evidence: "docs/results/trial_log.md 이전 기록, configs/p5_5_preregistration.yaml"}
@@ -34,18 +34,86 @@ strategies:
   - {id: x_l3_b2_b3, name: "국면 전환 L3·B2·B3", status: 탈락 보관, zone: "구역 정책 전 (QQQ 1999~2021, ^IXIC·미국 시장 1998까지)", result: "불합격 — L3 MDD −95.56%, L1b B2·B3 불합격", evidence: "l1-prereg, l1b-prereg, docs/results/l1.md, docs/results/l1b.md"}
   - {id: x_defensive_assets, name: "고배당·1배 방어 자산", status: 탈락 보관, zone: "구역 정책 전 (프렌치 시장 1927~1998)", result: "국채보다 더 빠짐 — M2 고배당 MDD −93.07% 등 월별 M1~M3 불합격", evidence: "l1b-prereg, docs/results/l1b.md"}
   - {id: x_weekly_rs, name: "1주 강세 + 3% 익절, 1~3주 강세", status: 탈락 보관, zone: "탐색 (현재 명단)", result: "무작위와 같음 (숫자 기록 없음 — 문서 기록만)", evidence: "docs/design/weekly_rs.md"}
-  - {id: x_rs26, name: "6개월 강세 따라하기(RS26)", status: 탈락 보관, zone: "검증 ③ 1/5", result: "FAIL 7.45% (QQQ 18.70%)", evidence: "rs26-prereg, research/rs26-zone3 docs/results/rs26_zone3.md"}
-  - {id: x_accel, name: "한 달 가속 따라하기(ACCEL)", status: 탈락 보관, zone: "검증 ③ 2/5", result: "FAIL 5.25% (QQQ 19.29%)", evidence: "accel-prereg, research/rs26-zone3 docs/results/accel_zone3.md"}
+  - {id: x_rs26, name: "6개월 강세 따라하기(RS26)", status: 탈락 보관, zone: "검증 ③ 1/5", result: "FAIL 7.45% (QQQ 18.70%)", evidence: "rs26-prereg, docs/results/rs26_zone3.md"}
+  - {id: x_accel, name: "한 달 가속 따라하기(ACCEL)", status: 탈락 보관, zone: "검증 ③ 2/5", result: "FAIL 5.25% (QQQ 19.29%)", evidence: "accel-prereg, docs/results/accel_zone3.md"}
   - {id: x_sector_pullback, name: "강한 업종 속 강한 종목 첫 눌림(탐색 B)", status: 탈락 보관, zone: "탐색 (시점별 나스닥100 ∪ S&P 100, 2012~2021)", result: "B0 16.29% vs QQQ 19.98%, 가짜 1등 95백분위 18.32% 미달 (B0~B3 모두 기준 미충족, 판정 아님)", evidence: "sector-pullback-prereg, docs/factory/explore/sector_pullback.md"}
 
   # ── 확정 습관 ──────────────────────────────────────────────────────────
   - {id: h_pension_first, name: 연금저축 먼저, status: 확정 습관, zone: 실제 운용, result: "세금 계좌 순서: 연금저축부터 채운다", evidence: ""}
   - {id: h_december_deduction, name: 12월 공제 소진, status: 확정 습관, zone: 실제 운용, result: "12월에 그해 세액공제 한도를 다 쓴다", evidence: ""}
 
-  # ── 대기 후보 (순위 순) ────────────────────────────────────────────────
-  - {id: c1_explore_a, rank: 1, name: "탐색 A — 시점별 나스닥100으로 3단계 규칙(1주·4주)·ACCEL 재확인", status: 대기 후보, zone: 탐색, result: "", evidence: ""}
-  - {id: c2_lead_radar, rank: 2, name: "선행 레이더 (FRED, QQQ 타이밍)", status: 대기 후보, zone: "", result: "", evidence: ""}
-  - {id: c3_revenue_r1, rank: 3, name: "매출 성장 R1", status: 대기 후보, zone: "", result: "참고: E1 매출 버전은 E0보다 높았음(판정 외, 새 등록 필요)", evidence: "docs/results/e1.md"}
-  - {id: c4_peg_pg1, rank: 4, name: "과거 PEG 1 미만 PG1", status: 대기 후보, zone: "", result: "", evidence: ""}
-  - {id: c5_winner_anatomy, rank: 5, name: "승자 해부기·매집 흔적", status: 대기 후보, zone: "탐색 ② (중소형 2012~2016) 후보", result: "", evidence: "docs/validation_zones.md"}
-  - {id: c6_news_radar, rank: 6, name: "시사·사건 레이더", status: 대기 후보, zone: "", result: "", evidence: ""}
+  # ── 대기 후보 (순위 순, 2026-10-16 외부 AI 검토 반영 — 기존 6개를 대체·흡수) ─────────
+  # source: 외부 AI 1 | 외부 AI 2 | 기존. planned_trials: 계획한 시험(가설) 수
+  - id: explore_a
+    rank: 1
+    name: "탐색 A — 시점별 나스닥100으로 1주·4주 강세 규칙·한 달 가속 재확인"
+    status: 대기 후보
+    zone: 탐색 (판정 아님)
+    result: "생존 편향 크기 측정이 목적"
+    evidence: ""
+    source: 기존
+    planned_trials: 1
+  - id: share_count_down
+    rank: 2
+    name: 주식 수 감소 기업
+    status: 대기 후보
+    zone: ""
+    result: ""
+    evidence: ""
+    source: 외부 AI 1
+    planned_trials: 1
+    draft_rule: >-
+      매월 말, 시점별 나스닥100 ∪ S&P 100 중 공시 접수일 기준 이미 공개된 최근 두 연간 기본 주식 수로
+      변화율 = 최신/직전 − 1. 음수인 종목 중 가장 많이 줄어든 10개 동일 비중, 다음 거래일 종가 체결, 순위 밖이면 매도.
+      분할·합병·회계연도 변경은 사전 등록 때 처리 규칙 고정. 데이터 EDGAR
+  - id: lowvol_strength
+    rank: 3
+    name: 덜 흔들리며 강한 종목
+    status: 대기 후보
+    zone: ""
+    result: ""
+    evidence: ""
+    source: 외부 AI 2
+    planned_trials: 1
+    draft_rule: "매월 말, 60거래일 수익률 상위 30 → 그중 60거래일 일간 수익률 표준편차가 가장 낮은 10개 동일 비중"
+    blocks: "탈락 블록(상대강도) + 새 블록(저변동) 조합"
+  - id: cheap_quality_family
+    rank: 4
+    name: 싼 우량 기업 가족
+    status: 대기 후보
+    zone: ""
+    result: ""
+    evidence: ""
+    source: 외부 AI 1·2 (기존 후보 PG1 '과거 PEG 1 미만' 흡수)
+    planned_trials: 4
+    variants:
+      base: "영업이익/매출 백분위와 영업이익/EV 백분위의 평균 상위 10, 영업이익 > 0, 매월"
+      a: "최근 4분기 FCF(영업현금흐름 − 자본적지출)/EV 상위 10, FCF > 0"
+      b: "과거 PEG 1 미만 (기존 PG1 규칙)"
+      c: "최근 4분기 FCF 금액 상위 20 동일 비중, 분기 재조정 — 반드시 대조군 '시가총액 상위 20 동일 비중'과 비교 (금액 순위는 사실상 회사 크기 순위)"
+  - id: macro_timing_family
+    rank: 5
+    name: 매크로로 QQQ 사고팔 때 정하기
+    status: 대기 후보
+    zone: ""
+    result: ""
+    evidence: ""
+    source: 외부 AI 1·2 + 기존 ('선행 레이더' 흡수)
+    planned_trials: null  # 후보 신호마다 따로 센다 — 사전 등록 때 확정
+    draft_rule: "대상 QQQ/현금 대용, 1999~2021 지수 데이터, 월 1회"
+    candidate_signals: ["장단기 금리차 T10Y2Y ≥ 0", "신용 경보·금융 여건 지표", "M2·실질금리"]
+    notes:
+      - "나중에 수정되는 지표(M2 등)는 ALFRED의 당시 발표값만 사용"
+      - "200일선 1배 전환은 과거에 그냥 보유보다 −0.6%p였음 (P6-1 P4)"
+      - "'실질금리 또는 M2'처럼 둘 중 하나를 고르는 규칙은 두 가설로 따로 셈"
+  - {id: revenue_growth_r1, rank: 6, name: "매출 성장 R1", status: 대기 후보, zone: "", result: "참고: E1 매출 버전은 E0보다 높았음(판정 외, 새 등록 필요)", evidence: "docs/results/e1.md", source: 기존, planned_trials: 1}
+  - {id: winner_anatomy, rank: 7, name: "승자 해부기·매집 흔적", status: 대기 후보, zone: "탐색 ② (중소형 2012~2016) 후보", result: "", evidence: "docs/validation_zones.md", source: 기존, planned_trials: 1}
+  - {id: event_radar, rank: 8, name: "시사·사건 레이더", status: 대기 후보, zone: "", result: "", evidence: "", source: 기존, planned_trials: 1}
+
+# 시험 없이 기각한 아이디어 (시험 장부에는 넣지 않는다 — 시험이 아니므로)
+rejected_ideas:
+  - id: reversal_1m_bottom10
+    name: 1개월 하락 하위 10 되돌림
+    reason: "RSI 과매도·추천 종목 신호와 같은 계열, 시험 없이 기각"
+    source: 외부 AI 1
+    date: "2026-10-16"
