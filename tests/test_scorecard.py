@@ -2,6 +2,7 @@
 
 import sqlite3
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -133,33 +134,137 @@ def test_make_on_first_trading_day_reads_db_readonly(tmp_path):
     assert run.make(cfg, date(2026, 11, 3), _qqq(), db_path=db) is None
 
 
-def test_attach_failure_keeps_briefing(tmp_path, monkeypatch):
+class _FakeSheet:
+    def __init__(self, available=True):
+        self.available, self.rows = available, []
+
+    def months(self):
+        return {r[0] for r in self.rows}
+
+    def append(self, rows):
+        self.rows += rows
+        return len(rows)
+
+
+def test_attach_failure_keeps_briefing(monkeypatch):
     summary = {"report_path": "orig.html"}
-    calls = []
+    calls, notes = [], []
 
     def boom():
         raise RuntimeError("QQQ 못 받음")
 
-    run.attach_scorecard(summary, {}, date(2026, 11, 2), boom, lambda s: calls.append(s) or "new.html")
+    run.attach_scorecard(summary, {}, date(2026, 11, 2), boom, lambda s: calls.append(s) or "new.html",
+                         sheet=_FakeSheet(), notify=lambda e, s: notes.append((e, s)))
     assert summary == {"report_path": "orig.html"} and calls == []
+    assert notes == [("error", {"stage": "월간 성적표 계산"})]  # 어느 단계인지만, 오류 상세 없음
 
     def bad_render(s):
         raise ValueError("그리기 실패")
 
-    monkeypatch.setattr(run, "make", lambda *a, **k: {"month": "2026-10", "lines": ["x"], "markdown": "m"})
-    run.attach_scorecard(summary, {}, date(2026, 11, 2), lambda: None, bad_render)
+    card = {"month": "2026-10", "lines": ["x"], "markdown": "m", "rows": [], "regime_ratio": {}, "proposals": []}
+    monkeypatch.setattr(run, "make", lambda *a, **k: card)
+    run.attach_scorecard(summary, {}, date(2026, 11, 2), lambda: None, bad_render, sheet=_FakeSheet(),
+                         notify=lambda e, s: None)
     assert summary == {"report_path": "orig.html"}
-    # 정상이면 접기 정보를 넣고 다시 그린다
-    monkeypatch.setattr(run, "OUT_DIR", tmp_path)
-    monkeypatch.setattr(run, "save_local", lambda card, out_dir=tmp_path: tmp_path / "2026-10.md")
-    run.attach_scorecard(summary, {}, date(2026, 11, 2), lambda: None, lambda s: "new.html")
-    assert summary["scorecard"]["month"] == "2026-10" and summary["report_path"] == "new.html"
+
+
+def _cfg():
+    return {"virtual_books": {"books": [{"name": "QQQ 그냥 보유"}, {"name": "QLD 그냥 보유"}, {"name": "TQQQ 그냥 보유"}],
+                              "accel": {"name": "한 달 가속 따라하기"}}}
+
+
+def test_catch_up_after_failed_first_day_inserts_once(tmp_path, monkeypatch):
+    db = tmp_path / "vb.db"
+    _make_db(db)
+    monkeypatch.setattr(run, "OUT_DIR", tmp_path / "out")
+    orig_make = run.make
+    monkeypatch.setattr(run, "make", lambda cfg, d, q, **k: orig_make(cfg, d, q, db_path=db, **k))
+    report = tmp_path / "report_live.html"
+    sheet, notes = _FakeSheet(), []
+
+    def render(s):
+        report.write_text("성적표 있음" if s.get("scorecard") else "성적표 없음", encoding="utf-8")
+        return report
+
+    def go(day, qqq):
+        report.write_text("성적표 없음", encoding="utf-8")
+        s = {"report_path": report}
+        run.attach_scorecard(s, _cfg(), day, qqq, render, sheet=sheet, notify=lambda e, x: notes.append(e))
+        return s
+
+    def qqq_fail():
+        raise RuntimeError("첫 거래일 실패")
+
+    s1 = go(date(2026, 11, 2), qqq_fail)                       # 첫 거래일 실패 → 시트·접기 없음
+    assert sheet.rows == [] and "scorecard" not in s1
+    s2 = go(date(2026, 11, 3), _qqq)                           # 다음 실행에서 넣는다
+    assert {r[0] for r in sheet.rows} == {"2026-10"} and len(sheet.rows) == 4 and s2["scorecard"]["month"] == "2026-10"
+    assert Path(s2["group_report_path"]).read_text(encoding="utf-8") == "성적표 없음"  # 단체방 판에는 성적표 없음
+    assert Path(s2["report_path"]).read_text(encoding="utf-8") == "성적표 있음"
+    s3 = go(date(2026, 11, 4), _qqq)                           # 같은 달 두 번 없음
+    assert len(sheet.rows) == 4 and "scorecard" not in s3 and "group_report_path" not in s3
+    assert notes.count("scorecard_done") == 1 and notes.count("error") == 1
+
+
+def test_without_sheet_only_first_trading_day():
+    from data.market_calendar import trading_days_between
+
+    td = trading_days_between(date(2026, 10, 1), date(2026, 12, 10))
+    assert run.scorecard_month(date(2026, 11, 3), td, done=None) is None
+    assert run.scorecard_month(date(2026, 11, 3), td, done=set()) == pd.Period("2026-10")
+    assert run.scorecard_month(date(2026, 11, 1), td, done=set()) is None      # 그달 첫 거래일 전(일요일)
+    assert run.scorecard_month(date(2026, 11, 3), td, done={"2026-10"}) is None
+
+
+def test_group_send_uses_report_without_scorecard():
+    """engine/daily.py가 단체방에 group_report_path(성적표 없는 판)를 먼저 보내는지(정적 확인)."""
+    src = (Path(__file__).resolve().parents[1] / "engine" / "daily.py").read_text(encoding="utf-8")
+    i = src.index("telegram.send_group_briefing(")
+    assert 'summary.get("group_report_path") or summary.get("report_path")' in src[i:i + 300]
+
+
+def test_scorecard_sheet_tab_is_append_only():
+    from data import virtual_books_sheet as vbsheet
+
+    assert set(vbsheet.ALLOWED_TABS) - set(vbsheet.LEDGER_TABS) == {"월간성적표"}
+    with pytest.raises(vbsheet.VirtualBooksSheetForbiddenError):
+        vbsheet.write_tables(object(), "x", {vbsheet.TAB_SCORECARD: [["a"]]})   # 통째로 다시 쓰기 금지
+    with pytest.raises(vbsheet.VirtualBooksSheetForbiddenError):
+        vbsheet.write_tables(object(), "x", {"계획": [["a"]]})
+
+    class WS:
+        title = "월간성적표"
+
+        def __init__(self):
+            self.rows = []
+
+        def get_all_values(self):
+            return self.rows
+
+        def append_rows(self, rows, value_input_option=None):
+            self.rows += rows
+
+        def clear(self):
+            raise AssertionError("지우면 안 된다")
+
+    ws = WS()
+
+    class SS:
+        def worksheet(self, name):
+            assert name == "월간성적표"
+            return ws
+
+    class Client:
+        def open_by_key(self, k):
+            return SS()
+
+    vbsheet.append_scorecard(Client(), "x", [["2026-10", 1]])
+    vbsheet.append_scorecard(Client(), "x", [["2026-11", 1]])
+    assert ws.rows == [vbsheet.SCORECARD_HEADER, ["2026-10", 1], ["2026-11", 1]]
 
 
 def test_daily_hook_isolated_from_briefing_send():
     """engine/daily.py 연결점이 try 안에 있고, 그 뒤에 브리핑 발송 코드가 그대로 이어지는지(정적 확인)."""
-    from pathlib import Path
-
     src = (Path(__file__).resolve().parents[1] / "engine" / "daily.py").read_text(encoding="utf-8")
     i = src.index("from factory import scorecard_run")
     assert src.rfind("try:", 0, i) > src.rfind("\n", 0, i) - 200

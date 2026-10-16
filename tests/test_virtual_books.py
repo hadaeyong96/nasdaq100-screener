@@ -392,7 +392,7 @@ def test_same_day_double_run_no_duplicates_and_alerts_once(tmp_path, monkeypatch
         return {k: [r for r in v if not (r and r[0] == "갱신")] for k, v in tabs.items()}
 
     assert _no_stamp({k: v.values for k, v in client.ss.tabs.items()}) == _no_stamp(sheet1)
-    assert set(client.ss.tabs) == set(vbsheet.ALLOWED_TABS)
+    assert set(client.ss.tabs) == set(vbsheet.LEDGER_TABS)
     assert len(s1) >= 1 and s2 == []  # 낙폭·전환 알림은 한 번만
     assert len(sent_texts) == len(s1)
 

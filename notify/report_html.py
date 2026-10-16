@@ -602,7 +602,7 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "plan_limit_exceeded_rows": plan_limit_exceeded_rows,
         "cfg_js": cfg_js,
         "titles": report_titles(cfg),
-        "header_line": title_line(summary, cfg),  # 맨 위 한 줄 "철수의 아침 편지 · 10/14(수)"
+        "header_line": title_line(summary, cfg),  # 맨 위 한 줄 "오빠의 아침 편지 · 10/14(수)"
         "buy_count": buy_count,
         "sell_count": len(sell_rows),
         "held_count": summary.get("held_tickers_count", 0),

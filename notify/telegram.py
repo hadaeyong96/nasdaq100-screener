@@ -84,7 +84,7 @@ def report_caption(text: str, limit: int = MAX_CAPTION_LEN) -> str:
     텔레그램은 보고서 파일 한 통만 보낸다(본문 글은 보내지 않는다, 2026-10-01 사용자 확정).
     첨부만 봐도 무슨 파일인지 알 수 있게 본문 첫 줄(제목 · 날짜)과, 놓치면 안 되는 가상 장부
     국면 줄("오늘 국면:")·"정정본:"·"확인할 것:" 줄만 남긴다. limit자를 넘으면 자른다.
-    출력 예: "철수의 아침 편지 · 9/30(수)"
+    출력 예: "오빠의 아침 편지 · 9/30(수)"
     """
     lines = [line for line in text.strip().split("\n") if line.strip()]
     if not lines:
@@ -255,7 +255,7 @@ def report_attachment_name(as_of_str: str, cfg: dict | None = None) -> str:
     """휴대폰 파일 목록에서 알아보기 쉬운 첨부 파일 이름 (P3.4 2번).
 
     입력: as_of_str(기준일 YYYY-MM-DD), cfg(config.yaml — report.short_title을 쓴다)
-    출력: "{short_title}_YYYY-MM-DD.html" (예: 철수의 아침 편지_2026-09-23.html)
+    출력: "{short_title}_YYYY-MM-DD.html" (예: 오빠의 아침 편지_2026-09-23.html)
     """
     return f"{report_titles(cfg)['short_title']}_{as_of_str}.html"
 

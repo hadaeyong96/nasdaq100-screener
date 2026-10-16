@@ -226,3 +226,18 @@ def render_markdown(sc: dict) -> str:
     L += ["", "## 제안 (제안만 — 장부를 멈추거나 실제 주문을 내지 않는다)", ""]
     L += [f"- {no}. {name}: {p}" for no, name, p in sc["proposals"]] or ["- 없음"]
     return "\n".join(L) + "\n"
+
+
+def sheet_rows(sc_: dict, recorded_at: str) -> list[list]:
+    """월간성적표 탭에 덧붙일 행 (data.virtual_books_sheet.SCORECARD_HEADER 순서, 전략마다 한 줄)."""
+    reg = " · ".join(f"{k} {v * 100:.0f}%" for k, v in sc_["regime_ratio"].items())
+    out = []
+    for r in sc_["rows"]:
+        if r["status"] != "ok":
+            out.append([sc_["month"], r["no"], r["name"], "", "", "", "", "", "", "", "", "", "", reg, r["status"], "", recorded_at])
+            continue
+        rnd = lambda x, d=2: "" if x is None else round(float(x), d)  # noqa: E731
+        out.append([sc_["month"], r["no"], r["name"], rnd(r["month_vs_qqq_pp"]), rnd(r["cum_vs_qqq_pp"]), r["months_won"],
+                    r["months_total"], rnd(r["mdd_pct"]), rnd(r["qqq_mdd_pct"]), r["trades_month"], r["trades_total"],
+                    rnd(r["cost_month"]), rnd(r["cost_total"]), reg, ", ".join(r["notes"]), r["proposal"] or "", recorded_at])
+    return out

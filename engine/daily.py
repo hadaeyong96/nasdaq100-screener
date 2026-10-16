@@ -2303,8 +2303,9 @@ def main() -> None:
                 telegram.notify_ops_error(msg)
             if mode == "live":
                 try:
-                    group_result = telegram.send_group_briefing(
-                        text, summary.get("report_path"), summary, cfg, force_no_send=args.no_send
+                    group_result = telegram.send_group_briefing(  # 단체방은 월간 성적표 없는 보고서(전략공장 F2)
+                        text, summary.get("group_report_path") or summary.get("report_path"), summary, cfg,
+                        force_no_send=args.no_send,
                     )
                     warning = telegram.group_send_warning_line(group_result)
                 except Exception as exc:

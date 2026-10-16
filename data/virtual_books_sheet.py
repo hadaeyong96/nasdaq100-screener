@@ -1,4 +1,4 @@
-"""가상 장부 구글 시트 쓰기 — 전략비교_일일·매매기록·전략요약 세 탭만 (docs/design/virtual_books.md).
+"""가상 장부 구글 시트 쓰기 — 전략비교_일일·매매기록·전략요약 세 탭 + 월간성적표(덧붙이기 전용) (docs/design/virtual_books.md).
 
 data/sheets.py(계획·체결)와 별도 모듈이다: 쓸 시트 ID는 config virtual_books.sheet_id_env가
 가리키는 환경변수(기본 VIRTUAL_BOOKS_SHEETS_ID)에서 읽고 — 먼저 사본 시트로 시험한 뒤 사용자가
@@ -16,7 +16,12 @@ import os
 TAB_DAILY = "전략비교_일일"
 TAB_TRADES = "매매기록"
 TAB_SUMMARY = "전략요약"
-ALLOWED_TABS = (TAB_DAILY, TAB_TRADES, TAB_SUMMARY)
+TAB_SCORECARD = "월간성적표"  # 전략공장 F2 (2026-10-16 사용자 결정) — 덧붙이기만, 지우거나 덮어쓰지 않는다
+LEDGER_TABS = (TAB_DAILY, TAB_TRADES, TAB_SUMMARY)  # 매 실행 통째로 다시 쓰는 장부 탭
+ALLOWED_TABS = LEDGER_TABS + (TAB_SCORECARD,)
+SCORECARD_HEADER = ["월", "번호", "전략", "이번 달 QQQ 대비(%p)", "누적 QQQ 대비(%p)", "이긴 달", "전체 달", "최대 낙폭(%)",
+                    "QQQ 최대 낙폭(%)", "매매(이번 달)", "매매(누적)", "비용 $(이번 달)", "비용 $(누적)", "지난달 국면",
+                    "비고", "제안", "기록 시각"]
 
 
 class VirtualBooksSheetForbiddenError(RuntimeError):
@@ -49,7 +54,7 @@ def write_tables(client, sheet_id: str, tables: dict[str, list[list]]) -> dict[s
     출력: {탭 이름: 쓴 행 수(머리글 포함)}
     예외: 허용 탭이 아니면 VirtualBooksSheetForbiddenError (아무 탭도 쓰기 전에 확인)
     """
-    bad = [t for t in tables if t not in ALLOWED_TABS]
+    bad = [t for t in tables if t not in LEDGER_TABS]  # 월간성적표 탭은 통째로 다시 쓰지 않는다(덧붙이기 전용)
     if bad:
         raise VirtualBooksSheetForbiddenError(f"가상 장부 탭 외에는 쓸 수 없습니다: {bad}")
     spreadsheet = client.open_by_key(sheet_id)
@@ -68,7 +73,7 @@ def write_tables(client, sheet_id: str, tables: dict[str, list[list]]) -> dict[s
     return out
 
 
-def read_tables(client, sheet_id: str, tabs: tuple[str, ...] = ALLOWED_TABS) -> dict[str, list[list]]:
+def read_tables(client, sheet_id: str, tabs: tuple[str, ...] = LEDGER_TABS) -> dict[str, list[list]]:
     """가상 장부 탭을 읽기만 한다 (DB 복구용 — engine.picks_books.recover_from_tables).
 
     입력: client, sheet_id, tabs(허용 세 탭 중) / 출력: {탭 이름: get_all_values() 결과}
@@ -79,3 +84,28 @@ def read_tables(client, sheet_id: str, tabs: tuple[str, ...] = ALLOWED_TABS) -> 
         raise VirtualBooksSheetForbiddenError(f"가상 장부 탭 외에는 읽지 않습니다: {bad}")
     spreadsheet = client.open_by_key(sheet_id)
     return {t: spreadsheet.worksheet(t).get_all_values() for t in tabs}
+
+
+def scorecard_months(client, sheet_id: str) -> set[str]:
+    """월간성적표 탭에 이미 들어간 달(첫 열 "YYYY-MM") 집합. 탭이 없으면 빈 집합 (읽기만)."""
+    import gspread
+
+    try:
+        ws = client.open_by_key(sheet_id).worksheet(TAB_SCORECARD)
+    except gspread.WorksheetNotFound:
+        return set()
+    return {str(v).strip() for v in ws.col_values(1)[1:] if str(v).strip()}
+
+
+def append_scorecard(client, sheet_id: str, rows: list[list]) -> int:
+    """월간성적표 탭 맨 아래에 줄을 덧붙인다(지우거나 덮어쓰지 않음). 탭이 없으면 만들고 머리글부터.
+
+    입력: rows(SCORECARD_HEADER 순서의 행들) / 출력: 덧붙인 행 수
+    """
+    spreadsheet = client.open_by_key(sheet_id)
+    ws = _worksheet(spreadsheet, TAB_SCORECARD, 100, len(SCORECARD_HEADER))
+    if not ws.get_all_values():
+        ws.append_rows([SCORECARD_HEADER], value_input_option="RAW")
+    if rows:
+        ws.append_rows([list(r) for r in rows], value_input_option="RAW")
+    return len(rows)
