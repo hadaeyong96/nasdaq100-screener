@@ -41,7 +41,7 @@ BHI,808362.0,SW1 cik.csv (이름 검색(Baker Hughes)),Baker Hughes Holdings LLC
 BIDU,1329099.0,SEC 티커 목록(현재),"Baidu, Inc.",7370,"Services-Computer Programming, Data Processing, Etc.",기술,120,"Baidu, Inc. (유사도 1.00)"
 BIIB,875045.0,SW1 cik.csv (SEC 티커 목록(현재)),BIOGEN INC.,2836,"Biological Products, (No Diagnostic Substances)",헬스,120,
 BK,1390777.0,SW1 cik.csv (S&P 500 점검 identity.csv),Bank of New York Mellon Corp,6022,State Commercial Banks,금융,120,
-BKNG,1075531.0,SW1 cik.csv (SEC 티커 목록(현재)),Booking Holdings Inc.,4700,Transportation Services,소비재량,120,
+BKNG,1075531.0,SW1 cik.csv (SEC 티커 목록(현재)),Booking Holdings Inc.,4700,Transportation Services,산업,120,
 BLK,1364742.0,사람 후보(검증 통과),"BlackRock Finance, Inc.",6211,"Security Brokers, Dealers & Flotation Companies",금융,73,"BlackRock Finance, Inc. (유사도 1.00)"
 BMC,835729.0,SW1 cik.csv (S&P 500 점검 identity.csv),BMC SOFTWARE INC,7372,Services-Prepackaged Software,기술,19,
 BMRN,1048477.0,SW1 cik.csv (SEC 티커 목록(현재)),BIOMARIN PHARMACEUTICAL INC,2834,Pharmaceutical Preparations,헬스,65,
@@ -55,7 +55,7 @@ CDW,1402057.0,SW1 cik.csv (S&P 500 점검 identity.csv),CDW Corp,5961,Retail-Cat
 CELG,816284.0,SW1 cik.csv (이름 검색(Celgene)),CELGENE CORP /DE/,2834,Pharmaceutical Preparations,헬스,96,
 CERN,804753.0,SW1 cik.csv (S&P 500 점검 identity.csv),CERNER Corp,7373,Services-Computer Integrated Systems Design,기술,120,
 CHKP,1015922.0,SEC 티커 목록(현재),CHECK POINT SOFTWARE TECHNOLOGIES LTD,7372,Services-Prepackaged Software,기술,120,CHECK POINT SOFTWARE TECHNOLOGIES LTD (유사도 1.00)
-CHRW,1043277.0,SW1 cik.csv (S&P 500 점검 identity.csv),"C. H. ROBINSON WORLDWIDE, INC.",4731,Arrangement of  Transportation of  Freight & Cargo,소비재량,48,
+CHRW,1043277.0,SW1 cik.csv (S&P 500 점검 identity.csv),"C. H. ROBINSON WORLDWIDE, INC.",4731,Arrangement of  Transportation of  Freight & Cargo,산업,48,
 CHTR,1091667.0,SW1 cik.csv (SEC 티커 목록(현재)),"CHARTER COMMUNICATIONS, INC. /MO/",4841,Cable & Other Pay Television Services,통신,101,
 CL,21665.0,SW1 cik.csv (S&P 500 점검 identity.csv),COLGATE PALMOLIVE CO,2844,"Perfumes, Cosmetics & Other Toilet Preparations",필수소비,120,
 CMCSA,1166691.0,SW1 cik.csv (S&P 500 점검 identity.csv),COMCAST CORP,4841,Cable & Other Pay Television Services,통신,120,
@@ -100,8 +100,8 @@ EQIX,1101239.0,SW1 cik.csv (S&P 500 점검 identity.csv),EQUINIX INC,6798,Real E
 ESRX,885721.0,SW1 cik.csv (이름 검색(Express Scripts)),EXPRESS SCRIPTS INC,5912,Retail-Drug Stores and Proprietary Stores,필수소비,84,
 ETR,65984.0,SW1 cik.csv (S&P 500 점검 identity.csv),ENTERGY CORP /DE/,4911,Electric Services,유틸리티,3,
 EXC,1109357.0,SW1 cik.csv (S&P 500 점검 identity.csv),EXELON CORP,4931,Electric & Other Services Combined,유틸리티,120,
-EXPD,746515.0,SW1 cik.csv (S&P 500 점검 identity.csv),EXPEDITORS INTERNATIONAL OF WASHINGTON INC,4731,Arrangement of  Transportation of  Freight & Cargo,소비재량,48,
-EXPE,1324424.0,SW1 cik.csv (S&P 500 점검 identity.csv),"Expedia Group, Inc.",4700,Transportation Services,소비재량,96,
+EXPD,746515.0,SW1 cik.csv (S&P 500 점검 identity.csv),EXPEDITORS INTERNATIONAL OF WASHINGTON INC,4731,Arrangement of  Transportation of  Freight & Cargo,산업,48,
+EXPE,1324424.0,SW1 cik.csv (S&P 500 점검 identity.csv),"Expedia Group, Inc.",4700,Transportation Services,산업,96,
 F,37996.0,SW1 cik.csv (S&P 500 점검 identity.csv),FORD MOTOR CO,3711,Motor Vehicles & Passenger Car Bodies,소비재량,120,
 FAST,815556.0,SW1 cik.csv (SEC 티커 목록(현재)),FASTENAL CO,5200,"Retail-Building Materials, Hardware, Garden Supply",소비재량,120,
 FB,1326801.0,SW1 cik.csv (SEC 티커 목록(바뀐 티커 META)),"Meta Platforms, Inc.",7370,"Services-Computer Programming, Data Processing, Etc.",기술,96,
@@ -209,7 +209,7 @@ ORLY,898173.0,SW1 cik.csv (SEC 티커 목록(현재)),O REILLY AUTOMOTIVE INC,55
 OXY,797468.0,SW1 cik.csv (S&P 500 점검 identity.csv),OCCIDENTAL PETROLEUM CORP /DE/,1311,Crude Petroleum & Natural Gas,에너지,108,
 PAYX,723531.0,SW1 cik.csv (SEC 티커 목록(현재)),PAYCHEX INC,8700,"Services-Engineering, Accounting, Research, Management",산업,120,
 PCAR,75362.0,SW1 cik.csv (SEC 티커 목록(현재)),PACCAR INC,3711,Motor Vehicles & Passenger Car Bodies,소비재량,120,
-PCLN,1075531.0,SW1 cik.csv (SEC 티커 목록(바뀐 티커 BKNG)),Booking Holdings Inc.,4700,Transportation Services,소비재량,19,
+PCLN,1075531.0,SW1 cik.csv (SEC 티커 목록(바뀐 티커 BKNG)),Booking Holdings Inc.,4700,Transportation Services,산업,19,
 PDD,1737806.0,SEC 티커 목록(현재),PDD Holdings Inc.,7389,"Services-Business Services, NEC",산업,16,PDD Holdings Inc. (유사도 1.00)
 PEP,77476.0,SW1 cik.csv (S&P 500 점검 identity.csv),PEPSICO INC,2080,Beverages,필수소비,120,
 PFE,78003.0,SW1 cik.csv (S&P 500 점검 identity.csv),PFIZER INC,2834,Pharmaceutical Preparations,헬스,120,
@@ -292,5 +292,5 @@ XLNX,743988.0,SW1 cik.csv (이름 검색(Xilinx)),XILINX INC,3674,Semiconductors
 XOM,34088.0,SW1 cik.csv (S&P 500 점검 identity.csv),EXXON MOBIL CORP,2911,Petroleum Refining,에너지,120,
 XRAY,818479.0,SW1 cik.csv (S&P 500 점검 identity.csv),DENTSPLY SIRONA Inc.,3843,Dental Equipment & Supplies,헬스,53,
 XRX,108772.0,SW1 cik.csv (이름 검색(Xerox)),XEROX CORP,3577,"Computer Peripheral Equipment, NEC",기술,3,
-YHOO,1011006.0,사람 후보(검증 통과),ALTABA INC.,,,매핑 실패,66,ALTABA INC. (유사도 1.00)
+YHOO,1011006.0,사람 후보(검증 통과),ALTABA INC.,7373,"당시 공시 머리글: EDGAR 10-K 색인 머리글 (0001193125-16-483790 제출 2016-02-29, 0001193125-17-065791 제출 2017-03-01 둘 다 7373 Services-Computer Integrated Systems Design)",기술,66,ALTABA INC. (유사도 1.00)
 ZM,1585521.0,SW1 cik.csv (SEC 티커 목록(현재)),"Zoom Communications, Inc.",7370,"Services-Computer Programming, Data Processing, Etc.",기술,20,

@@ -1,0 +1,3 @@
+# 탐색 B: EDGAR submissions의 현재 SIC가 비어 있는 종목만, 당시 공시 머리글의 SIC를 쓴다 (2026-10-16 사용자 결정 2).
+ticker,sic,source
+YHOO,7373,"EDGAR 10-K 색인 머리글 (0001193125-16-483790 제출 2016-02-29, 0001193125-17-065791 제출 2017-03-01 둘 다 7373 Services-Computer Integrated Systems Design)"

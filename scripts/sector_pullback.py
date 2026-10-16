@@ -29,6 +29,7 @@ from scripts import sw1_data_check as sw1  # noqa: E402
 MAP_FILE = ROOT / "configs" / "sector_pullback_sic_map.csv"
 CIK_FILE = sw1.CACHE / "cik.csv"
 CIK_CANDIDATES = ROOT / "configs" / "sector_pullback_cik_candidates.csv"
+SIC_OVERRIDES = ROOT / "configs" / "sector_pullback_sic_overrides.csv"
 OUT_DIR = ROOT / "docs" / "factory" / "explore"
 TICKER_OUT = OUT_DIR / "sector_pullback_tickers.csv"
 FIRST_USE, LAST_USE = "2012-01", "2021-12"  # 명단을 쓰는 달 (사전 등록 기간)
@@ -119,6 +120,7 @@ def step_map() -> None:
     ident = pd.read_csv(sw1.SP500_IDENTITY, index_col=0) if sw1.SP500_IDENTITY.exists() else pd.DataFrame()
     rn, names = sw1.renames(), sw1.expected_names()
     manual = pd.read_csv(CIK_CANDIDATES, comment="#").set_index("ticker").to_dict("index")
+    sic_over = pd.read_csv(SIC_OVERRIDES, comment="#").set_index("ticker").to_dict("index")
 
     rows = []
     for t in tickers:
@@ -141,6 +143,8 @@ def step_map() -> None:
                 sic, sic_desc, edgar_name = js[0].get("sic") or None, js[0].get("sicDescription") or "", js[0].get("name", "")
             except Exception as exc:  # noqa: BLE001 — 실패 종목으로 보고
                 note = f"submissions 받기 실패 {type(exc).__name__}"
+        if not sic and t in sic_over:  # 현재 SIC가 빈 종목만 당시 공시 머리글 SIC (사용자 결정 2)
+            sic, sic_desc = str(sic_over[t]["sic"]), f"당시 공시 머리글: {sic_over[t]['source']}"
         sector = sm.sic_to_sector(sic, rules)
         if sector is None and not note:
             note = "SIC 없음" if not sic else f"SIC {sic}가 매핑표에 없음"
