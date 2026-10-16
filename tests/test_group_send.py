@@ -111,7 +111,7 @@ def test_daily_main_sends_both_even_if_personal_raises(monkeypatch, cfg, tmp_pat
     monkeypatch.setattr(sys, "argv", ["daily", "--mode", "live"])
     daily.main()
     assert ("group", tmp_path / "r.html") in calls
-    assert any(k == "ops" and "personal down" in m for k, m in calls)
+    assert any(k == "ops" and "RuntimeError" in m and "personal down" not in m for k, m in calls)  # 종류만 (토큰 노출 방지)
 
 
 def test_no_public_report_path_left():

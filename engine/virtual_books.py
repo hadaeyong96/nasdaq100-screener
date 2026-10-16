@@ -312,7 +312,7 @@ def _ops_alert(message: str, force_no_send: bool, ops_sender=None) -> None:
             ops_sender = telegram.notify_ops_error
         ops_sender(message)
     except Exception as exc:  # 알림 실패가 브리핑을 막지 않게
-        print(f"[virtual_books] 오류 알림도 보내지 못했습니다: {type(exc).__name__}: {exc}")
+        print(f"[virtual_books] 오류 알림도 보내지 못했습니다: {type(exc).__name__}")  # 메시지에 토큰 URL이 있을 수 있어 종류만
 
 
 def run_safely(cfg: dict, *, force_no_send: bool = False, ops_sender=None, **kwargs) -> dict | None:

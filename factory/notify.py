@@ -101,7 +101,10 @@ def _target() -> tuple[str, str] | None:
 def _post(token: str, chat_id: str, text: str) -> None:
     import requests
 
-    r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": text}, timeout=20)
+    try:  # 요청 URL에 토큰이 있어 예외 메시지를 밖으로 내보내지 않는다(종류만)
+        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": text}, timeout=20)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"텔레그램 연결 실패({type(exc).__name__})") from None
     if not r.ok:
         raise RuntimeError(f"HTTP {r.status_code}")
 
