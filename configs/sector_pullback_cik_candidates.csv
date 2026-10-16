@@ -1,0 +1,21 @@
+# 탐색 B 0단계: SW1 cik.csv에 CIK가 없거나 틀린 종목의 사람 후보 (2026-10-16).
+# 후보도 자동 검증을 통과해야 채택: 명단 기간 정기·외국 기업 공시 2건 이상 + EDGAR 이름(옛 이름 포함) 유사도 0.6 이상.
+# cik를 비우면 SW1 CIK를 버리고 매핑 실패로 둔다 (다른 회사로 확인된 경우).
+ticker,cik,note
+YHOO,1011006,Yahoo → Altaba (이름이 바뀌어 이름 검색에 안 걸림)
+TWX,1105705,Time Warner → Warner Media LLC
+EMC,790070,EMC Corp (Dell 인수로 상장폐지)
+AA,4281,옛 Alcoa Inc → Arconic → Howmet (지금 AA는 2016년 분리된 다른 CIK)
+BBBY,886158,Bed Bath & Beyond → 20230930-DK-Butterfly-1
+CA,356028,CA Inc (Computer Associates)
+HNZ,46640,H. J. Heinz → Kraft Heinz Foods Co
+QRTEA,1355096,Liberty Interactive → Qurate Retail
+RIMM,1070235,Research In Motion → BlackBerry
+S,101830,Sprint Nextel (지금 S는 SentinelOne — 티커 재사용)
+SLE,23666,Sara Lee → Hillshire Brands (HSH와 같은 CIK)
+HSH,23666,Hillshire Brands (Sara Lee 분할 뒤 이름)
+VIP,1468091,VimpelCom → VEON
+LILA,1570585,Liberty Global LiLAC 트래킹 주식 (Liberty Global plc 공시)
+LILAK,1570585,Liberty Global LiLAC 트래킹 주식 C (Liberty Global plc 공시)
+BLK,1364742,SW1 cik.csv의 1370755는 BlackRock TCP Capital Corp(다른 회사) — BlackRock Inc로 바로잡음
+CTS,,SW1 CIK 26058은 CTS Corp — 옛 S&P 100 위키 판(2013-06~08)의 CTS는 Cognizant(CTSH) 표기 오류로 보임
