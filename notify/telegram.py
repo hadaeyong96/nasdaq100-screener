@@ -31,6 +31,7 @@ send_briefing과 같은 이유로 절대 보내지 않는다(하드 가드). 실
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,27 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_LEN = 4096
 MAX_CAPTION_LEN = 1024  # 텔레그램 sendDocument caption 한도
 MAX_RETRIES = 3
+
+# 토큰 가리기 (2026-10-16 보안 작업): requests 예외·HTTPError 메시지에는 요청 URL(…/bot<토큰>/…)이 들어 있다.
+# 발송 오류는 "오류 종류 + HTTP 상태 코드"만 남기고, 혹시 남는 문자열도 redact로 한 번 더 가린다.
+_BOT_TOKEN_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
+_BARE_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9])\d{6,}:[A-Za-z0-9_-]{30,}")
+
+
+def redact(text) -> str:
+    """문자열 속 텔레그램 봇 토큰을 가린다: "bot<숫자>:<문자열>" → "bot***", 앞에 bot이 없는 토큰 모양 → "***"."""
+    return _BARE_TOKEN_RE.sub("***", _BOT_TOKEN_RE.sub("bot***", str(text)))
+
+
+def error_brief(exc: BaseException) -> str:
+    """예외 → "오류 종류[ HTTP 상태 코드]" (예외 메시지 본문은 쓰지 않는다 — URL에 토큰이 있어서)."""
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return f"{type(exc).__name__}" + (f" HTTP {status}" if status is not None else "")
+
+
+def _log(message: str) -> None:
+    """텔레그램 관련 로그는 모두 여기로 — 출력 직전에 토큰을 가린다."""
+    print(redact(message))
 
 
 def split_message(text: str, limit: int = MAX_LEN) -> list[str]:
@@ -106,7 +128,7 @@ def _request_with_retry(request_fn, description: str) -> bool:
             resp.raise_for_status()
             return True
         except Exception as exc:
-            print(f"[telegram] {description} 실패(시도 {attempt}/{MAX_RETRIES}): {exc}")
+            _log(f"[telegram] {description} 실패(시도 {attempt}/{MAX_RETRIES}): {error_brief(exc)}")
             if attempt < MAX_RETRIES:
                 time.sleep(1.5 * attempt)
     return False
@@ -169,10 +191,10 @@ def _post_checked(request_fn, description: str) -> tuple[bool, int | None, str |
             migrate_id = _extract_migrate_id(resp)
             if migrate_id:
                 return False, migrate_id, f"{description}: group chat was upgraded to a supergroup chat"
-            last_error = f"{description} 실패({resp.status_code}): {resp.text[:200]}"
+            last_error = f"{description} 실패(HTTP {resp.status_code})"
         except Exception as exc:
-            last_error = f"{description} 실패: {exc}"
-        print(f"[telegram] {last_error} (시도 {attempt}/{MAX_RETRIES})")
+            last_error = f"{description} 실패: {error_brief(exc)}"
+        _log(f"[telegram] {last_error} (시도 {attempt}/{MAX_RETRIES})")
         if attempt < MAX_RETRIES:
             time.sleep(1.5 * attempt)
     return False, None, last_error
@@ -229,9 +251,9 @@ def notify_ops_error(message: str) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
-        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 오류 알림을 보낼 수 없습니다. ({env_status()})")
+        _log(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 오류 알림을 보낼 수 없습니다. ({env_status()})")
         return False
-    return all(_send_text(token, chat_id, chunk) for chunk in split_message(message))
+    return all(_send_text(token, chat_id, chunk) for chunk in split_message(redact(message)))
 
 
 def send_alert_text(message: str, force_no_send: bool = False) -> bool:
@@ -246,9 +268,9 @@ def send_alert_text(message: str, force_no_send: bool = False) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
-        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 알림을 보내지 않습니다. ({env_status()})")
+        _log(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 알림을 보내지 않습니다. ({env_status()})")
         return False
-    return all(_send_text(token, chat_id, chunk) for chunk in split_message(message))
+    return all(_send_text(token, chat_id, chunk) for chunk in split_message(redact(message)))
 
 
 def report_attachment_name(as_of_str: str, cfg: dict | None = None) -> str:
@@ -289,13 +311,13 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
-        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
+        _log(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
         return out_path
 
     conn = db.connect(db.db_path_for_mode(mode))
     try:
         if db.has_notified(conn, as_of_str) and not summary.get("rebuilt_from"):
-            print(f"[telegram] {as_of_str} 기준 이미 발송한 기록이 있어 다시 보내지 않습니다.")
+            _log(f"[telegram] {as_of_str} 기준 이미 발송한 기록이 있어 다시 보내지 않습니다.")
             return out_path
 
         report_path = summary.get("report_path")
@@ -305,13 +327,13 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
                 caption=_limit_caption(build_report_caption(summary, cfg)),
             )
         else:
-            print("[telegram] 보고서 파일이 없어 본문 글을 대신 보냅니다.")
+            _log("[telegram] 보고서 파일이 없어 본문 글을 대신 보냅니다.")
             ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
 
         if ok:
             db.record_notified(conn, as_of_str, datetime.now().isoformat(timespec="seconds"))
         else:
-            print("[telegram] 일부 발송에 실패해 발송 기록을 남기지 않습니다 (다음 실행에서 재시도 가능).")
+            _log("[telegram] 일부 발송에 실패해 발송 기록을 남기지 않습니다 (다음 실행에서 재시도 가능).")
     finally:
         conn.close()
     return out_path
@@ -347,14 +369,14 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
-        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
+        _log(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 발송하지 않고 파일로만 저장합니다. ({env_status()})")
         return out_path
 
     conn = db.connect(db.db_path_for_mode(mode))
     try:
         dedup_key = f"{actual}:delay"
         if db.has_notified(conn, dedup_key):
-            print(f"[telegram] {actual} 지연 알림을 이미 보낸 기록이 있어 다시 보내지 않습니다.")
+            _log(f"[telegram] {actual} 지연 알림을 이미 보낸 기록이 있어 다시 보내지 않습니다.")
             return out_path
 
         report_path = summary.get("report_path")
@@ -367,7 +389,7 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
         if ok:
             db.record_notified(conn, dedup_key, datetime.now().isoformat(timespec="seconds"))
         else:
-            print("[telegram] 지연 알림 발송에 실패했습니다 (다음 실행에서 재시도 가능).")
+            _log("[telegram] 지연 알림 발송에 실패했습니다 (다음 실행에서 재시도 가능).")
     finally:
         conn.close()
     return out_path
@@ -428,7 +450,7 @@ def send_group_briefing(
     try:
         dedup_key = f"{as_of_str}:group"
         if db.has_notified(conn, dedup_key) and not summary.get("rebuilt_from"):
-            print(f"[telegram] {as_of_str} 기준 단체방에 이미 보낸 기록이 있어 다시 보내지 않습니다.")
+            _log(f"[telegram] {as_of_str} 기준 단체방에 이미 보낸 기록이 있어 다시 보내지 않습니다.")
             result["ok"] = True
             result["skipped_reason"] = "already_sent"
             return result
@@ -442,7 +464,7 @@ def send_group_briefing(
                 caption=_limit_caption(build_report_caption(summary, cfg)),
             )
         else:
-            print("[telegram] 보고서 파일이 없어 단체방에 본문 글을 대신 보냅니다.")
+            _log("[telegram] 보고서 파일이 없어 단체방에 본문 글을 대신 보냅니다.")
             for chunk in split_message(text):
                 c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
                 ok = ok and c_ok
@@ -457,7 +479,7 @@ def send_group_briefing(
         if ok:
             db.record_notified(conn, dedup_key, datetime.now().isoformat(timespec="seconds"))
         else:
-            print(f"[telegram] 단체방 발송에 실패해 발송 기록을 남기지 않습니다: {error}")
+            _log(f"[telegram] 단체방 발송에 실패해 발송 기록을 남기지 않습니다: {error}")
     finally:
         conn.close()
     return result
@@ -492,18 +514,18 @@ def resend_last(
     출력: 발송(또는 --no-send 처리) 성공 여부
     """
     if not text_path.exists():
-        print(f"[telegram] {text_path}가 없어 다시 보낼 수 없습니다.")
+        _log(f"[telegram] {text_path}가 없어 다시 보낼 수 없습니다.")
         return False
     text = text_path.read_text(encoding="utf-8")
 
     if force_no_send:
-        print(f"[telegram] --no-send: 재발송하지 않습니다 ({text_path.name}).")
+        _log(f"[telegram] --no-send: 재발송하지 않습니다 ({text_path.name}).")
         return True
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
-        print(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 재발송할 수 없습니다. ({env_status()})")
+        _log(f"[telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID가 없어 재발송할 수 없습니다. ({env_status()})")
         return False
 
     # send_briefing과 같이 보고서 파일 한 통만 (본문 글은 보고서가 없을 때만)
@@ -511,5 +533,5 @@ def resend_last(
         return _send_document(
             token, chat_id, report_path, report_attachment_name(as_of_str, cfg), caption=report_caption(text)
         )
-    print(f"[telegram] {report_path}가 없어 보고서 없이 글만 보냅니다.")
+    _log(f"[telegram] {report_path}가 없어 보고서 없이 글만 보냅니다.")
     return all(_send_text(token, chat_id, chunk) for chunk in split_message(text))

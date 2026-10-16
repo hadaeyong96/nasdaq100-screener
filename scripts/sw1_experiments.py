@@ -185,9 +185,12 @@ def step_fetch() -> None:
         p = OHLC_TI / f"{t}.csv"
         if p.exists():
             continue
-        resp = requests.get(f"https://api.tiingo.com/tiingo/daily/{t}/prices",
-                            params={"startDate": "2011-06-01", "endDate": "2021-12-31", "token": key, "format": "json"},
-                            timeout=30)
+        try:  # 요청 URL에 토큰이 들어 있어 예외 메시지를 그대로 내보내지 않는다(종류만, 2026-10-16 보안 작업)
+            resp = requests.get(f"https://api.tiingo.com/tiingo/daily/{t}/prices",
+                                params={"startDate": "2011-06-01", "endDate": "2021-12-31", "token": key, "format": "json"},
+                                timeout=30)
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Tiingo 연결 실패({type(exc).__name__})") from None
         time.sleep(0.5)
         if resp.status_code != 200 or not isinstance(resp.json(), list) or not resp.json():
             failed.append((t, f"Tiingo HTTP {resp.status_code}"))

@@ -2298,7 +2298,7 @@ def main() -> None:
                 sent_path = telegram.send_briefing(text, summary, cfg, force_no_send=args.no_send)
             except Exception as exc:
                 sent_path = None
-                msg = f"개인 채팅 브리핑 발송 오류: {type(exc).__name__}: {exc}"
+                msg = telegram.redact(f"개인 채팅 브리핑 발송 오류: {telegram.error_brief(exc)}")
                 print(f"[daily] {msg}")
                 telegram.notify_ops_error(msg)
             if mode == "live":
@@ -2309,9 +2309,9 @@ def main() -> None:
                     )
                     warning = telegram.group_send_warning_line(group_result)
                 except Exception as exc:
-                    warning = f"단체방 발송 실패: {type(exc).__name__}: {exc}"
+                    warning = telegram.redact(f"단체방 발송 실패: {telegram.error_brief(exc)}")
                 if warning:
-                    print(f"[daily] {warning}")
+                    print(telegram.redact(f"[daily] {warning}"))
                     telegram.notify_ops_error(warning)
         print(f"텔레그램 글: {sent_path}")
 
