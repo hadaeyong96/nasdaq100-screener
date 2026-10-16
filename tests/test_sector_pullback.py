@@ -148,3 +148,11 @@ def test_read_guarded_stops_at_2022(tmp_path):
     d2 = read_guarded(t)
     assert d2["close"].tolist() == [50.0, 50.0, 51.0]  # 2022년 분할(5)은 보지 않는다
     assert d2["div"].tolist() == [0.0, 1.0, 0.0]
+
+
+def test_schedule_buy_without_money_is_recorded_not_crash():
+    mk = _market()
+    # 같은 날 11건을 사려 하면 10건 뒤에는 총자산의 1/10씩 계속 사서 돈이 바닥난다 → 체결 불가로 기록
+    sched = [{"c": j % 7, "buy": 200 + j // 7, "sell": 300} for j in range(14)]
+    r = sp.run_book(mk, 130, 419, sp.Costs(0.0, 0.0, 0.0), schedule=sched)
+    assert len(r["trades"]) + len(r["no_fill"]) == 14

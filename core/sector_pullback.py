@@ -363,16 +363,18 @@ def run_book(mk: Market, start: int, end: int, costs: Costs, *, events: list[dic
             v += p["sh"] * (p["px"] if np.isnan(px) else px)
         return v
 
-    def buy(j: int, i: int, amount: float) -> None:
+    def buy(j: int, i: int, amount: float) -> bool:
+        """출력: 샀으면 True (현금·QQQ가 바닥이면 못 산다)."""
         nonlocal cash
         if cash < amount:
             qqq_sell_for(amount - cash, i)
         amount = min(amount, cash)
         if amount <= 0:
-            return
+            return False
         cash -= amount
         pos[j] = {"sh": amount / (close[i, j] * (1 + c1)), "basis": amount, "buy": i, "px": close[i, j],
                   "divs": 0.0, "pending": False, "sell_at": None}
+        return True
 
     cash = initial
     qqq_buy(cash, start)
@@ -408,7 +410,8 @@ def run_book(mk: Market, start: int, end: int, costs: Costs, *, events: list[dic
                     if np.isnan(close[i, j]):
                         no_fill.append(e)
                         continue
-                    buy(j, i, eq / MAX_POS)
+                    if not buy(j, i, eq / MAX_POS):
+                        no_fill.append(e)
             else:
                 eq = equity(i)
                 for s in sched_buy.get(i, []):
@@ -416,8 +419,10 @@ def run_book(mk: Market, start: int, end: int, costs: Costs, *, events: list[dic
                     if j in pos or np.isnan(close[i, j]):
                         no_fill.append(s)
                         continue
-                    buy(j, i, eq / MAX_POS)
-                    pos[j]["sell_at"] = s["sell"]
+                    if buy(j, i, eq / MAX_POS):
+                        pos[j]["sell_at"] = s["sell"]
+                    else:
+                        no_fill.append(s)
         # 가격 기록·매도 조건 (체결 다음 날부터)
         for j, p in pos.items():
             if not np.isnan(close[i, j]):
