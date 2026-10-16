@@ -39,6 +39,7 @@ if str(ROOT) not in sys.path:
 from core import virtual_books as vbc  # noqa: E402
 from data import virtual_books_data as vbdata  # noqa: E402
 from data import virtual_books_sheet as vbsheet  # noqa: E402
+from engine import picks_books  # noqa: E402
 from notify import virtual_books as vbtext  # noqa: E402
 from store import virtual_books as vbstore  # noqa: E402
 
@@ -123,6 +124,7 @@ def compute(cfg: dict, conn, *, now_et: datetime | None = None, history_fn=None,
         "status": "ok", "books": books, "ledger": ledger, "regime": vbc.regime_today(ledger, books),
         "start": ledger.start, "base_date": ledger.base_date, "start_fx": start_fx, "fx_date": fx_date,
         "initial_usd": initial_usd, "params": params, "warnings": warnings,
+        "closes": closes, "divs": divs,  # 추천 따라하기 장부(engine/picks_books.py)가 거래일·SGOV 종가를 같이 쓴다
     }
 
 
@@ -160,8 +162,8 @@ def pending_alerts(conn, cfg: dict, ctx: dict, next_day_fn=None) -> list[dict]:
     return out
 
 
-def sheet_tables(cfg: dict, ctx: dict, updated_at: str) -> dict[str, list[list]]:
-    """시트 세 탭 값."""
+def sheet_tables(cfg: dict, ctx: dict, updated_at: str, extra: list[dict] | None = None) -> dict[str, list[list]]:
+    """시트 세 탭 값. extra: 추천 따라하기 장부들(engine.picks_books.run_picks의 extra)."""
     vb = cfg["virtual_books"]
     ledger, books = ctx["ledger"], ctx["books"]
     meta = {
@@ -170,18 +172,21 @@ def sheet_tables(cfg: dict, ctx: dict, updated_at: str) -> dict[str, list[list]]
         "min_days_for_annualized": int(vb["min_days_for_annualized"]), "notes": NOTES,
     }
     return {
-        vbsheet.TAB_DAILY: vbtext.daily_table(ledger, books, vb["benchmark_book"]),
-        vbsheet.TAB_TRADES: vbtext.trades_table(ledger, books),
-        vbsheet.TAB_SUMMARY: vbtext.summary_table(ledger, meta),
+        vbsheet.TAB_DAILY: vbtext.daily_table(ledger, books, vb["benchmark_book"], extra),
+        vbsheet.TAB_TRADES: vbtext.trades_table(ledger, books, extra),
+        vbsheet.TAB_SUMMARY: vbtext.summary_table(ledger, meta, extra),
     }
 
 
 def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets_client=None,
-        now_et: datetime | None = None, history_fn=None, fx_fn=None, year_end_fn=None, next_day_fn=None) -> dict:
+        now_et: datetime | None = None, history_fn=None, fx_fn=None, year_end_fn=None, next_day_fn=None,
+        briefing: dict | None = None, market_fn=None, actions_fn=None, month_end_fn=None, cycle_fn=None) -> dict:
     """가상 장부 하루 실행 (알림은 아직 보내지 않는다 — send_alerts가 브리핑 뒤에 보낸다).
 
-    출력: {run_id, status, base_date, start, regime_line, alerts, errors(시트 등 부분 실패), warnings,
-          ledger, sheet_rows, db_path}
+    briefing: 오늘 브리핑 매수·매도 추천 티커 {"buy": [...], "sell": [...]} — 추천 따라하기 장부의
+    "브리핑 추천에도 있었음" 기록용(없으면 그 칸은 빈칸). market_fn·actions_fn: 추천 따라하기 장부 테스트 주입.
+    출력: {run_id, status, base_date, start, regime_line, alerts, errors(시트·추천 따라하기 장부 등 부분 실패),
+          warnings, ledger, picks, sheet_rows, db_path}
     예외: 가격·계산 실패는 그대로 올린다(run_safely가 잡는다). 실행 기록에는 error로 남긴다.
     """
     vb = cfg["virtual_books"]
@@ -218,7 +223,24 @@ def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets
             [b.asset for b in ctx["books"] if b.kind == vbc.SMA_SWITCH],
         )
         result["alerts"] = pending_alerts(conn, cfg, ctx, next_day_fn)
-        tables = sheet_tables(cfg, ctx, run_at)
+        # 추천 따라하기 장부 2개 — 장부마다 오류를 따로 잡는다(기존 5개 장부·브리핑은 그대로)
+        try:
+            picks = picks_books.run_picks(cfg, conn, ctx, briefing=briefing, dry_run=dry_run, market_fn=market_fn,
+                                          actions_fn=actions_fn, fx_fn=fx_fn, year_end_fn=year_end_fn)
+        except Exception as exc:
+            picks = {"extra": [], "errors": [f"추천 따라하기 장부 오류: {type(exc).__name__}: {exc}"], "warnings": [], "today": {}}
+        # 8번 장부 「6개월 강세 따라하기」 — 따로 잡는다(오류가 나도 다른 장부·브리핑은 그대로)
+        mom = picks_books.run_momentum(cfg, conn, ctx, dry_run=dry_run, market_fn=market_fn, actions_fn=actions_fn,
+                                       fx_fn=fx_fn, year_end_fn=year_end_fn, month_end_fn=month_end_fn)
+        acc = picks_books.run_accel(cfg, conn, ctx, dry_run=dry_run, market_fn=market_fn, actions_fn=actions_fn,
+                                    fx_fn=fx_fn, year_end_fn=year_end_fn, cycle_fn=cycle_fn)  # 9번 「한 달 가속 따라하기」
+        picks = {**picks, "extra": picks["extra"] + mom["extra"] + acc["extra"],
+                 "errors": picks["errors"] + mom["errors"] + acc["errors"],
+                 "warnings": picks["warnings"] + mom["warnings"] + acc["warnings"]}
+        result["picks"] = picks
+        result["errors"].extend(picks["errors"])
+        result["warnings"].extend(picks["warnings"])
+        tables = sheet_tables(cfg, ctx, run_at, picks["extra"])
         result["tables"] = tables
 
         if dry_run:
@@ -322,6 +344,44 @@ def send_alerts_safely(result: dict | None, *, force_no_send: bool = False, send
         return []
 
 
+def recover_picks(cfg: dict, *, db_path: Path | None = None, sheets_client=None, market_fn=None,
+                  history_fn=None, fx_fn=None, now_et: datetime | None = None) -> dict[str, str]:
+    """추천 따라하기 장부를 시트(전략비교_일일·매매기록·전략요약 — 읽기만)에서 다시 만들어 DB에 쓴다.
+
+    DB에 이미 그 장부 상태가 있으면 덮어쓰지 않고 건너뛴다. 출력: {장부: 결과 문구}
+    """
+    vb = cfg["virtual_books"]
+    sheet_id = vbsheet.sheet_id_from_env(vb["sheet_id_env"])
+    if sheet_id is None:
+        raise RuntimeError(f"{vb['sheet_id_env']}가 없어 시트에서 복구할 수 없습니다")
+    if sheets_client is None:
+        from data import sheets
+
+        sheets_client = sheets.get_client()
+    tables = vbsheet.read_tables(sheets_client, sheet_id)
+    conn = vbstore.connect(Path(db_path or vbstore.VBOOKS_DB_PATH))
+    out = {}
+    try:
+        ctx = compute(cfg, conn, now_et=now_et, history_fn=history_fn, fx_fn=fx_fn)
+        names = [b["name"] for b in vb["picks"]["books"]]
+        tickers = sorted({r[4] for r in tables["매매기록"][1:] if r and r[0] in names})
+        market = (market_fn or picks_books.default_market)(cfg, tickers)
+        for name in names:
+            if vbstore.load_picks_book(conn, name) is not None:
+                out[name] = "DB에 상태가 이미 있어 건너뜀"
+                continue
+            rec = picks_books.recover_from_tables(cfg, name, tables, market["frames"], ctx["closes"][vb["defensive_ticker"]])
+            vbstore.save_picks_day(conn, rec["book"], rec["daily"], rec["trades"], [])
+            b = rec["book"]
+            out[name] = (f"복구: 마지막 {b['last_date'].date()}, 보유 {len(b['positions'])}종목, "
+                         f"SGOV {b['sgov_qty']}주, 현금 ${b['cash']:,.2f}")
+    finally:
+        conn.close()
+    for k, v in out.items():
+        print(f"[recover-picks] {k}: {v}")
+    return out
+
+
 def main(argv: list[str] | None = None) -> None:
     for stream in (sys.stdout, sys.stderr):  # 윈도우 콘솔 cp949 UnicodeEncodeError 방지
         if hasattr(stream, "reconfigure"):
@@ -330,11 +390,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-send", action="store_true", help="텔레그램 알림을 보내지 않는다")
     parser.add_argument("--dry-run", action="store_true", help="DB·시트에 쓰지 않는다")
     parser.add_argument("--db", default=None, help="DB 파일 경로 (기본 data/virtual_books.db)")
+    parser.add_argument("--recover-picks", action="store_true",
+                        help="추천 따라하기 장부를 시트 세 탭에서 다시 만들어 DB에 쓴다 (DB를 잃었을 때만, 이미 있으면 멈춤)")
     args = parser.parse_args(argv)
 
     from engine.daily import load_config
 
     cfg = load_config()
+    if args.recover_picks:
+        recover_picks(cfg, db_path=Path(args.db) if args.db else None)
+        return
     result = run_safely(cfg, force_no_send=args.no_send, dry_run=args.dry_run,
                         db_path=Path(args.db) if args.db else None)
     if result is None:

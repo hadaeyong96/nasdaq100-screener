@@ -109,3 +109,47 @@ def year_end_trading_days(first_year: int, last_year: int) -> set:
         if len(days):
             out.add(pd.Timestamp(days[-1]))
     return out
+
+
+def fetch_actions(tickers: list[str], start: date, history_fn=None) -> dict[str, pd.DataFrame]:
+    """보유 종목의 분배금·분할 (추천 따라하기 장부 — 하루씩 이어 가므로 그날 일어난 일만 반영한다).
+
+    입력: tickers, start(받기 시작일), history_fn(ticker, start) -> yfinance history 형식(테스트 주입)
+    출력: {티커: DataFrame(index=날짜(tz-naive), dividend=주당 분배금, split=분할 비율(없으면 0))}
+    예외: 한 종목이라도 실패하면 VirtualBooksDataError(실패 목록) — 조용히 넘기지 않는다
+    """
+    history_fn = history_fn or _yf_history
+    out, failed = {}, []
+    for t in tickers:
+        try:
+            raw = history_fn(t, start)
+            if raw is None or raw.empty:
+                raise ValueError("데이터 없음")
+            idx = pd.DatetimeIndex(raw.index)
+            if idx.tz is not None:
+                idx = idx.tz_localize(None)
+            raw = raw.set_axis(idx.normalize())
+            div = raw["Dividends"] if "Dividends" in raw.columns else pd.Series(0.0, index=raw.index)
+            spl = raw["Stock Splits"] if "Stock Splits" in raw.columns else pd.Series(0.0, index=raw.index)
+            out[t] = pd.DataFrame({"dividend": div.astype(float).fillna(0.0), "split": spl.astype(float).fillna(0.0)})
+        except Exception as exc:
+            failed.append(f"{t}: {type(exc).__name__}: {exc}")
+    if failed:
+        raise VirtualBooksDataError("가상 장부 분배금·분할 받기 실패 — " + "; ".join(failed))
+    return out
+
+
+def month_end_trading_days(first_year: int, last_year: int) -> set:
+    """각 달의 마지막 NYSE 거래일 Timestamp 집합 (6개월 강세 장부 신호일 — 휴장·주말 반영).
+
+    달력은 미리 정해진 거래소 일정이라 미래 가격 데이터가 아니다(기준일의 월말 여부를 알려면 다음 거래일 달력이 필요).
+    """
+    out = set()
+    for y in range(first_year, last_year + 1):
+        for m in range(1, 13):
+            first = date(y, m, 1)
+            last = (pd.Timestamp(first) + pd.offsets.MonthEnd(0)).date()
+            days = trading_days_between(first, last)
+            if len(days):
+                out.add(pd.Timestamp(days[-1]))
+    return out

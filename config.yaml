@@ -272,3 +272,47 @@ virtual_books:
     - {name: "TQQQ 그냥 보유", kind: hold, asset: TQQQ}
     - {name: "QLD 200일선 전환", kind: sma_switch, asset: QLD}
     - {name: "TQQQ 200일선 전환", kind: sma_switch, asset: TQQQ}
+  # ── 추천 따라하기 장부 2개 (core/picks_book.py, 사용자 확정 2026-10-14) ─────────────────────
+  # 위 5개 장부와 같은 DB·시트 탭에 6·7번째로 들어간다. 시작일은 병합 뒤 첫 실제 실행일이라 위 5개와 따로 둔다.
+  picks:
+    enabled: true
+    start_date: null # 두 장부 공통 시작일. null이면 첫 실행 기준일을 DB에 저장해 쓴다 — 첫 실행 뒤 시트 "config 고정값"으로 고정
+    start_fx: null # null이면 시작일 원/달러 종가
+    slots: 10 # 최대 보유 종목 수, 한 종목 = 그날 총자산 ÷ slots
+    progress_on_skipped_adds: true # [해석, 사용자 확인 필요] A2·A3는 사지 않아도 신호 상태는 원래 전략처럼 다음 단계로 넘어간다
+    books:
+      - {name: "추천 종목 따라하기", rules: ichimoku} # 지금 브리핑과 같은 신호(core/signals.py)
+      - {name: "볼린저·RSI·MACD 따라하기", rules: bollinger} # 일목 자리만 볼린저로 (core/bollinger_signals.py), 브리핑에 섞지 않음
+    bollinger:
+      period: 20
+      std_mult: 2
+      ddof: 0 # [가정] 표준편차를 모집단 기준으로(트레이딩뷰 볼린저 밴드와 같게)
+      slope_days: 5 # 중심선 상승·하락 = 오늘 중심선 vs 5거래일 전
+      touch_days: 5 # A1: 최근 5거래일(오늘 포함) 안에 종가 < 하단
+      width_rank_period: 120 # 밴드폭 백분위 기간
+      width_rank_max: 0.2 # 하위 20%
+      squeeze_bonus: 20 # [가정] 수축 후 확장 가점 (구름 두께 항목 최대 점수와 같게)
+  # ── 8번 장부 「6개월 강세 따라하기」 (core/momentum_book.py, 작업 5-2 사전 등록 2026-10-15 — 임의 변경 금지) ──
+  # 매월 마지막 거래일 종가 신호 → 다음 거래일 종가 체결. 점수 = 126거래일 수익률 − QQQ 같은 기간 수익률.
+  # 상위 10을 같은 비중(총자산 ÷ 10)으로 매달 다시 맞춘다(남은 종목은 비중 차이만). SGOV 없음(쉬는 돈 없음).
+  # 명단 이탈 보유 종목은 다음 교체일에 판다. 비용·세금·환율은 위 장부들과 같다.
+  momentum:
+    enabled: true
+    name: "6개월 강세 따라하기"
+    start_date: null # null이면 장부가 처음 돈 기준일 이후 첫 월말 신호일이 시작일(DB에 저장). 시작 뒤 시트 "config 고정값(momentum)"대로 고정
+    start_fx: null # null이면 시작일(첫 월말 신호일) 원/달러 종가. 시작 뒤 위와 함께 고정
+    top_n: 10
+    lookback_days: 126
+    min_price: 5.0 # 신호일 종가 5달러 이상만 대상
+  # ── 9번 장부 「한 달 가속 따라하기」 (core/accel.py + core/momentum_book.py, 작업 6-2 사전 등록 2026-10-15 — 임의 변경 금지) ──
+  # RS선 = 종가 ÷ QQQ, 점수 = RS(t)/RS(t−20) − RS(t−20)/RS(t−40). 60거래일 이상·종가 5달러 이상, 상위 10 같은 비중.
+  # 처음 돈 기준일이 첫 신호일, 그 뒤 20거래일(NYSE 달력)마다 교체 → 다음 거래일 종가 체결. 그 밖은 6개월 강세 장부와 같다.
+  accel:
+    enabled: true
+    name: "한 달 가속 따라하기"
+    start_date: null # null이면 처음 돈 기준일이 시작일(첫 신호일, DB에 저장). 시작 뒤 시트 "config 고정값(accel)"대로 고정
+    start_fx: null # null이면 시작일 원/달러 종가. 시작 뒤 위와 함께 고정
+    step: 20 # 최근·직전 힘 구간이자 교체 주기(거래일)
+    min_history: 60
+    min_price: 5.0
+    top_n: 10

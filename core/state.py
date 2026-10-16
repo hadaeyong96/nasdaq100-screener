@@ -27,6 +27,8 @@ P3.1 보완: 매수 신호(A1·A2·A3·B)가 나면 곧바로 원래 단계(정�
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
+from typing import Callable
 
 import pandas as pd
 
@@ -63,6 +65,29 @@ def init_state(ticker: str, name_kr: str = "") -> dict:
         # P3.1: 신호는 났지만 체결 확인 전인 차수 하나의 정보 (없으면 None).
         "pending": None,
     }
+
+
+@dataclass(frozen=True)
+class SignalRules:
+    """상태 전이가 쓰는 신호 판정 묶음 (가상 장부 「볼린저·RSI·MACD 따라하기」용 주입 지점).
+
+    process_day·preview_new_entry는 이 묶음의 함수만 부른다. 기본값 ICHIMOKU_RULES는
+    core/signals.py·core/filters.py의 기존 함수를 그대로 가리킨다 — 기존 동작은 바뀌지 않는다.
+    a1(prev_rsi, row, cfg) / a2(row, cfg) / a3(row, cfg) / b(row, cfg) / e3(row) -> bool
+    ban(df, date, row, stage, cfg, earnings_date) -> 금지 이유 목록
+    score(df, date, row, kind, cfg) -> (등급 또는 None, 점수)
+    a3_stop(row, old_stop) -> A3 확정 때 올릴 새 손절가(안 올리면 old_stop)
+    """
+
+    name: str
+    a1: Callable
+    a2: Callable
+    a3: Callable
+    b: Callable
+    e3: Callable
+    ban: Callable
+    score: Callable
+    a3_stop: Callable
 
 
 def _trading_days_between(df: pd.DataFrame, start_date, end_date) -> int:
@@ -117,7 +142,29 @@ def _entry_score(df: pd.DataFrame, date, row: pd.Series, kind: str, cfg: dict) -
     return grade_letter, score
 
 
-def _detect_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict) -> tuple[str, str] | tuple[None, None]:
+def _ichimoku_a3_stop(row: pd.Series, old_stop: float | None) -> float | None:
+    """A3 확정 시 손절선 = max(A1 기준 swing_low, 오늘 구름 하단) (6장)."""
+    if pd.isna(row.get("cloud_bot")) or old_stop is None:
+        return old_stop
+    return max(old_stop, float(row["cloud_bot"]))
+
+
+ICHIMOKU_RULES = SignalRules(
+    name="ichimoku",
+    a1=lambda prev_rsi, row, cfg: sig.check_a1(prev_rsi, row["rsi"], cfg),
+    a2=sig.check_a2,
+    a3=sig.check_a3,
+    b=sig.check_b,
+    e3=sig.check_e3,
+    ban=lambda df, date, row, stage, cfg, earnings_date: _ban_reasons(df, date, row, stage, cfg, earnings_date),
+    score=lambda df, date, row, kind, cfg: _entry_score(df, date, row, kind, cfg),
+    a3_stop=_ichimoku_a3_stop,
+)
+
+
+def _detect_new_entry(
+    df: pd.DataFrame, date, state: dict, cfg: dict, rules: SignalRules | None = None
+) -> tuple[str, str] | tuple[None, None]:
     """대기 상태에서 오늘 A1 또는 B 조건이 성립하는지만 본다 (금지·한도는 보지 않는다)."""
     if state.get("state") != "대기":
         return None, None
@@ -126,14 +173,17 @@ def _detect_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict) -> tuple[s
     prev_row = df.iloc[idx - 1] if idx > 0 else None
     prev_rsi = prev_row["rsi"] if prev_row is not None else float("nan")
 
-    if not _in_cooldown(state, date) and sig.check_a1(prev_rsi, row["rsi"], cfg):
+    rules = rules or ICHIMOKU_RULES
+    if not _in_cooldown(state, date) and rules.a1(prev_rsi, row, cfg):
         return "A1", _UNIT_1
-    if sig.check_b(row, cfg):
+    if rules.b(row, cfg):
         return "B", _UNIT_B
     return None, None
 
 
-def preview_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict, earnings_date=None) -> dict | None:
+def preview_new_entry(
+    df: pd.DataFrame, date, state: dict, cfg: dict, earnings_date=None, rules: SignalRules | None = None
+) -> dict | None:
     """오늘 새 진입(A1·B) 후보가 있는지 미리 본다 (상태를 바꾸지 않는다).
 
     동시 보유 8개 한도는 종목을 가로질러 점수를 비교해야 해서 이 함수 하나로는
@@ -141,18 +191,19 @@ def preview_new_entry(df: pd.DataFrame, date, state: dict, cfg: dict, earnings_d
     admitted 종목만 `process_day(..., new_entry_allowed=True)`로 넘긴다.
     매매 금지(ban)에 걸리는 신호는 한도 계산에서도 제외한다(어차피 발생하지 않음).
 
-    입력: df, date, state, cfg, earnings_date(있으면 실적 필터도 확인)
+    입력: df, date, state, cfg, earnings_date(있으면 실적 필터도 확인), rules(기본 ICHIMOKU_RULES)
     출력: {"kind": "A1"|"B", "unit":..., "price":..., "score":...} 또는 None
     """
     if date not in df.index:
         return None
-    kind, unit = _detect_new_entry(df, date, state, cfg)
+    rules = rules or ICHIMOKU_RULES
+    kind, unit = _detect_new_entry(df, date, state, cfg, rules)
     if kind is None:
         return None
     row = df.loc[date]
-    if _ban_reasons(df, date, row, kind, cfg, earnings_date):
+    if rules.ban(df, date, row, kind, cfg, earnings_date):
         return None
-    _, score = _entry_score(df, date, row, kind, cfg)
+    _, score = rules.score(df, date, row, kind, cfg)
     return {"kind": kind, "unit": unit, "price": float(row["close"]), "score": score}
 
 
@@ -282,6 +333,7 @@ def process_day(
     *,
     earnings_date=None,
     new_entry_allowed: bool = True,
+    rules: SignalRules | None = None,
 ) -> tuple[list[dict], dict]:
     """하루치 상태 전이를 처리한다.
 
@@ -289,7 +341,8 @@ def process_day(
          cfg(config.yaml 로드값), earnings_date(다음 실적 발표일, 모르면 None),
          new_entry_allowed(오늘 이 종목이 새 포지션(A1·B)을 열어도 되는지 —
          동시 보유 8개 한도를 engine이 점수 순으로 정해 넘겨준다. A2·A3 추가
-         매수는 이미 보유 중인 종목이라 이 값의 영향을 받지 않는다)
+         매수는 이미 보유 중인 종목이라 이 값의 영향을 받지 않는다),
+         rules(신호 판정 묶음 — 기본 ICHIMOKU_RULES = 기존 core/signals·filters 함수 그대로)
     출력: (그날 발생한 이벤트 목록, 새 상태 dict). state는 변경하지 않는다.
     이벤트 dict: {date, kind, unit, qty 또는 price, ...}
       kind: "A1"|"A2"|"A3"|"B"(진입, price 포함) | "STOP"|"A1_EXPIRE"|"E3"|"E1"|"E2"(매도, qty 포함)
@@ -304,6 +357,7 @@ def process_day(
     idx = df.index.get_loc(date)
     prev_row = df.iloc[idx - 1] if idx > 0 else None
     cooldown_days = cfg["assumptions"]["reentry_cooldown_days"]
+    rules = rules or ICHIMOKU_RULES
 
     # ⓪ 주문대기 확정 (전날 이전 신호의 체결 여부를 오늘 먼저 판정한다)
     _resolve_pending(new_state, date, events)
@@ -344,7 +398,7 @@ def process_day(
                 _mark_sent(new_state, key)
 
     # ③ E3 구조 붕괴 (확정·추세보유·청산중에서만 의미가 있다) — 전량 매도
-    if new_state["state"] in ("확정", "추세보유", "청산중") and sig.check_e3(row):
+    if new_state["state"] in ("확정", "추세보유", "청산중") and rules.e3(row):
         key = f"E3:{pd.Timestamp(date).date()}"
         if not _sent(new_state, key):
             _liquidate_all(new_state, date, "E3", events, cooldown_days)
@@ -386,12 +440,12 @@ def process_day(
     st = new_state["state"]
 
     if st == "대기":
-        kind, unit = _detect_new_entry(df, date, new_state, cfg)
+        kind, unit = _detect_new_entry(df, date, new_state, cfg, rules)
         if kind is not None:
             key = f"{kind}:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
-                grade_letter, score = _entry_score(df, date, row, kind, cfg)
-                reasons = _ban_reasons(df, date, row, kind, cfg, earnings_date)
+                grade_letter, score = rules.score(df, date, row, kind, cfg)
+                reasons = rules.ban(df, date, row, kind, cfg, earnings_date)
                 if reasons:
                     _record_blocked(new_state, date, kind, unit, reasons, "ban", score, events)
                 elif not new_entry_allowed:
@@ -413,11 +467,11 @@ def process_day(
     elif st == "정찰":
         # A2 판정은 당일 RSI 기준이다: A1 이후 중간에 RSI가 30 밑으로 다시 내려간
         # 날이 있어도 A1을 무효로 하지 않는다(손절 규칙이 관리) — P2.1 보완 2번.
-        if sig.check_a2(row, cfg):
+        if rules.a2(row, cfg):
             key = f"A2:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
-                grade_letter, score = _entry_score(df, date, row, "A2", cfg)
-                reasons = _ban_reasons(df, date, row, "A2", cfg, earnings_date)
+                grade_letter, score = rules.score(df, date, row, "A2", cfg)
+                reasons = rules.ban(df, date, row, "A2", cfg, earnings_date)
                 if reasons:
                     # 정찰 상태를 유지한다 — A1 유효기간 안에 다음 골든크로스가 오면 다시 판정.
                     _record_blocked(new_state, date, "A2", _UNIT_2, reasons, "ban", score, events)
@@ -433,12 +487,12 @@ def process_day(
                     _mark_sent(new_state, key)
 
     elif st == "확인":
-        if sig.check_a3(row, cfg):
+        if rules.a3(row, cfg):
             key = f"A3:{pd.Timestamp(date).date()}"
             if not _sent(new_state, key):
                 grade_letter = new_state.get("grade")
-                _, score = _entry_score(df, date, row, "A3", cfg)
-                reasons = _ban_reasons(df, date, row, "A3", cfg, earnings_date)
+                _, score = rules.score(df, date, row, "A3", cfg)
+                reasons = rules.ban(df, date, row, "A3", cfg, earnings_date)
                 if reasons:
                     # 확인 상태를 유지한다 — 다음 날 다시 판정한다.
                     _record_blocked(new_state, date, "A3", _UNIT_6, reasons, "ban", score, events)
@@ -449,10 +503,10 @@ def process_day(
                     )
                     new_state["entries"][_UNIT_6] = None
                     new_state["units"].setdefault(_UNIT_6, 0)
-                    # A3 확정 시 손절선을 max(A1 기준 swing_low, 오늘 구름 하단)으로 올린다 (6장).
-                    if not pd.isna(row.get("cloud_bot")) and new_state.get("stop") is not None:
+                    # A3 확정 시 손절선을 올린다 — 일목 규칙: max(A1 기준 swing_low, 오늘 구름 하단) (6장).
+                    if new_state.get("stop") is not None:
                         old_stop = new_state["stop"]
-                        new_stop = max(old_stop, float(row["cloud_bot"]))
+                        new_stop = rules.a3_stop(row, old_stop)
                         if new_stop != old_stop:
                             events.append(
                                 {
@@ -460,7 +514,7 @@ def process_day(
                                     "kind": "stop_changed",
                                     "old_stop": old_stop,
                                     "new_stop": new_stop,
-                                    "reason": "3차 매수 · 구름 하단 상향",
+                                    "reason": "3차 매수 · 구름 하단 상향" if rules is ICHIMOKU_RULES else f"3차 매수 · 손절 상향({rules.name})",
                                 }
                             )
                         new_state["stop"] = new_stop
@@ -541,4 +595,22 @@ def apply_fill(state: dict, fill: dict, cfg: dict) -> dict:
         held = new_state["units"].get(unit, 0)
         new_state["units"][unit] = max(held - int(fill["qty"]), 0)
 
+    return new_state
+
+
+def force_flat(state: dict, date, cfg: dict) -> dict:
+    """가상 장부(추천 따라하기)가 매도 신호 한 번에 전량을 판 뒤의 상태 — 대기 + 재진입 대기.
+
+    원래 전략은 E1·E2에서 묶음 일부만 팔지만, 가상 장부 규칙은 어떤 매도 신호든 전량 매도라
+    상태도 손절·E3 전량 매도와 같은 모양(대기, cooldown_until = date + reentry_cooldown_days)으로 맞춘다.
+    입력: state, date(매도 신호일), cfg / 출력: 새 상태 dict (state는 바꾸지 않는다)
+    """
+    new_state = copy.deepcopy(state)
+    new_state.update({
+        "units": {}, "entries": {}, "stop": None, "a1_date": None, "b_entry_date": None,
+        "b_total_qty": None, "grade": None, "state": "대기", "pending": None,
+        "cooldown_until": _add_cooldown(date, cfg["assumptions"]["reentry_cooldown_days"]),
+    })
+    for k in [k for k in new_state if k.startswith("_b_sold_")]:
+        new_state.pop(k)
     return new_state

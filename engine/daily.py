@@ -2276,7 +2276,7 @@ def main() -> None:
     # 장부 오류는 run_safely가 잡아 따로 알림 — 기존 브리핑은 그대로 나간다.
     vb_result = None
     if mode == "live" and not args.dry_run and not summary.get("stale"):
-        vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send)
+        vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send, briefing=_briefing_recs(summary))
         _attach_regime_line(summary, vb_result, cfg)
 
     if not args.dry_run:
@@ -2309,6 +2309,13 @@ def main() -> None:
         # 가상 장부 알림(전환 신호·낙폭)은 브리핑 뒤에 따로 — 실패해도 브리핑과 무관
         for a in vbooks.send_alerts_safely(vb_result, force_no_send=args.no_send):
             print(f"[daily] 가상 장부 알림 보냄: {a['kind']} {a['key']}")
+
+
+def _briefing_recs(summary: dict) -> dict:
+    """오늘 브리핑 매수·매도 추천 티커 (가상 장부 "브리핑 추천에도 있었음" 기록용, 계산은 바꾸지 않는다)."""
+    buys = [r["ticker"] for rows in (summary.get("buy_groups") or {}).values() for r in rows]
+    sells = [r["티커"] for r in summary.get("sell_rows", [])]
+    return {"buy": list(dict.fromkeys(buys)), "sell": list(dict.fromkeys(sells))}
 
 
 def _attach_regime_line(summary: dict, vb_result: dict | None, cfg: dict) -> None:
