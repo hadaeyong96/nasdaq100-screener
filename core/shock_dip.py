@@ -136,21 +136,23 @@ class Trade:
 
 
 def _run_exit_a(f: pd.DataFrame, sahm: np.ndarray, signal_pos: int, entry_pos: int, hold_days: int = 60) -> tuple:
-    """A식 청산: 진입일 종가부터 매 종가에 판단 — 종가 ≥ 진입 직전 252거래일 최고가(신호일까지),
-    샴 ≥ 0.5, 진입 후 hold_days거래일 경과. 하나라도 성립한 날 u → u+1 체결."""
+    """A식 청산 (v3-1): 신호 청산 — 진입일 종가부터 매 종가에 종가 ≥ 진입 직전 252거래일 최고가(신호일까지)
+    또는 샴 ≥ 0.5이면 그날 u 판단 → u+1 체결. 기간 청산 — 체결일 다음 거래일부터 세어 hold_days번째 거래일
+    (entry_pos + hold_days) 종가에 체결(판단일 = 체결일). 출력: (판단 위치, 체결 위치, 사유)."""
     c = f["close"].to_numpy()
     target = c[max(0, signal_pos - 251): signal_pos + 1].max()
     n = len(c)
-    for u in range(entry_pos, n):
+    time_pos = entry_pos + hold_days
+    for u in range(entry_pos, min(time_pos, n)):
         if c[u] >= target:
             reason = "high"
         elif not np.isnan(sahm[u]) and sahm[u] >= 0.5:
             reason = "sahm"
-        elif u - entry_pos >= hold_days:
-            reason = "time"
         else:
             continue
         return (u, u + 1, reason) if u + 1 < n else (u, None, reason)
+    if time_pos < n:
+        return (time_pos, time_pos, "time")
     return (None, None, "open")
 
 

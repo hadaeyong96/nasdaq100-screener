@@ -109,3 +109,15 @@ def test_b4_cancels_without_confirmation_and_d_exits_below_200():
     dc = sd.variant_conditions(f, sahm, sahm, sahm, sahm)["D"]
     trades = sd.simulate("D", f, dc, sahm, pd.Series(True, index=d))
     assert trades and trades[0].reason == "below200"
+
+
+def test_time_exit_is_exactly_n_trading_days_after_entry():
+    # v3-1: 체결일 다음 거래일부터 60번째 거래일 종가에 청산(판단일 = 체결일)
+    n = 400
+    d = _days(n)
+    close = pd.Series(np.r_[np.linspace(100, 200, 300), np.linspace(200, 160, 25), np.full(75, 160.0)], index=d)
+    f = sd.price_features(close)
+    sahm = pd.Series(0.0, index=d)
+    trades = sd.simulate("A", f, sd.base_condition(f, sahm), sahm, pd.Series(True, index=d))
+    t = trades[0]
+    assert t.reason == "time" and t.exit_pos - t.entry_pos == 60 and t.exit_signal_pos == t.exit_pos
