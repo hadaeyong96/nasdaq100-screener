@@ -176,7 +176,7 @@ def flush_pending(target: tuple[str, str], post, *, pending_dir: Path | None = N
 def real_send_allowed(force: bool = False) -> bool:
     """실제 텔레그램 발송을 해도 되는지 (2026-10-17): GitHub Actions 안(GITHUB_ACTIONS=true)이거나 손으로 --send를 준 때만.
     로컬 실행·미리보기·테스트는 기본이 dry-run(글만 출력)."""
-    return force or os.environ.get("GITHUB_ACTIONS") == "true"
+    return force or os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("SCREENER_REAL_SEND") == "1"
 
 
 def send(event: str, s: dict, *, post=None, catalog_path: Path = CATALOG, pending_dir: Path | None = None,

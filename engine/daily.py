@@ -39,6 +39,7 @@ data/market_calendar.py)보다 오래됐으면 "데이터 지연 모드"로 전�
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections import Counter
 from datetime import datetime, timedelta
@@ -2240,6 +2241,8 @@ def main() -> None:
     parser.add_argument("--replay", action="store_true", help="레거시(P2): state.db가 비어 있으면 되돌려 보기로 상태를 만든다")
     parser.add_argument("--dry-run", action="store_true", help="DB에 쓰지 않고 결과만 출력한다")
     parser.add_argument("--no-send", action="store_true", help="보고서만 만들고 텔레그램은 보내지 않는다")
+    parser.add_argument("--send", action="store_true",
+                        help="로컬에서도 텔레그램을 실제로 보낸다(기본: GitHub Actions 밖이면 dry-run, 2026-10-17)")
     parser.add_argument(
         "--resend", action="store_true",
         help="상태를 다시 처리하지 않고, 마지막 기준일의 보고서·글을 다시 보낸다(중복 발송 방지 기록 무시)",
@@ -2248,6 +2251,11 @@ def main() -> None:
 
     cfg = load_config()
     mode = resolve_mode(cfg, args.mode)
+    if args.send:  # 이 실행에서만 실제 발송 허용 (공장 알림 factory.notify도 같은 값을 본다)
+        os.environ[telegram.SEND_ENV] = "1"
+    if not telegram.real_send_allowed():
+        print("[daily] 로컬 실행이라 텔레그램을 실제로 보내지 않습니다(dry-run). 보고서·글 파일은 그대로 만듭니다 "
+              "— 실제 발송은 GitHub Actions 매일 실행, 손으로 보내려면 --send")
 
     if args.resend:
         _resend_last(cfg, mode, force_no_send=args.no_send)
@@ -2279,6 +2287,7 @@ def main() -> None:
         vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send, briefing=_briefing_recs(summary))
         _attach_regime_line(summary, vb_result, cfg)
         _attach_market_glance(summary, cfg)
+        _attach_dec_tax(summary, cfg)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 (읽기 전용, 실패해도 브리핑 본문은 그대로)
         try:
             from factory import scorecard_run
@@ -2354,6 +2363,54 @@ def _attach_market_glance(summary: dict, cfg: dict, qqq_fetch=None) -> None:
         summary["qqq_close"] = (qqq_fetch or (lambda: _fetch_qqq_close_series(cfg)))()
     except Exception as exc:  # noqa: BLE001
         print(f"[daily] QQQ 종가를 받지 못해 시장 한눈에 첫 줄을 뺍니다: {type(exc).__name__}")
+
+
+def _default_fills(cfg: dict):
+    """원본 시트 「체결」 탭(읽기만) → date·ticker·side·qty·price·fx_rate 행 (QQQM 대기자금 행 포함)."""
+    from data import sheets
+
+    r = sheets.read_sheets(cfg=cfg)
+    return pd.concat([r.fills.df, r.fills.cash_rows], ignore_index=True)
+
+
+def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, days_fn=None) -> None:
+    """12월 공제 안내(core/tax_harvest.py): 기준일이 표시일(12월 첫 NYSE 거래일, 12/15 이후 첫 거래일)이면
+    summary["dec_tax"] = {todo, lines}. 시트·가격은 읽기만. 어떤 오류든 잡아 안내만 빼고 브리핑은 그대로(예외 격리).
+
+    fills_fn() → 체결 행 DataFrame, qqqm_fn() → QQQM 종가 Series, days_fn(year) → 그해 NYSE 거래일 (테스트 주입).
+    """
+    from core import tax_harvest as th
+    from notify import letter
+
+    summary.pop("dec_tax", None)
+    try:
+        as_of = summary.get("as_of")
+        if as_of is None:
+            return
+        as_of = pd.Timestamp(as_of).normalize()
+        year = as_of.year
+        days = (days_fn or (lambda y: trading_days_between(datetime(y, 1, 1).date(), datetime(y, 12, 31).date())))(year)
+        if as_of not in th.show_days(days, year):
+            return
+        fills = (fills_fn or (lambda: _default_fills(cfg)))()
+        close = (qqqm_fn or (lambda: _fetch_close_series("QQQM", cfg)))()
+        close = close[close.index <= as_of].dropna()
+        fx = summary.get("fx_rate")
+        if not len(close) or not fx:
+            raise RuntimeError("QQQM 종가 또는 원/달러를 구하지 못함")
+        pos = th.moving_average_position(fills)
+        plan = th.harvest_plan(pos, year, float(close.iloc[-1]), float(fx))
+        summary["dec_tax"] = {"todo": letter.DEC_TAX_TODO, "lines": th.build_lines(plan, th.deadline(days, year)),
+                              "status": plan.status}
+    except Exception as exc:  # noqa: BLE001 — 안내 실패가 브리핑을 막으면 안 된다
+        summary.pop("dec_tax", None)
+        print(f"[daily] 12월 공제 안내를 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+
+
+def _fetch_close_series(ticker: str, cfg: dict) -> pd.Series:
+    from data.prices import fetch_one
+
+    return fetch_one(ticker, cfg)["close"]
 
 
 def _waiting_books(cfg: dict, base_date, extra_names: set[str]) -> dict[str, pd.Timestamp]:

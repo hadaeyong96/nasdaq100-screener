@@ -3,6 +3,8 @@
     Daily automation entry point for the Nasdaq 100 screener (Windows Task Scheduler).
 
 .DESCRIPTION
+    NOTE (2026-10-17): Telegram is dry-run outside GitHub Actions. This local run builds the
+    reports but sends nothing (briefing and the ops alert) unless engine.daily gets --send.
     Moves to the project root, runs engine.daily in live mode then paper mode
     (--no-send), and appends a log to logs\daily_YYYY-MM-DD.log (that folder is
     in .gitignore). If either step exits non-zero, sends one short Telegram

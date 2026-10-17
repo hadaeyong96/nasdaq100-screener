@@ -14,6 +14,13 @@ from notify import briefing, report_html, telegram
 from store import db
 
 
+@pytest.fixture(autouse=True)
+def _allow_real_send_path(monkeypatch):
+    """이 파일은 발송 경로(가짜 전송 함수)를 검증한다 — Actions·--send와 같은 발송 허용 상태로 둔다(2026-10-17 관문)."""
+    monkeypatch.setenv("SCREENER_REAL_SEND", "1")
+
+
+
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy")
@@ -112,6 +119,9 @@ def test_daily_main_sends_both_even_if_personal_raises(monkeypatch, cfg, tmp_pat
                         lambda text, path, s, c, force_no_send=False: calls.append(("group", path)) or {"ok": True})
     monkeypatch.setattr(daily.telegram, "notify_ops_error", lambda m: calls.append(("ops", m)) or True)
     monkeypatch.setattr(daily, "OUTPUT_DIR", tmp_path)
+    import factory.notify
+
+    monkeypatch.setattr(factory.notify, "send_safely", lambda *a, **k: False)  # 이 테스트는 브리핑 발송만 본다
     monkeypatch.setattr(daily, "_fetch_qqq_close_series", lambda c: (_ for _ in ()).throw(ConnectionError("no net")))
     monkeypatch.setattr(sys, "argv", ["daily", "--mode", "live"])
     daily.main()

@@ -5,6 +5,13 @@ import requests
 
 from notify import telegram
 
+
+@pytest.fixture(autouse=True)
+def _allow_real_send_path(monkeypatch):
+    """이 파일은 발송 경로(가짜 전송 함수)를 검증한다 — Actions·--send와 같은 발송 허용 상태로 둔다(2026-10-17 관문)."""
+    monkeypatch.setenv("SCREENER_REAL_SEND", "1")
+
+
 FAKE = "1234567890:AAH_fake-TOKEN_for_tests_only_abcdefghijk"
 URL = f"https://api.telegram.org/bot{FAKE}/sendMessage"
 

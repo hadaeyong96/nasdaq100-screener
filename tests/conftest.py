@@ -20,7 +20,7 @@ class RealTelegramSendBlocked(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
-def _no_real_telegram(monkeypatch):
+def _no_real_telegram(monkeypatch, tmp_path):
     """모든 테스트: GitHub Actions가 아닌 것으로 보고(GITHUB_ACTIONS 지움 → 공장 알림 dry-run),
     requests.post로 api.telegram.org에 가는 요청은 막는다(.env가 import 때 읽혀 진짜 토큰이 있어도 안전).
     테스트가 requests.post를 따로 바꿔 끼우면 그쪽이 이긴다."""
@@ -35,6 +35,11 @@ def _no_real_telegram(monkeypatch):
         return real_post(url, *a, **k)
 
     monkeypatch.setattr(requests, "post", guarded)
+    # 공장 알림: 재시도 대기 0, 실패 보관은 임시 폴더(진짜 outputs/에 남지 않게)
+    from factory import notify as fnotify
+
+    monkeypatch.setattr(fnotify, "_sleep", lambda s: None)
+    monkeypatch.setattr(fnotify, "PENDING_DIR", tmp_path / "notify_pending")
 
 
 @pytest.fixture(scope="session")

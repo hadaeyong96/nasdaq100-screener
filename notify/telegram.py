@@ -238,6 +238,19 @@ def env_status() -> str:
     )
 
 
+SEND_ENV = "SCREENER_REAL_SEND"  # engine.daily --send가 이 실행에만 "1"로 둔다
+
+
+def real_send_allowed(force: bool = False) -> bool:
+    """텔레그램 실제 발송을 해도 되는지 (2026-10-17): GitHub Actions 안(GITHUB_ACTIONS=true)이거나
+    손으로 --send를 준 실행(SCREENER_REAL_SEND=1)일 때만. 로컬(run_daily.ps1 포함)·미리보기·테스트는 dry-run."""
+    return force or os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get(SEND_ENV) == "1"
+
+
+def _dry_run_log(what: str) -> None:
+    _log(f"[telegram] 로컬 실행이라 {what}을(를) 실제로 보내지 않습니다(dry-run) — 실제 발송은 GitHub Actions 또는 --send")
+
+
 def notify_ops_error(message: str) -> bool:
     """운영 자동화(예약 작업 등)가 실패했을 때 텔레그램으로 짧은 오류 메시지만 보낸다.
 
@@ -248,6 +261,9 @@ def notify_ops_error(message: str) -> bool:
     실패했다는 운영 알림이라 매번 보내는 게 맞고, 로그는 호출한 쪽(run_daily.ps1)이
     이미 남긴다.
     """
+    if not real_send_allowed():
+        _dry_run_log("오류 알림")
+        return False
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
     if not token or not chat_id:
@@ -264,6 +280,9 @@ def send_alert_text(message: str, force_no_send: bool = False) -> bool:
          다음 실행에서 다시 시도한다). 중복 방지는 호출부(가상 장부 DB alerts 표)가 맡는다.
     """
     if force_no_send:
+        return False
+    if not real_send_allowed():
+        _dry_run_log("가상 장부 알림")
         return False
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
     chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
@@ -306,6 +325,9 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
     out_path.write_text(text, encoding="utf-8")
 
     if force_no_send or mode == "paper":
+        return out_path
+    if not real_send_allowed():
+        _dry_run_log("아침 편지(개인 채팅)")
         return out_path
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
@@ -364,6 +386,9 @@ def send_delay_notice(summary: dict, cfg: dict, force_no_send: bool = False) -> 
     out_path.write_text(text, encoding="utf-8")
 
     if force_no_send or mode == "paper":
+        return out_path
+    if not real_send_allowed():
+        _dry_run_log("아침 편지(개인 채팅)")
         return out_path
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
@@ -435,6 +460,10 @@ def send_group_briefing(
 
     if force_no_send or mode == "paper":
         result["skipped_reason"] = "no_send" if force_no_send else "paper_mode"
+        return result
+    if not real_send_allowed():
+        _dry_run_log("아침 편지(단체방)")
+        result["skipped_reason"] = "local_dry_run"
         return result
 
     token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""

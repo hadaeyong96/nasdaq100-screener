@@ -63,6 +63,7 @@ def main() -> None:
         s.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--scorecard", default=None, help="성적표 날 모양 흉내(예: 2026-10) — 계산은 하지 않고 접기 자리만")
+    ap.add_argument("--dec-date", default=None, help="12월 공제 안내를 이 날짜(예: 2026-12-01)를 기준일로 가정해 계산·출력(시트 읽기만)")
     a = ap.parse_args()
     try:
         from dotenv import load_dotenv
@@ -85,6 +86,7 @@ def main() -> None:
     print("가상 장부 오류:", "; ".join(vb.get("errors", [])) or "없음")
     daily._attach_regime_line(summary, vb, cfg)
     daily._attach_market_glance(summary, cfg)
+    daily._attach_dec_tax(summary, cfg)
     if a.scorecard:
         summary["scorecard"] = {"month": a.scorecard, "lines": ["(미리보기 — 성적표 접기 자리)"]}
     daily.render_editions(summary, cfg)
@@ -97,6 +99,22 @@ def main() -> None:
     print("\n===== 첨부 설명 =====")
     print("[개인]\n" + briefing.build_report_caption(summary, cfg))
     print("[단체방]\n" + briefing.build_report_caption(summary, cfg, edition="group"))
+    if a.dec_date:
+        import pandas as pd
+
+        from notify import letter
+
+        fake = {**summary, "as_of": pd.Timestamp(a.dec_date)}
+        daily._attach_dec_tax(fake, cfg)  # 기준일만 바꿔 가정(QQQM 종가·환율은 지금 최신 값)
+        print(f"\n===== {a.dec_date} 가정 개인판 (할 일 줄 + 12월 접기) =====")
+        print(letter.todo_line(fake, cfg))
+        if fake.get("dec_tax"):
+            print("▶ 올해 세금 없는 매도 한도")
+            print("\n".join("  " + x for x in fake["dec_tax"]["lines"]))
+        else:
+            print("(12월 안내 없음 — 표시일 아님 또는 계산 실패, 위 로그 참고)")
+        path = daily.report_html.render_report(fake, cfg, OUT / "dec")
+        print(f"(보고서 파일: {path})")
 
 
 if __name__ == "__main__":
