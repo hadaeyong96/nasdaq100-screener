@@ -10,7 +10,9 @@
 형식: 첫 줄 제목, 결과 2~3줄, 다음 대기 후보(catalog.yaml 순위), 마지막 줄 "→ Claude에 결과 보고서를 붙여 넣으세요".
 이모지 없음, 6줄 이내. 발송이 실패해도 공장 작업 결과(파일·커밋)는 그대로 둔다(send_safely는 예외를 내지 않음).
 
-실패분 보관(2026-10-17): 발송이 실패하면 글을 outputs/notify_pending/<시각>_<event>.json에 보관한다(글·종류·시각만 —
+재시도(2026-10-17): 발송이 실패하면 그 자리에서 30초·60초·120초 쉬고 최대 3번 다시 보낸다(GitHub Actions에서도 같은 코드라
+그대로 적용 — 최악 약 3분 30초 대기). 재시도 로그도 오류 종류만 남긴다.
+실패분 보관(2026-10-17): 재시도까지 모두 실패하면 글을 outputs/notify_pending/<시각>_<event>.json에 보관한다(글·종류·시각만 —
 토큰·chat id는 쓰지 않는다). 다음에 send가 불릴 때 보관분을 오래된 것부터 먼저 다시 보내고, 성공하면 파일을 지운다.
 3일이 지난 보관분은 보내지 않고 지운다. 보관분 재발송이 실패하면 그 뒤 보관분은 다음 기회로 미룬다.
 
@@ -25,6 +27,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -37,6 +40,8 @@ MAX_LINES = 6
 PENDING_DIR = ROOT / "outputs" / "notify_pending"  # gitignore(outputs/) — 실패한 알림 보관
 PENDING_MAX_AGE = timedelta(days=3)
 KST = timezone(timedelta(hours=9))
+RETRY_DELAYS = (30, 60, 120)  # 실패 뒤 다시 보내기 전 대기(초) — 최대 3번
+_sleep = time.sleep  # 테스트에서 바꿔 끼운다
 EVENTS = ("explore_done", "zone_judged", "scorecard_done", "error")
 TITLES = {"explore_done": "[전략공장] 탐색 시험 완료", "zone_judged": "[전략공장] 검증 구역 판정 완료",
           "scorecard_done": "[전략공장] 월간 성적표 생성", "error": "[전략공장] 작업 멈춤"}
@@ -170,7 +175,8 @@ def flush_pending(target: tuple[str, str], post, *, pending_dir: Path | None = N
 def send(event: str, s: dict, *, post=None, catalog_path: Path = CATALOG, pending_dir: Path | None = None,
          now: datetime | None = None) -> bool:
     """알림 한 통(그 전에 보관분부터 다시 보냄). 출력: 보냈으면 True, 받는 곳이 없어 건너뛰었으면 False.
-    단체방이면 FactoryNotifyForbidden. 발송이 실패하면 글을 보관하고 예외를 다시 낸다."""
+    단체방이면 FactoryNotifyForbidden. 발송이 실패하면 RETRY_DELAYS 간격으로 최대 3번 다시 보내고,
+    그래도 실패하면 글을 보관하고 마지막 예외를 다시 낸다."""
     text = build_message(event, s, catalog_path)
     target = _target()
     if target is None:
@@ -178,12 +184,20 @@ def send(event: str, s: dict, *, post=None, catalog_path: Path = CATALOG, pendin
         return False
     poster = post or _post
     flush_pending(target, poster, pending_dir=pending_dir, now=now)
-    try:
-        poster(target[0], target[1], text)
-    except Exception:
+    for attempt, delay in enumerate((0, *RETRY_DELAYS)):
+        if delay:
+            print(f"[factory.notify] {delay}초 뒤 다시 보냅니다 ({attempt}/{len(RETRY_DELAYS)}, {event})")
+            _sleep(delay)
+        try:
+            poster(target[0], target[1], text)
+            break
+        except Exception as exc:  # noqa: BLE001 — 오류 메시지에 토큰 URL이 있을 수 있어 종류만
+            last = exc
+            print(f"[factory.notify] 발송 실패({type(exc).__name__}, {event})")
+    else:
         path = save_pending(event, text, pending_dir=pending_dir, now=now)
-        print(f"[factory.notify] 발송 실패 — 다음 실행 때 다시 보내려고 보관합니다 ({path.name})")
-        raise
+        print(f"[factory.notify] 다시 보내기 {len(RETRY_DELAYS)}번도 실패 — 다음 실행 때 보내려고 보관합니다 ({path.name})")
+        raise last
     print(f"[factory.notify] 전략분석기에 알림 보냄 ({event})")
     return True
 

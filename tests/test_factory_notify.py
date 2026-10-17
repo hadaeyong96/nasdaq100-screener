@@ -13,6 +13,7 @@ def _env(monkeypatch, tmp_path):
     for k in (fn.CHAT_ENV, fn.TOKEN_ENV, fn.TOKEN_FALLBACK_ENV, fn.GROUP_ENV):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(fn, "PENDING_DIR", tmp_path / "notify_pending")  # 진짜 outputs/에 쓰지 않게
+    monkeypatch.setattr(fn, "_sleep", lambda s: None)  # 재시도 대기 0
 
 
 @pytest.mark.parametrize("event,s", [
@@ -154,3 +155,37 @@ def test_group_chat_is_never_flushed(monkeypatch):
     sent = []
     assert fn.send_safely("error", {"stage": "x"}, post=lambda *a: sent.append(a), now=T0) is False
     assert sent == [] and len(list(fn.PENDING_DIR.glob("*.json"))) == 1
+
+
+# ── 그 자리 재시도 (30·60·120초, 최대 3번) ──────────────────────────────────
+
+
+def test_retries_three_times_with_delays_then_saves(monkeypatch, capsys):
+    _target_env(monkeypatch)
+    waits, calls = [], []
+    monkeypatch.setattr(fn, "_sleep", waits.append)
+
+    def bad(tok, chat, text):
+        calls.append(text)
+        raise RuntimeError("https://api.telegram.org/botsecret-token-value/sendMessage HTTP 502")
+
+    assert fn.send_safely("explore_done", {"name": "a"}, post=bad, now=T0) is False
+    assert waits == [30, 60, 120] and len(calls) == 4
+    assert len(list(fn.PENDING_DIR.glob("*.json"))) == 1
+    out = capsys.readouterr().out
+    assert "secret-token-value" not in out and "-100999" not in out
+
+
+def test_retry_succeeds_before_limit_and_nothing_saved(monkeypatch):
+    _target_env(monkeypatch)
+    waits, calls = [], []
+    monkeypatch.setattr(fn, "_sleep", waits.append)
+
+    def flaky(tok, chat, text):
+        calls.append(text)
+        if len(calls) < 3:
+            raise RuntimeError("HTTP 502")
+
+    assert fn.send("explore_done", {"name": "a"}, post=flaky, now=T0) is True
+    assert waits == [30, 60] and len(calls) == 3
+    assert list(fn.PENDING_DIR.glob("*.json")) == []
