@@ -37,6 +37,8 @@ strategies:
   - {id: x_rs26, name: "6개월 강세 따라하기(RS26)", status: 탈락 보관, zone: "검증 ③ 1/5", result: "FAIL 7.45% (QQQ 18.70%)", evidence: "rs26-prereg, docs/results/rs26_zone3.md"}
   - {id: x_accel, name: "한 달 가속 따라하기(ACCEL)", status: 탈락 보관, zone: "검증 ③ 2/5", result: "FAIL 5.25% (QQQ 19.29%)", evidence: "accel-prereg, docs/results/accel_zone3.md"}
   - {id: x_sector_pullback, name: "강한 업종 속 강한 종목 첫 눌림(탐색 B)", status: 탈락 보관, zone: "탐색 (시점별 나스닥100 ∪ S&P 100, 2012~2021)", result: "B0 16.29% vs QQQ 19.98%, 가짜 1등 95백분위 18.32% 미달 (B0~B3 모두 기준 미충족, 판정 아님)", evidence: "sector-pullback-prereg, docs/factory/explore/sector_pullback.md"}
+  - {id: x_shock_dip, name: "충격 웅덩이 A·B1·B2·B3·B4", status: 탈락 보관, zone: "지수 탐색 (S&P500 1960-04~1998, 나스닥 1972~1998, QQQ 1999~2021, 해외 5곳 ~2021)", result: "QQQ 세후 A 5.28% vs 1배 6.98%, 6개 모두 FAIL", evidence: "shock-dip-prereg-v3, research/shock-dip 24964b0 docs/research/shock_dip_results.md"}
+  - {id: x_bull_dip_d, name: "상승장 웅덩이 D", status: 탈락 보관, zone: "지수 탐색 (S&P500 1960-04~1998, 나스닥 1972~1998, QQQ 1999~2021, 해외 5곳 ~2021)", result: "QQQ 세후 A 5.28% vs 1배 6.98%, 6개 모두 FAIL", evidence: "shock-dip-prereg-v3, research/shock-dip 24964b0 docs/research/shock_dip_results.md"}
 
   # ── 확정 습관 ──────────────────────────────────────────────────────────
   - {id: h_pension_first, name: 연금저축 먼저, status: 확정 습관, zone: 실제 운용, result: "세금 계좌 순서: 연금저축부터 채운다", evidence: ""}
