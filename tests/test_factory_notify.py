@@ -1,14 +1,19 @@
 """factory/notify.py 테스트 (네트워크 없음)."""
 
+import json
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from factory import notify as fn
 
 
 @pytest.fixture(autouse=True)
-def _env(monkeypatch):
+def _env(monkeypatch, tmp_path):
     for k in (fn.CHAT_ENV, fn.TOKEN_ENV, fn.TOKEN_FALLBACK_ENV, fn.GROUP_ENV):
         monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(fn, "PENDING_DIR", tmp_path / "notify_pending")  # 진짜 outputs/에 쓰지 않게
+    monkeypatch.setattr(fn, "_sleep", lambda s: None)  # 재시도 대기 0
 
 
 @pytest.mark.parametrize("event,s", [
@@ -74,3 +79,113 @@ def test_cli_dry_run(tmp_path, capsys):
     assert fn.main(["--event", "explore_done", "--summary-file", str(p), "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "[전략공장] 탐색 시험 완료" in out and "16.29% vs QQQ 19.98%" in out
+
+
+# ── 실패분 보관·재발송 (2026-10-17) ─────────────────────────────────────────
+
+T0 = datetime(2026, 10, 17, 0, 0, tzinfo=timezone.utc)
+
+
+def _target_env(monkeypatch):
+    monkeypatch.setenv(fn.CHAT_ENV, "-100999")
+    monkeypatch.setenv(fn.TOKEN_FALLBACK_ENV, "secret-token-value")
+
+
+def _fail(*a):
+    raise RuntimeError("HTTP 502")
+
+
+def test_failed_send_is_saved_without_token_or_chat_id(monkeypatch):
+    _target_env(monkeypatch)
+    with pytest.raises(RuntimeError):
+        fn.send("explore_done", {"name": "폭락 연구"}, post=_fail, now=T0)
+    assert fn.send_safely("error", {"stage": "x"}, post=_fail, now=T0 + timedelta(seconds=1)) is False
+    files = sorted(fn.PENDING_DIR.glob("*.json"))
+    assert [f.name.split("_", 1)[1] for f in files] == ["explore_done.json", "error.json"]
+    raw = files[0].read_text(encoding="utf-8")
+    assert "secret-token-value" not in raw and "-100999" not in raw
+    rec = json.loads(raw)
+    assert set(rec) == {"event", "text", "created_at"} and rec["text"].startswith("[전략공장] 탐색 시험 완료")
+
+
+def test_next_send_flushes_pending_first_and_deletes_on_success(monkeypatch):
+    _target_env(monkeypatch)
+    fn.send_safely("explore_done", {"name": "옛 알림"}, post=_fail, now=T0)
+    sent = []
+    assert fn.send("error", {"stage": "새 알림"}, post=lambda tok, chat, x: sent.append(x), now=T0 + timedelta(hours=5))
+    assert len(sent) == 2 and "옛 알림" in sent[0] and "새 알림" in sent[1]  # 보관분이 먼저
+    assert sent[0].split("\n")[0] == "[전략공장] 탐색 시험 완료 (늦은 발송, 원래 10-17 09:00)"
+    assert len(sent[0].split("\n")) <= fn.MAX_LINES
+    assert list(fn.PENDING_DIR.glob("*.json")) == []
+
+
+def test_pending_older_than_3_days_is_dropped(monkeypatch, capsys):
+    _target_env(monkeypatch)
+    fn.send_safely("explore_done", {"name": "오래된 알림"}, post=_fail, now=T0)
+    sent = []
+    fn.send("error", {"stage": "x"}, post=lambda tok, chat, x: sent.append(x), now=T0 + timedelta(days=3, minutes=1))
+    assert len(sent) == 1 and "오래된 알림" not in sent[0]
+    assert list(fn.PENDING_DIR.glob("*.json")) == []
+    assert "3일이 지난" in capsys.readouterr().out
+
+
+def test_failed_resend_keeps_pending_and_saves_new(monkeypatch):
+    _target_env(monkeypatch)
+    fn.send_safely("explore_done", {"name": "a"}, post=_fail, now=T0)
+    assert fn.send_safely("error", {"stage": "b"}, post=_fail, now=T0 + timedelta(hours=1)) is False
+    assert len(list(fn.PENDING_DIR.glob("*.json"))) == 2
+    sent = []
+    fn.send("error", {"stage": "c"}, post=lambda tok, chat, x: sent.append(x), now=T0 + timedelta(hours=2))
+    assert len(sent) == 3 and "탐색 시험 완료" in sent[0] and list(fn.PENDING_DIR.glob("*.json")) == []
+
+
+def test_no_target_leaves_pending_untouched(monkeypatch):
+    _target_env(monkeypatch)
+    fn.send_safely("explore_done", {"name": "a"}, post=_fail, now=T0)
+    monkeypatch.delenv(fn.CHAT_ENV)
+    sent = []
+    assert fn.send("error", {"stage": "x"}, post=lambda *a: sent.append(a), now=T0) is False
+    assert sent == [] and len(list(fn.PENDING_DIR.glob("*.json"))) == 1
+
+
+def test_group_chat_is_never_flushed(monkeypatch):
+    _target_env(monkeypatch)
+    fn.send_safely("explore_done", {"name": "a"}, post=_fail, now=T0)
+    monkeypatch.setenv(fn.GROUP_ENV, "-100999")
+    sent = []
+    assert fn.send_safely("error", {"stage": "x"}, post=lambda *a: sent.append(a), now=T0) is False
+    assert sent == [] and len(list(fn.PENDING_DIR.glob("*.json"))) == 1
+
+
+# ── 그 자리 재시도 (30·60·120초, 최대 3번) ──────────────────────────────────
+
+
+def test_retries_three_times_with_delays_then_saves(monkeypatch, capsys):
+    _target_env(monkeypatch)
+    waits, calls = [], []
+    monkeypatch.setattr(fn, "_sleep", waits.append)
+
+    def bad(tok, chat, text):
+        calls.append(text)
+        raise RuntimeError("https://api.telegram.org/botsecret-token-value/sendMessage HTTP 502")
+
+    assert fn.send_safely("explore_done", {"name": "a"}, post=bad, now=T0) is False
+    assert waits == [30, 60, 120] and len(calls) == 4
+    assert len(list(fn.PENDING_DIR.glob("*.json"))) == 1
+    out = capsys.readouterr().out
+    assert "secret-token-value" not in out and "-100999" not in out
+
+
+def test_retry_succeeds_before_limit_and_nothing_saved(monkeypatch):
+    _target_env(monkeypatch)
+    waits, calls = [], []
+    monkeypatch.setattr(fn, "_sleep", waits.append)
+
+    def flaky(tok, chat, text):
+        calls.append(text)
+        if len(calls) < 3:
+            raise RuntimeError("HTTP 502")
+
+    assert fn.send("explore_done", {"name": "a"}, post=flaky, now=T0) is True
+    assert waits == [30, 60] and len(calls) == 3
+    assert list(fn.PENDING_DIR.glob("*.json")) == []
