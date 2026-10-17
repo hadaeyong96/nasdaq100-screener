@@ -26,9 +26,12 @@ def _md(ts) -> str:
 # ── ② 오늘 할 일 ────────────────────────────────────────────────────────────
 
 
+DEC_TAX_TODO = "올해 세금 없는 매도 한도 확인"
+
+
 def december_items(summary: dict, cfg: dict) -> list[str]:
-    """12월 공제 안내 자리(개인판만). 다음 작업에서 feat/dec-tax-harvest 계산을 연결한다 — 지금은 항상 빈 목록."""
-    return []
+    """12월 공제 안내(개인판만): 표시일(12월 첫 거래일·15일 이후 첫 거래일)에 engine.daily가 summary["dec_tax"]를 둔 날만."""
+    return [DEC_TAX_TODO] if summary.get("dec_tax") else []
 
 
 def todo_items(summary: dict, cfg: dict, edition: str = PERSONAL) -> list[str]:
@@ -87,10 +90,31 @@ def glance_lines(qqq_close: pd.Series | None, macro_rows: list[dict]) -> list[st
         second.append(f"원/달러 {by['fx']['value']:,.0f}원")
     if second:
         lines.append(" · ".join(second))
-    warn = [r["name"] for r in macro_rows or [] if (r.get("badge") or {}).get("label") in ("주의", "위험")]
-    if warn:
-        lines.append("주의: " + ", ".join(warn))
+    danger = [_danger_text(r) for r in macro_rows or [] if (r.get("badge") or {}).get("label") == "위험"]
+    if danger:  # 위험(빨강)만 짧게. 주의(노랑)는 그래프 접기에서 본다(2026-10-17)
+        lines.append("위험: " + " · ".join(danger))
     return lines
+
+
+def _danger_text(r: dict) -> str:
+    """위험 단계 지표 하나 → 짧은 이름 + 값. 예: "공포 극단", "10년 금리 5.1%", "기준금리 인상"."""
+    slug, v = r.get("slug"), r.get("value")
+    zone = (r.get("badge") or {}).get("zone") or ""
+    if slug == "fear-greed":
+        return {"극단적 공포": "공포 극단", "극단적 탐욕": "탐욕 극단"}.get(zone, f"공포·탐욕 {v}")
+    if slug == "vix":
+        return f"VIX {v:.1f}"
+    if slug == "dgs10":
+        return f"10년 금리 {v:.1f}%"
+    if slug == "t10y2y":
+        return f"금리차 {v:+.2f}%p"
+    if slug == "hy":
+        return f"하이일드 스프레드 {v:.2f}%"
+    if slug == "fed":
+        return "기준금리 인상"
+    if slug == "fx":
+        return f"원/달러 {v:,.0f}원"
+    return str(r.get("name", slug))
 
 
 # ── ④ 실험 중인 전략 ─────────────────────────────────────────────────────────
@@ -166,7 +190,7 @@ def letter_books(cfg: dict, base_date, summaries: list[dict], book_trades: dict[
 
 
 def _status(b: dict, cfg: dict) -> tuple[str, str]:
-    """(합칠 때 쓰는 상태 키, 상태 문구)."""
+    """(묶는 데 쓰는 상태 키, 상태 문구). 같은 키끼리 한 줄로 묶는다(2026-10-17 다듬기)."""
     if b["status"] == "waiting":
         return f"wait:{b['start'].date()}", f"{_md(b['start'])} 시작"
     if b["status"] == "missing":
@@ -174,68 +198,67 @@ def _status(b: dict, cfg: dict) -> tuple[str, str]:
     if b["family"] == "trend":
         defensive = (cfg.get("virtual_books") or {}).get("defensive_ticker", "SGOV")
         if b["holding"] == defensive:
-            return "down", "하락 추세라 단기 국채로 피신 중"
-        return "up", f"지금 상승 추세라 {b['holding']} 보유 중"
+            return "down", "하락 추세라 단기 국채로 피신"
+        return "up", "상승 추세라 {holdings} 보유"
     if b["family"] in ("picks", "rebalance"):
         n = b["n_positions"] or 0
-        return (f"n:{n}", "살 종목이 없어 현금 보관") if n == 0 else (f"n:{n}", f"{n}종목 보유")
-    return "", ""
+        return ("cash", "살 종목이 없어 현금 보관") if n == 0 else (f"n:{n}", f"{n}종목 보유")
+    return "hold", "그냥 보유"
 
 
-def _merge(group: list[dict], cfg: dict) -> list[dict]:
-    """결과가 같은 장부(누적·QQQ 대비 소수 첫째 자리, 상태, 오늘 매매가 같음)를 하나로 합친다. 순서는 처음 나온 순서."""
-    merged: list[dict] = []
-    for b in group:
-        key_s, text = _status(b, cfg)
-        key = (None if b["cum_return_pct"] is None else round(b["cum_return_pct"], 1),
-               None if b["vs_qqq_pp"] is None else round(b["vs_qqq_pp"], 1), key_s, tuple(b["trades_today"]))
-        hit = next((m for m in merged if m["key"] == key), None)
-        if hit:
-            hit["labels"].append(b["label"])
-            hit["holdings"].append(b["holding"])
-        else:
-            merged.append({"key": key, "labels": [b["label"]], "holdings": [b["holding"]], "book": b, "text": text,
-                           "key_s": key_s})
-    return merged
+def _ret(b: dict) -> str:
+    """누적 수익률 한 칸: +1.2% / −0.1% / 0.0% (음수는 긴 빼기표)."""
+    v = round(b["cum_return_pct"], 1) + 0.0
+    return "0.0%" if v == 0 else (f"+{v:.1f}%" if v > 0 else f"−{abs(v):.1f}%")
 
 
-def _item(m: dict) -> str:
-    b = m["book"]
-    label = "·".join(m["labels"])
-    if b["status"] != "ok":
-        return f"{label} {m['text']}"
-    s = f"{label} {b['cum_return_pct']:+.1f}%"
-    if b["vs_qqq_pp"] is not None and round(b["vs_qqq_pp"], 1) != 0:
-        s += f"(QQQ 대비 {b['vs_qqq_pp']:+.1f}%p)"
-    text = m["text"]
-    if m["key_s"] == "up" and len(m["holdings"]) > 1:  # 합친 추세 전략: "QLD(TQQQ)"
-        text = f"지금 상승 추세라 {m['holdings'][0]}({'·'.join(m['holdings'][1:])}) 보유 중"
-    return s + (f" {text}" if text else "")
+def join_names(labels: list[str]) -> str:
+    """보여 주는 이름 묶기: "QLD 추세 전략"+"TQQQ 추세 전략" → "QLD·TQQQ 추세 전략",
+    "기술지표 전략"+"볼린저 전략"+"한 달 가속 전략" → "기술지표·볼린저·한 달 가속 전략"."""
+    if len(labels) == 1:
+        return labels[0]
+    words = [x[:-3].split() if x.endswith(" 전략") else x.split() for x in labels]
+    common = []
+    while all(len(w) > len(common) + 1 for w in words) and len({w[-1 - len(common)] for w in words}) == 1:
+        common.insert(0, words[0][-1 - len(common)])
+    heads = [" ".join(w[: len(w) - len(common)]) for w in words]
+    return "·".join(heads) + (" " + " ".join(common) if common else "") + " 전략"
 
 
-def _trades_text(group: list[dict], edition: str) -> str:
-    buys = list(dict.fromkeys(t for b in group for side, t in b["trades_today"] if side == "매수"))
-    sells = list(dict.fromkeys(t for b in group for side, t in b["trades_today"] if side == "매도"))
+def _trades_line(books: list[dict], edition: str) -> str:
+    """칸 맨 끝 한 줄: 개인판 "오늘 가상 매수: 전략명 티커 · …", 단체방판 "오늘 가상 거래 n건". 없으면 "오늘 거래 없음"."""
     if edition == GROUP:
-        n = sum(len(b["trades_today"]) for b in group)
+        n = sum(len(b["trades_today"]) for b in books)
         return f"오늘 가상 거래 {n}건" if n else "오늘 거래 없음"
     parts = []
-    if buys:
-        parts.append("오늘 가상 매수: " + ", ".join(buys))
-    if sells:
-        parts.append("오늘 가상 매도: " + ", ".join(sells))
-    return " · ".join(parts) if parts else "오늘 거래 없음"
+    for side in ("매수", "매도"):
+        per = [(b["label"], list(dict.fromkeys(t for s, t in b["trades_today"] if s == side))) for b in books]
+        per = [f"{label} {', '.join(ts)}" for label, ts in per if ts]
+        if per:
+            parts.append(f"오늘 가상 {side}: " + " · ".join(per))
+    return " / ".join(parts) if parts else "오늘 거래 없음"
 
 
 def strategy_lines(books: list[dict], cfg: dict, edition: str = PERSONAL) -> list[str]:
-    """장부 묶음(보유·추세·기술지표·강세)마다 한 줄 — 4줄 이내. 줄 끝에 그날 가상 매매."""
+    """같은 상태인 전략을 한 줄로: "QLD·TQQQ 추세 전략: 상승 추세라 QLD·TQQQ 보유 (−5.3% · −8.0%)".
+    QQQ 대비는 넣지 않는다(표로 보기 접기에만). 마지막 줄은 그날 가상 매매 한 줄."""
+    groups: list[dict] = []
+    for b in books:
+        key, text = _status(b, cfg)
+        g = next((x for x in groups if x["key"] == key), None)
+        if g is None:
+            groups.append({"key": key, "text": text, "books": [b]})
+        else:
+            g["books"].append(b)
     lines = []
-    for fam in FAMILIES:
-        group = [b for b in books if b["family"] == fam]
-        if not group:
-            continue
-        items = [_item(m) for m in _merge(group, cfg)]
-        lines.append(" · ".join(items) + " — " + _trades_text(group, edition))
+    for g in groups:
+        bs = g["books"]
+        text = g["text"].format(holdings="·".join(dict.fromkeys(b["holding"] for b in bs)))
+        line = f"{join_names([b['label'] for b in bs])}: {text}"
+        if all(b["status"] == "ok" and b["cum_return_pct"] is not None for b in bs):
+            line += " (" + " · ".join(_ret(b) for b in bs) + ")"
+        lines.append(line)
+    lines.append(_trades_line(books, edition))
     return lines
 
 

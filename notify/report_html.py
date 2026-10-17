@@ -602,7 +602,7 @@ def build_context(summary: dict, cfg: dict, edition: str = "personal") -> dict:
         "show_screening": personal and bool(report_cfg.get("show_screening", False)),
         "show_vbooks_fold": personal and bool(report_cfg.get("show_vbooks_fold", False)),
         "letter": _letter_ctx(summary, cfg, edition),
-        "dec_tax": None,  # 12월 공제 안내 접기 자리 — 다음 작업에서 연결(개인판만)
+        "dec_tax": summary.get("dec_tax") if personal else None,  # 12월 공제 안내 접기(개인판만, 표시일만)
         "stale": bool(summary.get("stale")),
         "regime_line": summary.get("regime_line") or "",  # 가상 장부 국면 한 줄 (engine.virtual_books)
         "expected_date_str": summary.get("expected_date") or "",

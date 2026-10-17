@@ -68,58 +68,59 @@ def _macro(slug, name, value, label, zone=None):
     return {"slug": slug, "name": name, "value": value, "badge": {"label": label, "zone": zone}}
 
 
-def test_glance_three_lines_and_caution_line_omitted_when_all_stable():
+def test_glance_danger_line_lists_only_red_with_short_names():
     q = pd.Series(np.linspace(100, 130, 260), index=pd.bdate_range("2025-10-01", periods=260))
-    rows = [_macro("fear-greed", "공포·탐욕 지수", 62, "주의", "탐욕"), _macro("dgs10", "미국 10년물 국채금리", 4.12, "안정"),
-            _macro("fx", "원/달러 환율", 1334.2, "위험")]
+    rows = [_macro("fear-greed", "공포·탐욕 지수", 18, "위험", "극단적 공포"), _macro("dgs10", "미국 10년물 국채금리", 5.10, "위험"),
+            _macro("t10y2y", "장단기 금리차", 0.35, "주의"), _macro("fed", "미국 기준금리 (상단)", 4.0, "위험"),
+            _macro("fx", "원/달러 환율", 1334.2, "주의")]
     lines = letter.glance_lines(q, rows)
     assert len(lines) == 3
     assert lines[0].startswith("QQQ 하루 +") and "1주 +" in lines[0] and "200일선 대비 +" in lines[0] and lines[0].endswith("상승장")
-    assert lines[1] == "공포·탐욕 62(탐욕) · 미 10년 금리 4.12% · 원/달러 1,334원"
-    assert lines[2] == "주의: 공포·탐욕 지수, 원/달러 환율"
-    calm = [dict(r, badge={"label": "안정", "zone": None}) for r in rows]
-    assert len(letter.glance_lines(q, calm)) == 2 and not any(x.startswith("주의") for x in letter.glance_lines(q, calm))
-    assert letter.glance_lines(None, calm)[0].startswith("공포·탐욕")  # QQQ를 못 받으면 1줄만 빠짐
+    assert lines[1] == "공포·탐욕 18(극단적 공포) · 미 10년 금리 5.10% · 원/달러 1,334원"
+    assert lines[2] == "위험: 공포 극단 · 10년 금리 5.1% · 기준금리 인상"  # 주의(노랑)는 넣지 않음
+    yellow_only = [dict(r, badge={"label": "주의", "zone": None}) for r in rows]
+    assert len(letter.glance_lines(q, yellow_only)) == 2  # 위험이 없으면 줄 생략
+    assert not any(x.startswith(("위험", "주의")) for x in letter.glance_lines(q, yellow_only))
+    assert letter.glance_lines(None, yellow_only)[0].startswith("공포·탐욕")  # QQQ를 못 받으면 1줄만 빠짐
 
 
-# ── 실험 중인 전략 ────────────────────────────────────────────────────────────
-
-
-def test_strategy_lines_names_four_statuses_and_six_to_nine(cfg):
+def test_strategy_lines_group_same_status_returns_in_parens_and_six_to_nine(cfg):
     books = _books(cfg)
     assert [b["label"] for b in books] == ["QQQ 전략", "QLD 전략", "TQQQ 전략", "QLD 추세 전략", "TQQQ 추세 전략",
                                            "기술지표 전략", "볼린저 전략", "6개월 강세 전략", "한 달 가속 전략"]
     lines = letter.strategy_lines(books, cfg)
-    assert len(lines) == 4
-    assert lines[0] == "QQQ 전략 +1.0% · QLD 전략 +2.0%(QQQ 대비 +1.0%p) · TQQQ 전략 +3.0%(QQQ 대비 +2.0%p) — 오늘 거래 없음"
-    assert "QLD 추세 전략 +2.0%(QQQ 대비 +1.0%p) 지금 상승 추세라 QLD 보유 중" in lines[1]
-    # 결과가 같은 6·7번은 한 줄로 합침, 상태 "살 종목이 없어 현금 보관", QQQ 대비는 늦게 시작한 날부터
-    assert lines[2].startswith("기술지표 전략·볼린저 전략 +0.0%") and "살 종목이 없어 현금 보관" in lines[2]
-    assert "6개월 강세 전략 10/30 시작" in lines[3] and "한 달 가속 전략 +0.4%" in lines[3]
+    assert lines == [
+        "QQQ·QLD·TQQQ 전략: 그냥 보유 (+1.0% · +2.0% · +3.0%)",
+        "QLD·TQQQ 추세 전략: 상승 추세라 QLD·TQQQ 보유 (+2.0% · +3.0%)",
+        "기술지표·볼린저·한 달 가속 전략: 살 종목이 없어 현금 보관 (0.0% · 0.0% · +0.4%)",
+        "6개월 강세 전략: 10/30 시작",
+        "오늘 거래 없음",  # 칸 맨 끝에 한 번만
+    ]
+    assert not any("QQQ 대비" in x for x in lines)  # 표로 보기 접기에만
     assert letter.strategy_header(books) == "[실험 중인 전략] 가상 1억 · 10/14 시작 · 매수 추천 아님"
 
 
-def test_trend_down_status_and_merged_up_status(cfg):
+def test_status_texts_down_and_positions_and_minus_sign(cfg):
     down = _books(cfg, trend_holding="SGOV")
-    line = letter.strategy_lines(down, cfg)[1]
-    assert line.startswith("QLD 추세 전략·TQQQ 추세 전략 +0.0%") and "하락 추세라 단기 국채로 피신 중" in line
-    b = _books(cfg)
-    for x in b:
-        if x["family"] == "trend":
-            x["cum_return_pct"], x["vs_qqq_pp"] = 2.0, 1.0
-    assert "지금 상승 추세라 QLD(TQQQ) 보유 중" in letter.strategy_lines(b, cfg)[1]
+    for b in down:
+        if b["family"] == "trend":
+            b["cum_return_pct"] = -5.26
+    assert letter.strategy_lines(down, cfg)[1] == "QLD·TQQQ 추세 전략: 하락 추세라 단기 국채로 피신 (−5.3% · −5.3%)"
+    held = _books(cfg, accel_positions={"MU": {}, "AMD": {}})
+    lines = letter.strategy_lines(held, cfg)
+    assert "기술지표·볼린저 전략: 살 종목이 없어 현금 보관 (0.0% · 0.0%)" in lines and "한 달 가속 전략: 2종목 보유 (+0.4%)" in lines
 
 
-def test_virtual_trades_one_line_personal_tickers_group_count(cfg):
+def test_virtual_trades_once_at_end_personal_names_tickers_group_count(cfg):
     trades = [{"side": "매수", "ticker": "MU", "fill_date": BASE}, {"side": "매수", "ticker": "AMD", "fill_date": BASE},
               {"side": "건너뜀", "ticker": "X", "fill_date": BASE}, {"side": "매도", "ticker": "OLD", "fill_date": BASE - pd.Timedelta(days=1)}]
     books = _books(cfg, accel_positions={"MU": {}, "AMD": {}}, accel_trades=trades,
                    book_trades={"QLD 200일선 전환": [{"side": "매도", "ticker": "QLD", "fill_date": BASE}]})
     p = letter.strategy_lines(books, cfg)
-    assert p[1].endswith("— 오늘 가상 매도: QLD")
-    assert p[3].endswith("— 오늘 가상 매수: MU, AMD") and "2종목 보유" in p[3]
+    assert p[-1] == "오늘 가상 매수: 한 달 가속 전략 MU, AMD / 오늘 가상 매도: QLD 추세 전략 QLD"
+    assert sum("오늘 가상" in x or "오늘 거래" in x for x in p) == 1
     g = letter.strategy_lines(books, cfg, letter.GROUP)
-    assert g[3].endswith("— 오늘 가상 거래 2건") and "MU" not in "".join(g) and g[0].endswith("— 오늘 거래 없음")
+    assert g[-1] == "오늘 가상 거래 3건" and "MU" not in "".join(g) and "2종목 보유" in "".join(g)
 
 
 def test_zero_only_cells_hidden(cfg):
@@ -188,7 +189,7 @@ def test_group_edition_excludes_personal_sections_and_tickers(cfg, tmp_path):
     for t in ("MU", "AMD", "NVDA", "엔비디아", "마이크론", "SGOV"):
         assert not re.search(rf"(?<![A-Za-z]){t}(?![A-Za-z])", body), t
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "오늘 가상 매수: MU" in personal and "▶ 돈이 몰리는 종목 (관찰용)" in personal
+    assert "오늘 가상 매수: 한 달 가속 전략 MU" in personal and "▶ 돈이 몰리는 종목 (관찰용)" in personal
 
 
 # ── 월간 성적표: 시작 전 달은 만들지 않음 ────────────────────────────────────
@@ -222,3 +223,144 @@ def test_display_names_in_scorecard_and_sheet_tables_roundtrip(cfg):
     assert shown["전략비교_일일"][0] == ["날짜", "QLD 추세 전략 총자산($)", "기술지표 전략 누적(%)"]
     assert shown["매매기록"][1] == ["볼린저 전략"] and shown["전략요약"][1] == ["config 고정값(picks)"]
     assert vbtext.unrename_tables(shown, m) == tables  # 시트 복구는 장부 id로 되돌려 읽는다
+
+
+# ── 12월 공제 안내 연결 ──────────────────────────────────────────────────────
+
+
+def _dec_days(year=2026):
+    d = pd.bdate_range(f"{year}-11-20", f"{year}-12-31")
+    return d[~d.isin(pd.to_datetime([f"{year}-11-26", f"{year}-12-25"]))]
+
+
+def _qqqm_fills():
+    return pd.DataFrame([("2025-01-02", "QQQM", "buy", 100, 100.0, 1000.0)],
+                        columns=["date", "ticker", "side", "qty", "price", "fx_rate"])
+
+
+def test_dec_tax_attached_only_on_show_days_and_isolated(cfg):
+    from engine import daily
+
+    close = pd.Series([160.0], index=[pd.Timestamp("2026-12-01")])
+    s = {"as_of": pd.Timestamp("2026-12-01"), "fx_rate": 1000.0}
+    daily._attach_dec_tax(s, cfg, fills_fn=_qqqm_fills, qqqm_fn=lambda: close, days_fn=lambda y: _dec_days(y))
+    assert s["dec_tax"]["todo"] == "올해 세금 없는 매도 한도 확인" and s["dec_tax"]["status"] == "ok"
+    assert any("팔 수량 약 41주" in x for x in s["dec_tax"]["lines"]) and any("12/29까지 체결" in x for x in s["dec_tax"]["lines"])
+    assert letter.todo_line(s, cfg) == "오늘 할 일: 올해 세금 없는 매도 한도 확인"
+    assert letter.todo_line(s, cfg, letter.GROUP) == "오늘 할 일: 없음 — QQQM 적립만 그대로"  # 단체방판 제외
+    other = {"as_of": pd.Timestamp("2026-12-02"), "fx_rate": 1000.0}
+    daily._attach_dec_tax(other, cfg, fills_fn=_qqqm_fills, qqqm_fn=lambda: close, days_fn=lambda y: _dec_days(y))
+    assert "dec_tax" not in other  # 표시일이 아님
+    mid = {"as_of": pd.Timestamp("2026-12-15"), "fx_rate": 1000.0}
+    daily._attach_dec_tax(mid, cfg, fills_fn=_qqqm_fills, qqqm_fn=lambda: close, days_fn=lambda y: _dec_days(y))
+    assert "dec_tax" in mid
+
+    def broken():
+        raise ConnectionError("sheet down")
+
+    bad = {"as_of": pd.Timestamp("2026-12-01"), "fx_rate": 1000.0, "dec_tax": {"todo": "old"}}
+    daily._attach_dec_tax(bad, cfg, fills_fn=broken, qqqm_fn=lambda: close, days_fn=lambda y: _dec_days(y))
+    assert "dec_tax" not in bad  # 예외 격리 — 안내만 빠짐
+
+
+def test_dec_tax_fold_personal_only(cfg, tmp_path):
+    s = _summary(cfg)
+    s["dec_tax"] = {"todo": "올해 세금 없는 매도 한도 확인", "lines": ["남은 한도 2,500,000원", "마감: 12/29까지 체결"]}
+    personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
+    assert "▶ 올해 세금 없는 매도 한도" in personal and "오늘 할 일: 월간 성적표 보기(10월) · 올해 세금 없는 매도 한도 확인" in personal
+    folds = _folds(personal[personal.index("<header>"):])
+    assert folds.index("▶ 월간 성적표") < folds.index("▶ 올해 세금 없는 매도 한도") < folds.index("▶ 지표 설명 (읽는 법·용어)")
+    group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
+    body = group[group.index("<header>"):group.index("<script>")]
+    assert "세금 없는 매도 한도" not in body and "남은 한도 2,500,000원" not in body
+
+
+# ── 발송 관문: 아침 편지도 Actions 또는 --send에서만 ──────────────────────────
+
+
+def test_briefing_sends_are_dry_run_locally(monkeypatch, tmp_path):
+    from notify import telegram
+
+    calls = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+    monkeypatch.setenv("TELEGRAM_GROUP_CHAT_ID", "-2")
+    for name in ("_send_document_checked", "_send_text_checked", "_send_text", "_send_document"):
+        monkeypatch.setattr(telegram, name, lambda *a, **k: calls.append(a) or (True, None, None))
+    assert not telegram.real_send_allowed()
+    report = tmp_path / "r.html"
+    report.write_text("x", encoding="utf-8")
+    s = {"as_of": pd.Timestamp("2026-10-16"), "mode": "live", "report_path": report, "mode_label": "실전"}
+    telegram.send_briefing("본문", s, {})
+    res = telegram.send_group_briefing("본문", report, s, {})
+    assert res["skipped_reason"] == "local_dry_run" and not res["attempted"]
+    assert telegram.notify_ops_error("오류") is False and telegram.send_alert_text("알림") is False
+    assert calls == []
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert telegram.real_send_allowed()
+    monkeypatch.delenv("GITHUB_ACTIONS")
+    monkeypatch.setenv("SCREENER_REAL_SEND", "1")  # engine.daily --send
+    assert telegram.real_send_allowed()
+
+
+def test_daily_send_flag_sets_env_and_ps1_does_not_pass_it():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    src = (root / "engine" / "daily.py").read_text(encoding="utf-8")
+    assert '"--send"' in src and "os.environ[telegram.SEND_ENV] = \"1\"" in src
+    ps1 = (root / "scripts" / "run_daily.ps1").read_text(encoding="utf-8")
+    assert "--send" not in ps1.split("NOTE (2026-10-17)")[1].split("#>")[1]  # 로컬 예약 실행은 dry-run
+
+
+# ── 시트 「월간성적표」 머리글 ────────────────────────────────────────────────
+
+
+class _WS:
+    title = "월간성적표"
+
+    def __init__(self, rows):
+        self.rows = [list(r) for r in rows]
+
+    def get_all_values(self):
+        return self.rows
+
+    def col_values(self, i):
+        return [r[i - 1] if len(r) >= i else "" for r in self.rows]
+
+    def append_rows(self, rows, value_input_option=None):
+        self.rows += [list(r) for r in rows]
+
+    def insert_row(self, row, index, value_input_option=None):
+        self.rows.insert(index - 1, list(row))
+
+    def clear(self):
+        raise AssertionError("지우면 안 된다")
+
+
+def _client(ws):
+    class SS:
+        def worksheet(self, name):
+            return ws
+
+    class C:
+        def open_by_key(self, k):
+            return SS()
+
+    return C()
+
+
+def test_scorecard_tab_gets_header_on_top_without_touching_data():
+    from data import virtual_books_sheet as vbsheet
+
+    data = [["2026-09", "1", "QQQ 그냥 보유"], ["2026-09", "2", "QLD 그냥 보유"]]
+    ws = _WS(data)
+    assert vbsheet.scorecard_months(_client(ws), "x") == {"2026-09"}  # 머리글 없는 1행도 달로 셈
+    vbsheet.append_scorecard(_client(ws), "x", [["2026-10", "1", "QQQ 전략"]])
+    assert ws.rows[0] == vbsheet.SCORECARD_HEADER and ws.rows[1:3] == data and ws.rows[3][0] == "2026-10"
+    vbsheet.append_scorecard(_client(ws), "x", [["2026-11", "1", "QQQ 전략"]])
+    assert sum(r == vbsheet.SCORECARD_HEADER for r in ws.rows) == 1  # 이미 있으면 다시 넣지 않음
+    empty = _WS([])
+    vbsheet.append_scorecard(_client(empty), "x", [["2026-10", "1", "QQQ 전략"]])
+    assert empty.rows[0] == vbsheet.SCORECARD_HEADER and empty.rows[1][0] == "2026-10"
+    assert vbsheet.scorecard_months(_client(empty), "x") == {"2026-10"}

@@ -94,18 +94,23 @@ def scorecard_months(client, sheet_id: str) -> set[str]:
         ws = client.open_by_key(sheet_id).worksheet(TAB_SCORECARD)
     except gspread.WorksheetNotFound:
         return set()
-    return {str(v).strip() for v in ws.col_values(1)[1:] if str(v).strip()}
+    return {str(v).strip() for v in ws.col_values(1) if str(v).strip() and str(v).strip() != SCORECARD_HEADER[0]}
 
 
 def append_scorecard(client, sheet_id: str, rows: list[list]) -> int:
-    """월간성적표 탭 맨 아래에 줄을 덧붙인다(지우거나 덮어쓰지 않음). 탭이 없으면 만들고 머리글부터.
+    """월간성적표 탭 맨 아래에 줄을 덧붙인다(지우거나 덮어쓰지 않음). 탭이 없거나 비어 있으면 머리글부터,
+    1행이 머리글이 아니면 맨 위에 머리글을 끼운다(데이터 행은 건드리지 않음, 2026-10-17).
 
     입력: rows(SCORECARD_HEADER 순서의 행들) / 출력: 덧붙인 행 수
     """
     spreadsheet = client.open_by_key(sheet_id)
     ws = _worksheet(spreadsheet, TAB_SCORECARD, 100, len(SCORECARD_HEADER))
-    if not ws.get_all_values():
+    values = ws.get_all_values()
+    if not values:
         ws.append_rows([SCORECARD_HEADER], value_input_option="RAW")
+    elif not values[0] or values[0][0] != SCORECARD_HEADER[0]:
+        # 1행이 머리글이 아니면(예: 2026-09 데이터만 있는 탭) 맨 위에 머리글 한 줄만 끼운다 — 데이터 행은 그대로(아래로 밀림)
+        ws.insert_row(SCORECARD_HEADER, 1, value_input_option="RAW")
     if rows:
         ws.append_rows([list(r) for r in rows], value_input_option="RAW")
     return len(rows)

@@ -19,6 +19,13 @@ from store import db
 from tests._offline import block_engine_network
 
 
+@pytest.fixture(autouse=True)
+def _allow_real_send_path(monkeypatch):
+    """이 파일은 발송 경로(가짜 전송 함수)를 검증한다 — Actions·--send와 같은 발송 허용 상태로 둔다(2026-10-17 관문)."""
+    monkeypatch.setenv("SCREENER_REAL_SEND", "1")
+
+
+
 def _make_price_df(end_date: str, periods: int = 60, seed: int = 0) -> pd.DataFrame:
     """네트워크 없는 합성 OHLCV (compute_indicators 입력용). 마지막 날짜를 고정한다."""
     rng = np.random.default_rng(seed)
