@@ -15,6 +15,28 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+class RealTelegramSendBlocked(RuntimeError):
+    """테스트 중 api.telegram.org로 실제 요청을 보내려 할 때 (2026-10-17 — 테스트가 진짜 알림을 보낸 사고 뒤)."""
+
+
+@pytest.fixture(autouse=True)
+def _no_real_telegram(monkeypatch):
+    """모든 테스트: GitHub Actions가 아닌 것으로 보고(GITHUB_ACTIONS 지움 → 공장 알림 dry-run),
+    requests.post로 api.telegram.org에 가는 요청은 막는다(.env가 import 때 읽혀 진짜 토큰이 있어도 안전).
+    테스트가 requests.post를 따로 바꿔 끼우면 그쪽이 이긴다."""
+    import requests
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    real_post = requests.post
+
+    def guarded(url, *a, **k):
+        if "api.telegram.org" in str(url):
+            raise RealTelegramSendBlocked("테스트 중 텔레그램 실제 발송 금지")
+        return real_post(url, *a, **k)
+
+    monkeypatch.setattr(requests, "post", guarded)
+
+
 @pytest.fixture(scope="session")
 def cfg() -> dict:
     """config.yaml을 그대로 읽어 반환한다."""
