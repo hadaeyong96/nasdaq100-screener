@@ -187,6 +187,9 @@ def run_picks(cfg: dict, conn, ctx: dict, *, briefing: dict | None, dry_run: boo
         name = spec["name"]
         try:
             book = vbstore.load_picks_book(conn, name)
+            mismatch = _start_mismatch_warning(name, pk, book)
+            if mismatch:
+                out["warnings"].append(mismatch)
             start_cfg = pk.get("start_date")
             if book is None:
                 if start_cfg and pd.Timestamp(start_cfg) < base:
@@ -407,6 +410,9 @@ def _run_rebalance_book(cfg: dict, conn, ctx: dict, conf: dict, kind: str, param
         days_index = closes_all.index
         qqq = closes_all[str(vb["signal_ticker"])]
         book = vbstore.load_picks_book(conn, name)
+        mismatch = _start_mismatch_warning(name, conf, book)
+        if mismatch:
+            out["warnings"].append(mismatch)
         start_cfg = conf.get("start_date")
         if book is None and start_cfg and pd.Timestamp(start_cfg) <= base:
             raise PicksStateMissingError(
@@ -486,6 +492,26 @@ def _universe_for(conn, d: pd.Timestamp, base: pd.Timestamp, today: list[str]) -
         return list(today)
     rec = vbstore.universe_on(conn, d.date().isoformat())
     return rec[1] if rec else list(today)
+
+
+def _start_mismatch_warning(name: str, conf: dict, book: dict | None) -> str | None:
+    """설정 start_date·start_fx가 DB에 저장된 장부 시작값과 다르면 경고 한 줄(동작은 그대로 — DB 값을 쓴다).
+
+    입력: name(장부 이름), conf(picks·accel 등 설정 dict), book(DB 장부 상태 또는 None — 없거나 아직 시작 전이면 비교 안 함)
+    출력: 경고 문자열 또는 None
+    """
+    if not book:
+        return None
+    parts = []
+    cfg_d, db_d = conf.get("start_date"), book.get("start_date")
+    if cfg_d and db_d is not None and pd.Timestamp(cfg_d) != pd.Timestamp(db_d):
+        parts.append(f"시작일 설정 {pd.Timestamp(cfg_d).date()} / DB {pd.Timestamp(db_d).date()}")
+    cfg_fx, db_fx = conf.get("start_fx"), book.get("start_fx")
+    if cfg_fx and db_fx is not None and abs(float(cfg_fx) - float(db_fx)) > 1e-6:
+        parts.append(f"시작 환율 설정 {float(cfg_fx)} / DB {float(db_fx)}")
+    if not parts:
+        return None
+    return f"{name}: 설정 시작값이 DB 저장값과 다릅니다({'; '.join(parts)}) — DB 값을 그대로 씁니다"
 
 
 def _momentum_fx(mo: dict, start: pd.Timestamp, fx_fn) -> tuple[float, str]:

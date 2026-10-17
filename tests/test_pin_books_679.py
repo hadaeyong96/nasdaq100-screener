@@ -2,7 +2,7 @@
 
 1~5번 장부는 매 실행 시작일부터 다시 계산하므로 설정값이 DB 기억값보다 우선한다(다르면 경고).
 6·7·9번 장부는 DB에 이어 가는 상태 장부라, 설정 시작값은 장부를 처음 만들 때만 쓰고 그 뒤에는 DB 상태를 쓴다.
-아래 테스트는 지금 동작을 그대로 고정해 둔다(계산 로직은 바꾸지 않음).
+설정값이 DB 저장값과 다르면 경고 한 줄만 남긴다(어느 값을 쓰는지는 그대로). 아래 테스트는 이 동작을 고정해 둔다.
 """
 
 from __future__ import annotations
@@ -66,9 +66,33 @@ def test_picks_existing_db_state_is_kept_when_config_differs(picks_cfg, tmp_path
     r = tp._run(picks_cfg, m, tmp_path)
     assert not r["errors"], r["errors"]
     after = _book(tmp_path, tp.B1)
-    # 지금 동작: DB 상태 우선(설정값으로 바꾸지 않고, 경고도 없음) — 1~5번과 다르다
+    # 동작: DB 상태 우선(설정값으로 바꾸지 않음) — 1~5번과 다르다. 다르면 경고 한 줄씩(2026-10-17 추가)
     assert after["start_fx"] == 1400.0 and after["start_date"] == before["start_date"]
-    assert not any("설정" in w and "달라" in w for w in r["warnings"])
+    warns = [w for w in r["warnings"] if "설정 시작값이 DB 저장값과 다릅니다" in w]
+    assert len(warns) == 2 and any(w.startswith(tp.B1) for w in warns) and any(w.startswith(tp.B2) for w in warns)
+    assert all("시작일 설정" in w and "시작 환율 설정" in w and "DB 값을 그대로 씁니다" in w for w in warns)
+
+
+def test_picks_no_mismatch_warning_when_config_matches_db(picks_cfg, tmp_path):
+    m = tp.Market()
+    picks_cfg["virtual_books"]["picks"].update({"start_date": tp.IDX[tp.S].date().isoformat(), "start_fx": PIN_FX})
+    tp._run(picks_cfg, m, tmp_path)
+    m.upto += 1
+    r = tp._run(picks_cfg, m, tmp_path)
+    assert not any("DB 저장값과 다릅니다" in w for w in r["warnings"])
+
+
+def test_accel_mismatch_warns_but_keeps_db_values(accel_cfg, tmp_path):
+    m = ta.Market(ta.ARMED)
+    ta._run(accel_cfg, m, tmp_path)  # 설정 비움 → fx_fn 1400으로 시작
+    before = _book(tmp_path, ta.NAME)
+    accel_cfg["virtual_books"]["accel"].update({"start_date": before["start_date"].date().isoformat(), "start_fx": PIN_FX})
+    m.upto += 1
+    r = ta._run(accel_cfg, m, tmp_path)
+    assert not r["errors"], r["errors"]
+    warns = [w for w in r["warnings"] if "DB 저장값과 다릅니다" in w]
+    assert len(warns) == 1 and warns[0].startswith(ta.NAME) and "시작 환율 설정" in warns[0] and "시작일 설정" not in warns[0]
+    assert _book(tmp_path, ta.NAME)["start_fx"] == 1400.0
 
 
 def test_accel_new_book_uses_config_start_fx(accel_cfg, tmp_path):
