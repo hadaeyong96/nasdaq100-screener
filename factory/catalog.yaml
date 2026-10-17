@@ -39,6 +39,11 @@ strategies:
   - {id: x_sector_pullback, name: "강한 업종 속 강한 종목 첫 눌림(탐색 B)", status: 탈락 보관, zone: "탐색 (시점별 나스닥100 ∪ S&P 100, 2012~2021)", result: "B0 16.29% vs QQQ 19.98%, 가짜 1등 95백분위 18.32% 미달 (B0~B3 모두 기준 미충족, 판정 아님)", evidence: "sector-pullback-prereg, docs/factory/explore/sector_pullback.md"}
   - {id: x_shock_dip, name: "충격 웅덩이 A·B1·B2·B3·B4", status: 탈락 보관, zone: "지수 탐색 (S&P500 1960-04~1998, 나스닥 1972~1998, QQQ 1999~2021, 해외 5곳 ~2021)", result: "QQQ 세후 A 5.28% vs 1배 6.98%, 6개 모두 FAIL", evidence: "shock-dip-prereg-v3, research/shock-dip 24964b0 docs/research/shock_dip_results.md"}
   - {id: x_bull_dip_d, name: "상승장 웅덩이 D", status: 탈락 보관, zone: "지수 탐색 (S&P500 1960-04~1998, 나스닥 1972~1998, QQQ 1999~2021, 해외 5곳 ~2021)", result: "QQQ 세후 A 5.28% vs 1배 6.98%, 6개 모두 FAIL", evidence: "shock-dip-prereg-v3, research/shock-dip 24964b0 docs/research/shock_dip_results.md"}
+  - {id: x_lev_r1, name: "레버리지 비율 조절 R1 (국면 1.5배)", status: 탈락 보관, zone: "지수 탐색 (S&P500·나스닥 1977~1998, QQQ 2000~2021)", result: "FAIL — QQQ 세후 7.85% vs 1배 6.92%, 무작위 95.4백분위(S&P 85.0·나스닥 84.5로 ② 미달)", evidence: "leverage-timing-prereg, research/leverage-timing 26259d6 docs/research/leverage_timing_results.md"}
+  - {id: x_lev_r2, name: "레버리지 비율 조절 R2 (국면 2배)", status: 탈락 보관, zone: "지수 탐색 (S&P500·나스닥 1977~1998, QQQ 2000~2021)", result: "FAIL — QQQ 세후 8.83% vs 1배 6.92%, 무작위 96.5백분위(S&P·나스닥 ② 미달, ③ 낙폭 미달)", evidence: "leverage-timing-prereg, research/leverage-timing 26259d6 docs/research/leverage_timing_results.md"}
+  - {id: x_lev_m1, name: "레버리지 비율 조절 M1 (금리차 1.5배)", status: 탈락 보관, zone: "지수 탐색 (S&P500·나스닥 1977~1998, QQQ 2000~2021)", result: "FAIL — QQQ 세후 7.80% vs 1배 6.92%, 무작위 60.3백분위, ③ 낙폭 미달", evidence: "leverage-timing-prereg, research/leverage-timing 26259d6 docs/research/leverage_timing_results.md"}
+  - {id: x_lev_m2, name: "레버리지 비율 조절 M2 (금융여건 1.5배)", status: 탈락 보관, zone: "지수 탐색 (S&P500·나스닥 1977~1998, QQQ 2000~2021)", result: "참고(FAIL, NFCI 수정값 사용) — QQQ 세후 9.40% vs 1배 6.92%, 무작위 53.2백분위, ③ 낙폭 미달", evidence: "leverage-timing-prereg, research/leverage-timing 26259d6 docs/research/leverage_timing_results.md"}
+  - {id: x_lev_m3, name: "레버리지 비율 조절 M3 (통화량 1.5배)", status: 탈락 보관, zone: "지수 탐색 (S&P500·나스닥 1977~1998, QQQ 2000~2021)", result: "FAIL — QQQ 세후 5.34% vs 1배 6.92%, 무작위 30.6백분위", evidence: "leverage-timing-prereg, research/leverage-timing 26259d6 docs/research/leverage_timing_results.md"}
 
   # ── 확정 습관 ──────────────────────────────────────────────────────────
   - {id: h_pension_first, name: 연금저축 먼저, status: 확정 습관, zone: 실제 운용, result: "세금 계좌 순서: 연금저축부터 채운다", evidence: ""}
@@ -111,6 +116,7 @@ strategies:
   - {id: revenue_growth_r1, rank: 6, name: "매출 성장 R1", status: 대기 후보, zone: "", result: "참고: E1 매출 버전은 E0보다 높았음(판정 외, 새 등록 필요)", evidence: "docs/results/e1.md", source: 기존, planned_trials: 1}
   - {id: winner_anatomy, rank: 7, name: "승자 해부기·매집 흔적", status: 대기 후보, zone: "탐색 ② (중소형 2012~2016) 후보", result: "", evidence: "docs/validation_zones.md", source: 기존, planned_trials: 1}
   - {id: event_radar, rank: 8, name: "시사·사건 레이더", status: 대기 후보, zone: "", result: "", evidence: "", source: 기존, planned_trials: 1}
+  - {id: crash_leaders, rank: 9, name: "폭락 뒤 주도주", status: 대기 후보, zone: "", result: "", evidence: "", source: 기존, planned_trials: 2, notes: ["충격 웅덩이 탈락으로 우선순위 낮음"]}
 
 # 시험 없이 기각한 아이디어 (시험 장부에는 넣지 않는다 — 시험이 아니므로)
 rejected_ideas:
