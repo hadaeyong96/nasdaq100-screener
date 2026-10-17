@@ -151,15 +151,17 @@ def test_first_run_starts_in_sgov_then_fills_next_day_and_writes_sheet(cfg, tmp_
     assert len(_db(tmp_path, "picks_daily", B1)) == 2
     # 시트: 일별 열·매매기록 열·요약 추가 열
     daily_head = client.tabs[vbsheet.TAB_DAILY].values[0]
-    assert f"{B1} 총자산($)" in daily_head and f"{B2} QQQ 대비(%p)" in daily_head
+    L1, L2 = "기술지표 전략", "볼린저 전략"  # 시트에는 보여 주는 이름(2026-10-17, config display_names)
+    assert f"{L1} 총자산($)" in daily_head and f"{L2} QQQ 대비(%p)" in daily_head
+    assert not any(B1 in h for h in daily_head)
     th = client.tabs[vbsheet.TAB_TRADES].values
     assert th[0][-1] == "브리핑 추천에도 있었음"
-    assert [r for r in th if r[0] == B1][0][-1] == "예"
+    assert [r for r in th if r[0] == L1][0][-1] == "예"
     summ = client.tabs[vbsheet.TAB_SUMMARY].values
     head = summ[0]
     assert head[-6:] == ["완료 거래 수", "승률(%)", "평균 보유일", "SGOV 보유액($)", "교체 횟수", "현재 보유 10종목"]
-    row_b1 = next(r for r in summ if r and r[0] == B1)
-    row_qqq = next(r for r in summ if r and r[0] == "QQQ 그냥 보유")
+    row_b1 = next(r for r in summ if r and r[0] == L1)
+    row_qqq = next(r for r in summ if r and r[0] == "QQQ 전략")
     assert row_b1[head.index("완료 거래 수")] == "0" and float(row_b1[head.index("SGOV 보유액($)")]) > 0
     assert row_qqq[head.index("완료 거래 수")] == ""
     assert any(r and r[0] == "config 고정값(picks)" for r in summ)

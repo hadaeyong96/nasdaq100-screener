@@ -316,6 +316,12 @@ details.exp[open]>summary{color:var(--info)}
 .whybox .ws{margin:0 0 8px}
 .whybox .ws h4{margin:0 0 4px;font-size:13px;font-weight:800}
 .whybox .src{color:var(--mute);font-size:12px;margin-top:4px}
+/* 짧은 판 (2026-10-17) */
+.letter{margin:10px 0 12px}
+.letter h2{font-size:14px;font-weight:800;margin:0 0 4px}
+.letter .todo{font-size:15px;font-weight:800}
+.letter .ln{font-size:13.5px;line-height:1.55}
+.letter details.more>summary{cursor:pointer;color:var(--info);font-size:12px;font-weight:700;margin:6px 0}
 </style>
 </head>
 <body data-fx="{{ data_fx }}" data-date="{{ as_of_str }}" data-total="{{ total_krw }}" data-limit-pct="{{ strategy_limit_pct }}" data-used="{{ data_used }}" data-reserved="{{ data_reserved }}" data-slot="{{ data_slot }}">
@@ -324,6 +330,9 @@ details.exp[open]>summary{color:var(--info)}
 {% macro finviz(ticker) -%}
 <a class="tk" href="https://finviz.com/quote.ashx?t={{ ticker }}&p=d" target="_blank" rel="noopener" title="{{ ticker }} 차트 (Finviz)">{{ ticker }}</a>
 {%- endmacro %}
+
+{% macro scr_name(r) -%}<b>{{ r.kr }}</b><span class="tkr">{{ r.ticker }}</span>{%- endmacro %}
+{% macro scr_status(r) -%}<span class="tag {{ 'inf' if r.result == '대기' else r.tone }}">{{ r.result }}</span>{% if r.reason %} <span class="rs">{{ r.reason }}</span>{% endif %}{%- endmacro %}
 
 {% macro explain_cell(explain) -%}
 <td class="nosort"><button type="button" class="whybtn" aria-expanded="false"{% if not explain %} disabled{% endif %}>왜?</button></td>
@@ -358,6 +367,36 @@ details.exp[open]>summary{color:var(--info)}
   <h1>{{ header_line }}</h1>
 </header>
 
+{% if letter %}
+<!-- 짧은 판 (2026-10-17): 할 일 → 시장 한눈에 → 실험 중인 전략. 표시 전용 -->
+<section class="letter" aria-label="오늘 할 일">
+  <div class="todo">{{ letter.todo }}</div>
+</section>
+{% if letter.glance %}
+<section class="letter" aria-label="시장 한눈에">
+  <h2>[시장 한눈에]</h2>
+  {% for line in letter.glance %}<div class="ln">{{ line }}</div>{% endfor %}
+</section>
+{% endif %}
+{% if letter.strategy_lines %}
+<section class="letter" aria-label="실험 중인 전략">
+  <h2>{{ letter.strategy_header }}</h2>
+  {% for line in letter.strategy_lines %}<div class="ln">{{ line }}</div>{% endfor %}
+  {% if letter.table_rows %}
+  <details class="more"><summary>전략 {{ letter.table_rows|length }}개 표로 보기</summary>
+  <div class="sheet"><table>
+  <thead><tr>{% for h in letter.table_head %}<th class="nosort">{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for r in letter.table_rows %}<tr>{% for c in r %}<td{% if not loop.first %} class="num"{% endif %}>{{ c }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+  </table></div>
+  <p class="mini">관찰 전용 가상 장부(실제 주문 아님) · 달러 기준 · 상세는 구글 시트 전략비교_일일·매매기록·전략요약 탭</p>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+{% endif %}
+
+{% if show_screening %}
+<!-- 예전 맨 위(국면 줄·오늘 추천)와 스크리닝 전체 — report.show_screening: true일 때만 (2026-10-17 숨김) -->
 {% if regime_line %}
 <div class="regime-line">{{ regime_line }}</div>
 {% endif %}
@@ -382,69 +421,6 @@ details.exp[open]>summary{color:var(--info)}
   <a class="check-line" href="#fold-detail">확인할 것: {{ check_items|sum(attribute=1) }}건 — {% for label, n in check_items %}{{ label }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</a>
 {% endif %}
 </section>
-
-{% if weekly_rs %}
-<!-- 이번 주 QQQ보다 강한 종목·업종 (작업 5-1, docs/design/weekly_rs.md) — 관찰용, 매수 신호 아님 -->
-<details class="fold" id="fold-weekly-rs">
-<summary>▶ 이번 주 QQQ보다 강한 종목·업종</summary>
-<div class="fold-body">
-<section class="scr fw" aria-label="이번 주 QQQ보다 강한 종목·업종">
-  <div class="wrs-cap">{{ weekly_rs.caption }}</div>
-  {% if weekly_rs.error %}<div class="empty2">{{ weekly_rs.error }}</div>
-  {% elif not weekly_rs.ok %}<div class="empty2">QQQ 기준일·5거래일 전 종가가 없어 계산하지 않았습니다</div>
-  {% else %}
-  <div class="scr-sub">최근 5거래일 {{ weekly_rs.window_str }} · QQQ {{ weekly_rs.qqq_ret }} · {{ weekly_rs.scan_count }}종목 · 초과 = 종목 5거래일 수익률 − QQQ 5거래일 수익률</div>
-  <h3>이번 주 QQQ보다 강한 종목</h3>
-  <div class="scr-card">
-  {% if weekly_rs.top %}
-  <div class="scroll"><table>
-    <thead><tr><th class="nosort l">종목</th><th class="nosort l">이름</th><th class="nosort l">업종 묶음</th><th class="nosort">초과</th><th class="nosort">5일 수익률</th></tr></thead>
-    <tbody>{% for r in weekly_rs.top %}<tr><td class="l"><b>{{ r.ticker }}</b></td><td class="l">{{ r.name }}</td><td class="l">{{ r.group }}</td><td class="sc {{ r.excess_cls }}">{{ r.excess }}</td><td>{{ r.ret }}</td></tr>{% endfor %}</tbody>
-  </table></div>
-  {% else %}<div class="empty2">계산할 수 있는 종목이 없습니다</div>{% endif %}
-  {% if weekly_rs.excluded %}<div class="mini">제외 {{ weekly_rs.excluded|length }}종목 (두 날짜 종가 없음): {{ weekly_rs.excluded|join(', ') }}</div>{% endif %}
-  </div>
-  <h3>이번 주 강한 업종</h3>
-  <div class="scr-card">
-  {% if weekly_rs.groups_top or weekly_rs.groups_bottom %}
-  <div class="scroll"><table class="fit">
-    <thead><tr><th class="nosort l">구분</th><th class="nosort l">업종 묶음</th><th class="nosort">종목 수</th><th class="nosort">QQQ 대비 평균 초과</th><th class="nosort l">종목</th></tr></thead>
-    <tbody>{% for x in weekly_rs.groups_top %}<tr><td class="l">상위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}{% for x in weekly_rs.groups_bottom %}<tr><td class="l">하위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}</tbody>
-  </table></div>
-  {% else %}<div class="empty2">표시할 업종 묶음이 없습니다</div>{% endif %}
-  <div class="mini">업종 묶음은 미리 정한 목록(명단에 있는 종목만, 계산된 종목 2개 미만 묶음은 뺌). 평균 초과 = 묶음 종목 초과의 단순 평균.</div>
-  </div>
-  {% endif %}
-  {% if weekly_rs.accel %}
-  <h3>QQQ 이기는 힘이 세지는 종목 상위 10</h3>
-  <div class="scr-card">
-  {% if weekly_rs.accel.ok and weekly_rs.accel.top %}
-  <div class="scr-sub">RS선 = 종목 종가 ÷ QQQ 종가 · 최근 힘 = 최근 20거래일 RS 변화, 직전 힘 = 그 전 20거래일 RS 변화 · 점수 = 최근 힘 − 직전 힘 · {{ weekly_rs.accel.dates_str }} · {{ weekly_rs.accel.scan_count }}종목 (60거래일 이상·5달러 이상)</div>
-  <div class="scroll"><table>
-    <thead><tr><th class="nosort l">종목</th><th class="nosort l">이름</th><th class="nosort l">업종 묶음</th><th class="nosort">점수</th><th class="nosort">최근 힘</th><th class="nosort">직전 힘</th></tr></thead>
-    <tbody>{% for r in weekly_rs.accel.top %}<tr><td class="l"><b>{{ r.ticker }}</b></td><td class="l">{{ r.name }}</td><td class="l">{{ r.group }}</td><td class="sc {{ r.score_cls }}">{{ r.score }}</td><td>{{ r.recent }}</td><td>{{ r.prior }}</td></tr>{% endfor %}</tbody>
-  </table></div>
-  {% if weekly_rs.accel.excluded_n %}<div class="mini">제외 {{ weekly_rs.accel.excluded_n }}종목 (60거래일 가격 없음·5달러 미만)</div>{% endif %}
-  {% else %}<div class="empty2">QQQ 기준일·40거래일 전 종가가 없어 계산하지 않았습니다</div>{% endif %}
-  </div>
-  <h3>힘이 세지는 업종</h3>
-  <div class="scr-card">
-  {% if weekly_rs.accel.groups_top or weekly_rs.accel.groups_bottom %}
-  <div class="scroll"><table class="fit">
-    <thead><tr><th class="nosort l">구분</th><th class="nosort l">업종 묶음</th><th class="nosort">종목 수</th><th class="nosort">점수 평균</th><th class="nosort l">종목</th></tr></thead>
-    <tbody>{% for x in weekly_rs.accel.groups_top %}<tr><td class="l">상위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}{% for x in weekly_rs.accel.groups_bottom %}<tr><td class="l">하위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}</tbody>
-  </table></div>
-  {% else %}<div class="empty2">표시할 업종 묶음이 없습니다</div>{% endif %}
-  <div class="mini">같은 12개 업종 묶음, 계산된 종목 2개 미만 묶음은 뺌. 점수 평균 = 묶음 종목 점수의 단순 평균.</div>
-  </div>
-  {% endif %}
-</section>
-</div>
-</details>
-{% endif %}
-
-{% macro scr_name(r) -%}<b>{{ r.kr }}</b><span class="tkr">{{ r.ticker }}</span>{%- endmacro %}
-{% macro scr_status(r) -%}<span class="tag {{ 'inf' if r.result == '대기' else r.tone }}">{{ r.result }}</span>{% if r.reason %} <span class="rs">{{ r.reason }}</span>{% endif %}{%- endmacro %}
 
 <details class="fold" id="fold-candidates">
 <summary>▶ 전체 후보 목록 (오늘의 스크리닝)</summary>
@@ -869,8 +845,109 @@ details.exp[open]>summary{color:var(--info)}
 </div>
 </details>
 
+{% endif %}
+
+{% if weekly_rs %}
+<!-- 이번 주 QQQ보다 강한 종목·업종 (작업 5-1, docs/design/weekly_rs.md) — 관찰용, 매수 신호 아님 -->
+<details class="fold" id="fold-weekly-rs">
+<summary>▶ 이번 주 강한 종목·업종 (관찰용)</summary>
+<div class="fold-body">
+<section class="scr fw" aria-label="이번 주 QQQ보다 강한 종목·업종">
+  <div class="wrs-cap">{{ weekly_rs.caption }}</div>
+  {% if weekly_rs.error %}<div class="empty2">{{ weekly_rs.error }}</div>
+  {% elif not weekly_rs.ok %}<div class="empty2">QQQ 기준일·5거래일 전 종가가 없어 계산하지 않았습니다</div>
+  {% else %}
+  <div class="scr-sub">최근 5거래일 {{ weekly_rs.window_str }} · QQQ {{ weekly_rs.qqq_ret }} · {{ weekly_rs.scan_count }}종목 · 초과 = 종목 5거래일 수익률 − QQQ 5거래일 수익률</div>
+  <h3>이번 주 QQQ보다 강한 종목</h3>
+  <div class="scr-card">
+  {% if weekly_rs.top %}
+  <div class="scroll"><table>
+    <thead><tr><th class="nosort l">종목</th><th class="nosort l">이름</th><th class="nosort l">업종 묶음</th><th class="nosort">초과</th><th class="nosort">5일 수익률</th></tr></thead>
+    <tbody>{% for r in weekly_rs.top %}<tr><td class="l"><b>{{ r.ticker }}</b></td><td class="l">{{ r.name }}</td><td class="l">{{ r.group }}</td><td class="sc {{ r.excess_cls }}">{{ r.excess }}</td><td>{{ r.ret }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">계산할 수 있는 종목이 없습니다</div>{% endif %}
+  {% if weekly_rs.excluded %}<div class="mini">제외 {{ weekly_rs.excluded|length }}종목 (두 날짜 종가 없음): {{ weekly_rs.excluded|join(', ') }}</div>{% endif %}
+  </div>
+  <h3>이번 주 강한 업종</h3>
+  <div class="scr-card">
+  {% if weekly_rs.groups_top or weekly_rs.groups_bottom %}
+  <div class="scroll"><table class="fit">
+    <thead><tr><th class="nosort l">구분</th><th class="nosort l">업종 묶음</th><th class="nosort">종목 수</th><th class="nosort">QQQ 대비 평균 초과</th><th class="nosort l">종목</th></tr></thead>
+    <tbody>{% for x in weekly_rs.groups_top %}<tr><td class="l">상위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}{% for x in weekly_rs.groups_bottom %}<tr><td class="l">하위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">표시할 업종 묶음이 없습니다</div>{% endif %}
+  <div class="mini">업종 묶음은 미리 정한 목록(명단에 있는 종목만, 계산된 종목 2개 미만 묶음은 뺌). 평균 초과 = 묶음 종목 초과의 단순 평균.</div>
+  </div>
+  {% endif %}
+  {% if weekly_rs.accel %}
+  <h3>QQQ 이기는 힘이 세지는 종목 상위 10</h3>
+  <div class="scr-card">
+  {% if weekly_rs.accel.ok and weekly_rs.accel.top %}
+  <div class="scr-sub">RS선 = 종목 종가 ÷ QQQ 종가 · 최근 힘 = 최근 20거래일 RS 변화, 직전 힘 = 그 전 20거래일 RS 변화 · 점수 = 최근 힘 − 직전 힘 · {{ weekly_rs.accel.dates_str }} · {{ weekly_rs.accel.scan_count }}종목 (60거래일 이상·5달러 이상)</div>
+  <div class="scroll"><table>
+    <thead><tr><th class="nosort l">종목</th><th class="nosort l">이름</th><th class="nosort l">업종 묶음</th><th class="nosort">점수</th><th class="nosort">최근 힘</th><th class="nosort">직전 힘</th></tr></thead>
+    <tbody>{% for r in weekly_rs.accel.top %}<tr><td class="l"><b>{{ r.ticker }}</b></td><td class="l">{{ r.name }}</td><td class="l">{{ r.group }}</td><td class="sc {{ r.score_cls }}">{{ r.score }}</td><td>{{ r.recent }}</td><td>{{ r.prior }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% if weekly_rs.accel.excluded_n %}<div class="mini">제외 {{ weekly_rs.accel.excluded_n }}종목 (60거래일 가격 없음·5달러 미만)</div>{% endif %}
+  {% else %}<div class="empty2">QQQ 기준일·40거래일 전 종가가 없어 계산하지 않았습니다</div>{% endif %}
+  </div>
+  <h3>힘이 세지는 업종</h3>
+  <div class="scr-card">
+  {% if weekly_rs.accel.groups_top or weekly_rs.accel.groups_bottom %}
+  <div class="scroll"><table class="fit">
+    <thead><tr><th class="nosort l">구분</th><th class="nosort l">업종 묶음</th><th class="nosort">종목 수</th><th class="nosort">점수 평균</th><th class="nosort l">종목</th></tr></thead>
+    <tbody>{% for x in weekly_rs.accel.groups_top %}<tr><td class="l">상위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}{% for x in weekly_rs.accel.groups_bottom %}<tr><td class="l">하위</td><td class="l"><b>{{ x.group }}</b></td><td>{{ x.count }}</td><td class="sc {{ x.avg_cls }}">{{ x.avg }}</td><td class="l rs">{{ x.tickers }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">표시할 업종 묶음이 없습니다</div>{% endif %}
+  <div class="mini">같은 12개 업종 묶음, 계산된 종목 2개 미만 묶음은 뺌. 점수 평균 = 묶음 종목 점수의 단순 평균.</div>
+  </div>
+  {% endif %}
+</section>
+</div>
+</details>
+{% endif %}
+
+{% if flow_watch %}
+<details class="fold" id="fold-flow">
+<summary>▶ 돈이 몰리는 종목 (관찰용)</summary>
+<div class="fold-body">
+{% if flow_watch %}
+<!-- 자금 흐름 관찰 (F2, docs/design/flow_watch.md) — 참고용, 매수 신호 아님 -->
+<section class="scr fw" aria-label="돈이 몰리는 종목">
+  <h2>돈이 몰리는 종목 TOP 10 <span class="cap">{{ flow_watch.caption }}</span></h2>
+  <div class="scr-sub">{{ flow_watch.as_of_str }} 미국장 마감 · {{ flow_watch.scan_count }}종목 · 점유율 배율 = 최근 5거래일 거래대금 점유율 평균 ÷ 직전 60거래일 평균 · 유입 = 배율 1.5 이상 + 주간 상승 + 상승일 거래량 50% 초과, 투매 = 배율 1.5 이상 + 주간 하락</div>
+  <div class="scr-card">
+  {% if flow_watch.top %}
+  <div class="scroll"><table>
+    <thead><tr><th class="nosort">순위</th><th class="nosort l">종목</th><th class="nosort">상태</th><th class="nosort">점유율 배율</th><th class="nosort">거래량 배율</th><th class="nosort">주간 수익률</th><th class="nosort">상승일 비중</th><th class="nosort">5일 거래대금</th><th class="nosort">52주 고점 대비</th><th class="nosort l">우리 신호</th></tr></thead>
+    <tbody>{% for r in flow_watch.top %}<tr><td>{{ r.rank }}</td><td class="l"><b>{{ r.name }}</b><span class="tkr">{{ r.ticker }}</span></td><td>{% if r.status_cls %}<span class="tag {{ r.status_cls }}">{{ r.status }}</span>{% else %}{{ r.status }}{% endif %}</td><td class="sc">{{ r.share_ratio }}</td><td>{{ r.volume_ratio }}</td><td>{{ r.weekly }}</td><td>{{ r.up_ratio }}</td><td>{{ r.dv5 }}</td><td>{{ r.high52 }}</td><td class="l">{{ r.our_signal }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">계산할 수 있는 종목이 없습니다 (데이터 65거래일 미만)</div>{% endif %}
+  {% if flow_watch.excluded %}<div class="mini">제외 {{ flow_watch.excluded|length }}종목 (데이터 65거래일 미만·결측): {{ flow_watch.excluded|join(', ') }}</div>{% endif %}
+  </div>
+
+  <h3>섹터별 자금 흐름 <span class="cap">{{ flow_watch.caption }}</span></h3>
+  <div class="scr-card">
+  {% if flow_watch.sectors_pending %}<div class="empty2">업종 분류 준비 중</div>
+  {% elif flow_watch.sectors %}
+  <div class="scroll"><table class="fit">
+    <thead><tr><th class="nosort l">업종</th><th class="nosort">종목 수</th><th class="nosort">최근 5거래일 점유율</th><th class="nosort">직전 60거래일 점유율</th><th class="nosort">변화</th></tr></thead>
+    <tbody>{% for x in flow_watch.sectors %}<tr><td class="l">{{ x.sector }}</td><td>{{ x.count }}</td><td>{{ x.recent }}</td><td>{{ x.base }}</td><td class="{{ x.change_cls }}">{{ x.change }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<div class="empty2">섹터 표 없음</div>{% endif %}
+  <div class="mini">점유율 = 업종 거래대금 ÷ 대상 전체 거래대금. 업종은 저장해 둔 GICS 분류(없으면 미분류). 변화가 큰 순서.</div>
+  </div>
+</section>
+{% endif %}
+</div>
+</details>
+{% endif %}
+
+
+
+
 <details class="fold" id="fold-fred">
-<summary>▶ FRED 경제 그래프 (시장 온도)</summary>
+<summary>▶ 시장 지표 그래프 (지금의 시장 온도 전체)</summary>
 <div class="fold-body">
 {% if macro_rows %}
 <section class="macro" aria-label="시장 온도">
@@ -927,42 +1004,10 @@ details.exp[open]>summary{color:var(--info)}
 </div>
 </details>
 
-<details class="fold" id="fold-flow">
-<summary>▶ 돈이 몰리는 종목</summary>
-<div class="fold-body">
-{% if flow_watch %}
-<!-- 자금 흐름 관찰 (F2, docs/design/flow_watch.md) — 참고용, 매수 신호 아님 -->
-<section class="scr fw" aria-label="돈이 몰리는 종목">
-  <h2>돈이 몰리는 종목 TOP 10 <span class="cap">{{ flow_watch.caption }}</span></h2>
-  <div class="scr-sub">{{ flow_watch.as_of_str }} 미국장 마감 · {{ flow_watch.scan_count }}종목 · 점유율 배율 = 최근 5거래일 거래대금 점유율 평균 ÷ 직전 60거래일 평균 · 유입 = 배율 1.5 이상 + 주간 상승 + 상승일 거래량 50% 초과, 투매 = 배율 1.5 이상 + 주간 하락</div>
-  <div class="scr-card">
-  {% if flow_watch.top %}
-  <div class="scroll"><table>
-    <thead><tr><th class="nosort">순위</th><th class="nosort l">종목</th><th class="nosort">상태</th><th class="nosort">점유율 배율</th><th class="nosort">거래량 배율</th><th class="nosort">주간 수익률</th><th class="nosort">상승일 비중</th><th class="nosort">5일 거래대금</th><th class="nosort">52주 고점 대비</th><th class="nosort l">우리 신호</th></tr></thead>
-    <tbody>{% for r in flow_watch.top %}<tr><td>{{ r.rank }}</td><td class="l"><b>{{ r.name }}</b><span class="tkr">{{ r.ticker }}</span></td><td>{% if r.status_cls %}<span class="tag {{ r.status_cls }}">{{ r.status }}</span>{% else %}{{ r.status }}{% endif %}</td><td class="sc">{{ r.share_ratio }}</td><td>{{ r.volume_ratio }}</td><td>{{ r.weekly }}</td><td>{{ r.up_ratio }}</td><td>{{ r.dv5 }}</td><td>{{ r.high52 }}</td><td class="l">{{ r.our_signal }}</td></tr>{% endfor %}</tbody>
-  </table></div>
-  {% else %}<div class="empty2">계산할 수 있는 종목이 없습니다 (데이터 65거래일 미만)</div>{% endif %}
-  <div class="mini">제외 {{ flow_watch.excluded|length }}종목 (데이터 65거래일 미만·결측){% if flow_watch.excluded %}: {{ flow_watch.excluded|join(', ') }}{% endif %}</div>
-  </div>
-
-  <h3>섹터별 자금 흐름 <span class="cap">{{ flow_watch.caption }}</span></h3>
-  <div class="scr-card">
-  {% if flow_watch.sectors %}
-  <div class="scroll"><table class="fit">
-    <thead><tr><th class="nosort l">업종</th><th class="nosort">종목 수</th><th class="nosort">최근 5거래일 점유율</th><th class="nosort">직전 60거래일 점유율</th><th class="nosort">변화</th></tr></thead>
-    <tbody>{% for x in flow_watch.sectors %}<tr><td class="l">{{ x.sector }}</td><td>{{ x.count }}</td><td>{{ x.recent }}</td><td>{{ x.base }}</td><td class="{{ x.change_cls }}">{{ x.change }}</td></tr>{% endfor %}</tbody>
-  </table></div>
-  {% else %}<div class="empty2">섹터 표 없음</div>{% endif %}
-  <div class="mini">점유율 = 업종 거래대금 ÷ 대상 전체 거래대금. 업종은 저장해 둔 GICS 분류(없으면 미분류). 변화가 큰 순서.</div>
-  </div>
-</section>
-{% endif %}
-</div>
-</details>
 
 {% if scorecard %}
 <details class="fold" id="fold-scorecard">
-<summary>▶ 가상 장부 월간 성적표</summary>
+<summary>▶ 월간 성적표</summary>
 <div class="fold-body">
 <section class="vb" aria-label="가상 장부 월간 성적표">
   <p class="mini">{{ scorecard.month }} 성적 · 관찰 전용 가상 장부(실제 주문 아님) · 전략 · 누적 QQQ 대비 · QQQ를 이긴 달</p>
@@ -972,26 +1017,37 @@ details.exp[open]>summary{color:var(--info)}
 </details>
 {% endif %}
 
+
+{% if show_vbooks_fold %}
 <details class="fold" id="fold-vbooks">
 <summary>▶ 가상 장부 현황</summary>
 <div class="fold-body">
 <section class="vb" aria-label="가상 장부 현황">
-  {% if vbooks_rows %}
-  <p class="mini">관찰 전용 가상 장부 (실제 주문 아님) · 시작 {{ vbooks_start }} · 달러 기준 · 상세는 구글 시트 전략비교_일일·매매기록·전략요약 탭</p>
+  {% if letter.table_rows %}
   <div class="sheet"><table>
-  <thead><tr><th class="nosort">장부</th><th class="num">총자산($)</th><th class="num">누적 수익</th><th class="num">QQQ 대비</th><th class="num">최대 낙폭</th><th class="num">전환 횟수</th><th class="nosort">보유</th></tr></thead>
-  <tbody>{% for r in vbooks_rows %}<tr><td class="l">{{ r.book }}</td><td class="num">{{ r.value_str }}</td><td class="num">{{ r.cum_str }}</td><td class="num">{{ r.vs_qqq_str }}</td><td class="num">{{ r.mdd_str }}</td><td class="num">{{ r.switches }}</td><td>{{ r.holding }}</td></tr>{% endfor %}</tbody>
+  <thead><tr>{% for h in letter.table_head %}<th class="nosort">{{ h }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for r in letter.table_rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}</tbody>
   </table></div>
   {% else %}<div class="empty2">가상 장부 정보 없음 (실전 실행에서만 계산, 오류 시 비어 있음)</div>{% endif %}
 </section>
 </div>
 </details>
+{% endif %}
+
+{% if dec_tax and not is_group %}
+<!-- 12월 공제 안내 자리 (다음 작업에서 연결) -->
+<details class="fold" id="fold-dec-tax">
+<summary>▶ 올해 세금 없는 매도 한도</summary>
+<div class="fold-body">{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}</div>
+</details>
+{% endif %}
 
 <details class="fold" id="fold-guide">
 <summary>▶ 지표 설명 (읽는 법·용어)</summary>
 <div class="fold-body">
 <!-- 읽는 법 (초보자 안내) -->
 <section class="gd" id="guide">
+  {% if show_screening %}
   <details class="exp"><summary>이 보고서를 읽는 순서</summary>
   <div class="steps">
     <div><b>손절부터 확인</b>매도·손절 탭에 "손절"이 있으면 가장 먼저 처리해요. 손실을 작게 끝내는 게 모든 규칙보다 우선이에요.</div>
@@ -1057,8 +1113,9 @@ details.exp[open]>summary{color:var(--info)}
   <tr><td>보유 한도·자금 한도 초과</td><td>한 번에 너무 많은 종목에 돈이 몰리지 않게 막아요. 점수 높은 종목부터 사요</td></tr>
   </tbody></table></div>
   </details>
-  <details class="exp"><summary>시장 온도 지표 (맨 위 칸)</summary>
-  <p class="lead2">첫 칸은 CNN의 공포·탐욕 지수, 나머지는 미국 연준이 운영하는 경제 데이터 사이트 FRED의 지표예요. 모든 지표를 <b>🟢안정 · 🟡주의 · 🔴위험</b> 3단계로 똑같이 읽어요. 시장 전체의 분위기를 보는 <b>참고용</b>이고, 매수·매도 규칙에는 쓰지 않아요(백테스트 P5-2에서 시장 국면 필터를 넣었더니 오히려 성과가 나빠졌어요). 지표마다 자세한 설명은 보고서 맨 아래 <a href="#macro-explain">지표 설명</a>에 있어요.</p>
+  {% endif %}
+  <details class="exp"><summary>시장 온도 지표</summary>
+  <p class="lead2">첫 칸은 CNN의 공포·탐욕 지수, 나머지는 미국 연준이 운영하는 경제 데이터 사이트 FRED의 지표예요. 모든 지표를 <b>🟢안정 · 🟡주의 · 🔴위험</b> 3단계로 똑같이 읽어요. 시장 전체의 분위기를 보는 <b>참고용</b>이고, 매수·매도 규칙에는 쓰지 않아요(백테스트 P5-2에서 시장 국면 필터를 넣었더니 오히려 성과가 나빠졌어요). 지표마다 자세한 설명은 「시장 지표 그래프」 접기 안 지표 설명에 있어요.</p>
   <div class="sheet"><table>
   <thead><tr><th class="nosort">지표</th><th class="nosort">🟢 안정</th><th class="nosort">🟡 주의</th><th class="nosort">🔴 위험</th></tr></thead>
   <tbody>
@@ -1068,6 +1125,7 @@ details.exp[open]>summary{color:var(--info)}
   {% endfor %}
   </tbody></table></div>
   </details>
+  {% if show_screening %}
   <details class="exp"><summary>용어 사전</summary>
   <div class="sheet"><table>
   <thead><tr><th class="nosort">용어</th><th class="nosort">뜻</th></tr></thead>
@@ -1084,6 +1142,7 @@ details.exp[open]>summary{color:var(--info)}
   <tr><td>쿨다운</td><td>손절·전량 매도 후 다시 사지 않는 기간. 지금 설정은 {{ guide.reentry_cooldown_days }}거래일이에요</td></tr>
   </tbody></table></div>
   </details>
+  {% endif %}
 </section>
 </div>
 </details>
@@ -1093,7 +1152,7 @@ details.exp[open]>summary{color:var(--info)}
 <div class="fold-body">
 <section class="info" aria-label="보고서 정보">
   <div class="subtitle">{{ titles.subtitle }}</div>
-  <div class="lead">MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준</div>
+  {% if show_screening %}<div class="lead">MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준</div>{% endif %}
   <div class="meta-info">
     기준일 <b>{{ as_of_str }} 종가</b> · 주문 가능일 <b>{{ order_date_str }}</b><br>
     {% if not is_live %}총자금 <b>{{ total_krw_str }} 원</b> · {% endif %}환율 <b>₩{{ fx_rate_str }}/$</b>{% if fx_date_str %} ({{ fx_date_str }}){% endif %}{% if fx_is_fallback %} <span class="fx-warn">캐시값</span>{% endif %}<br>

@@ -60,18 +60,29 @@ def _first_trading_day_of(run_date: date, trading_days: pd.DatetimeIndex) -> pd.
     return same.min() if len(same) else None
 
 
-def scorecard_month(run_date: date, trading_days: pd.DatetimeIndex, done: set[str] | None = None) -> pd.Period | None:
+def scorecard_month(run_date: date, trading_days: pd.DatetimeIndex, done: set[str] | None = None,
+                    start=None) -> pd.Period | None:
     """성적을 매길 달(지난달) 또는 None.
 
     done(시트에 이미 있는 달)이 None이면 실행일이 그달 첫 거래일일 때만. done이 있으면 그달 첫 거래일 이후
-    어느 실행이든 지난달이 done에 없을 때(실패한 날 다시 넣기, 같은 달 두 번 없음)."""
+    어느 실행이든 지난달이 done에 없을 때(실패한 날 다시 넣기, 같은 달 두 번 없음).
+    start(장부 기록 시작일)가 있으면 그 달보다 앞선 달은 만들지 않는다(2026-10-17 — 기록 전 달 성적표 오류 수정).
+    예: 시작 2026-10-14 → 첫 성적표는 2026-10분(2026-11-02 실행). 다시 넣기도 같은 조건."""
     month = pd.Period(pd.Timestamp(run_date), freq="M") - 1
+    if start is not None and month < pd.Period(pd.Timestamp(start), freq="M"):
+        return None
     if done is None:
         return month if sc.is_first_trading_day(run_date, trading_days) else None
     first = _first_trading_day_of(run_date, trading_days)
     if first is None or pd.Timestamp(run_date) < first or str(month) in done:
         return None
     return month
+
+
+def ledger_start(cfg: dict):
+    """가상 장부 기록 시작일(config virtual_books.start_date — 1~5번 공통, 가장 이른 장부). 없으면 None."""
+    s = (cfg.get("virtual_books") or {}).get("start_date")
+    return pd.Timestamp(s) if s else None
 
 
 def make(cfg: dict, run_date: date, qqq_close: pd.Series, *, db_path: Path = DEFAULT_DB,
@@ -81,7 +92,7 @@ def make(cfg: dict, run_date: date, qqq_close: pd.Series, *, db_path: Path = DEF
         from data.market_calendar import trading_days_between
 
         trading_days = trading_days_between(run_date - timedelta(days=40), run_date + timedelta(days=5))
-    month = scorecard_month(run_date, trading_days, done)
+    month = scorecard_month(run_date, trading_days, done, start=ledger_start(cfg))
     if month is None:
         return None
     strats = sc.strategies_from_cfg(cfg)

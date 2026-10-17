@@ -57,7 +57,8 @@ def titles(cfg):
 
 
 def _private_html(tmp_path, cfg, **kw):
-    return report_html.render_report(_summary(cfg, **kw), cfg, tmp_path).read_text(encoding="utf-8")
+    shown = {**cfg, "report": {**cfg["report"], "show_screening": True}}  # 예전 화면(스크리닝 켬)을 검증
+    return report_html.render_report(_summary(cfg, **kw), shown, tmp_path).read_text(encoding="utf-8")
 
 
 # ── 1. 이름 (config.yaml report) ──────────────────────────────────────────

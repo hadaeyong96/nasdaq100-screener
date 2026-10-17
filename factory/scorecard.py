@@ -35,6 +35,7 @@ QUARTER_END_MONTHS = (3, 6, 9, 12)
 class Strategy:
     no: int
     name: str
+    label: str = ""  # 보여 주는 이름(2026-10-17, config virtual_books.display_names) — 비면 name. DB 조회는 name
 
 
 def strategies_from_cfg(cfg: dict) -> list[Strategy]:
@@ -45,7 +46,8 @@ def strategies_from_cfg(cfg: dict) -> list[Strategy]:
     for key in ("momentum", "accel"):
         if (vb.get(key) or {}).get("name"):
             names.append(vb[key]["name"])
-    return [Strategy(i + 1, n) for i, n in enumerate(names)]
+    labels = vb.get("display_names") or {}
+    return [Strategy(i + 1, n, labels.get(n, n)) for i, n in enumerate(names)]
 
 
 def is_first_trading_day(day, trading_days: pd.DatetimeIndex) -> bool:
@@ -108,7 +110,7 @@ def regime_perf(values: pd.Series, bench: pd.Series, qqq_close: pd.Series) -> di
 def strategy_row(st: Strategy, daily: pd.DataFrame | None, bench_daily: pd.DataFrame, trades: pd.DataFrame | None,
                  qqq_close: pd.Series, month: pd.Period, quarter_end: bool) -> dict:
     """전략 하나의 성적 (month 말까지 기록). daily·bench_daily: 인덱스 날짜, 열 value·value_after_tax_liq."""
-    row = {"no": st.no, "name": st.name, "status": "ok", "notes": [], "proposal": None}
+    row = {"no": st.no, "name": st.label or st.name, "status": "ok", "notes": [], "proposal": None}
     end = month.to_timestamp(how="end")
     if daily is None or daily.empty or daily.index.min() > end:
         row["status"] = "기록 없음"

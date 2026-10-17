@@ -215,3 +215,41 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
     for n in meta.get("notes", []):
         rows.append(["가정", n])
     return rows
+
+
+# ── 보여 주는 이름 (2026-10-17) — 아침 편지·시트 4개 탭에만. 장부 id·DB·계산은 config의 name 그대로 ──
+
+
+def display_map(cfg: dict) -> dict[str, str]:
+    """config virtual_books.display_names → {장부 id: 보여 주는 이름}. 없으면 빈 dict."""
+    return dict(((cfg or {}).get("virtual_books") or {}).get("display_names") or {})
+
+
+def display_name(cfg: dict, name: str) -> str:
+    """장부 id → 보여 주는 이름(없으면 id 그대로)."""
+    return display_map(cfg).get(name, name)
+
+
+def _swap_cell(v, mapping: dict[str, str]):
+    """셀 하나: 장부 이름과 정확히 같으면 바꾸고, "장부 이름 " 로 시작하는 머리글(예: "… 총자산($)")은 앞부분만 바꾼다."""
+    if not isinstance(v, str):
+        return v
+    if v in mapping:
+        return mapping[v]
+    for old, new in mapping.items():
+        if v.startswith(old + " "):
+            return new + v[len(old):]
+    return v
+
+
+def rename_tables(tables: dict[str, list[list]], mapping: dict[str, str]) -> dict[str, list[list]]:
+    """시트 탭 값의 장부 이름을 보여 주는 이름으로 (새 dict, 원본은 그대로)."""
+    if not mapping:
+        return tables
+    long_first = dict(sorted(mapping.items(), key=lambda kv: -len(kv[0])))  # 긴 이름부터(앞부분이 겹치는 이름 대비)
+    return {tab: [[_swap_cell(v, long_first) for v in row] for row in rows] for tab, rows in tables.items()}
+
+
+def unrename_tables(tables: dict[str, list[list]], mapping: dict[str, str]) -> dict[str, list[list]]:
+    """rename_tables의 반대 — 시트에서 읽은 값을 장부 id로 되돌린다(DB 복구용). 옛 이름 그대로인 값은 그대로 둔다."""
+    return rename_tables(tables, {v: k for k, v in mapping.items()})

@@ -132,8 +132,10 @@ def test_view_adds_names_and_reports_qqq_failure():
 def test_report_fold_closed_below_recommendations_with_caption(tmp_path):
     html = report_html.render_report(_summary(_view()), _cfg(), tmp_path).read_text(encoding="utf-8")
     assert '<details class="fold" id="fold-weekly-rs">' in html  # open 속성 없음 = 기본 닫힘
-    assert "▶ 이번 주 QQQ보다 강한 종목·업종" in html
-    assert html.index('aria-label="오늘 추천"') < html.index('id="fold-weekly-rs"') < html.index('id="fold-candidates"')
+    assert "▶ 이번 주 강한 종목·업종 (관찰용)" in html
+    # 짧은 판(2026-10-17): 맨 위 세 칸 다음 첫 접기, 스크리닝(기본 숨김)은 없음
+    assert html.index('aria-label="오늘 할 일"') < html.index('id="fold-weekly-rs"') < html.index('id="fold-fred"')
+    assert 'id="fold-candidates"' not in html
     assert "관찰용 · 매수 신호 아님 (1주 강세는 과거 시험에서 다음 상승을 예측하지 못함)" in html
     assert "이번 주 QQQ보다 강한 종목" in html and "이번 주 강한 업종" in html
     assert "마이크론" in html and "+6.0%p" in html and "메모리" in html

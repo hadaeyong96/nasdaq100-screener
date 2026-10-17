@@ -24,8 +24,9 @@ CHECK_PREFIX = "확인할 것:"
 
 
 def report_titles(cfg: dict | None) -> dict:
-    """cfg -> {title, subtitle, short_title} (config.yaml report 섹션, 빠진 키는 기본값)."""
-    return {**_DEFAULT_REPORT_TITLES, **((cfg or {}).get("report") or {})}
+    """cfg -> {title, subtitle, short_title} (config.yaml report 섹션, 빠진 키는 기본값). 다른 report 설정(show_*)은 넣지 않는다."""
+    rep = (cfg or {}).get("report") or {}
+    return {k: rep.get(k, v) for k, v in _DEFAULT_REPORT_TITLES.items()}
 
 _STAGE_ORDER = ["b1", "b2", "b3", "b9"]
 _BUY_STAGE_SHORT = {"b1": "1차", "b2": "2차", "b3": "3차", "b9": "재진입"}
@@ -134,14 +135,33 @@ def title_line(summary: dict, cfg: dict) -> str:
     return line + " · 모의" if summary.get("mode") == "paper" else line
 
 
-def build_report_caption(summary: dict, cfg: dict) -> str:
-    """개인 브리핑 보고서 첨부 설명 (브리핑 다이어트): 제목 + 국면 줄 + "매수 n · 매도 n" + 티커.
+def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") -> str:
+    """보고서 첨부 설명.
+
+    짧은 판(2026-10-17, report.show_screening이 false — 기본): 제목 + "오늘 할 일: …"(notify.letter). 개인판만
+    정정본·확인할 것 줄을 덧붙인다. 단체방판(edition="group")은 제목 + 단체방 할 일만(티커·개인 항목 없음).
+    show_screening이 true인 개인판은 아래 예전 형식(브리핑 다이어트)을 그대로 쓴다.
+
+    예전 형식: 제목 + 국면 줄 + "매수 n · 매도 n" + 티커.
 
     예: 세 줄 — "오빠의 아침 편지 · 10/13(화)" / "오늘 국면: …" / "매수 2(NVDA, AAPL) · 매도 1(ROP)"
     추천이 없으면 "매수 0 · 매도 0". 티커는 매수는 차수 순서·중복 제거, 매도는 매도 표 순서.
     해당 있는 날에만 "정정본:"(국면 줄 아래)과 "확인할 것:"(시트 입력 오류·FRED 누락, 맨 아래) 줄을 덧붙인다
     (2026-10-14 사용자 확정) — 없는 날은 세 줄 그대로.
     """
+    from notify import letter
+
+    if edition == letter.GROUP:
+        return "\n".join([title_line(summary, cfg), letter.todo_line(summary, cfg, letter.GROUP)])
+    if not (cfg.get("report") or {}).get("show_screening", False):
+        lines = [title_line(summary, cfg), letter.todo_line(summary, cfg, letter.PERSONAL)]
+        if summary.get("rebuilt_from"):
+            lines.append(f"{REBUILT_PREFIX} 체결 기록 변경 반영 ({summary['rebuilt_from']}부터 재계산)")
+        lines.extend(line for line in (
+            build_input_error_line(summary.get("input_errors", [])),
+            build_fred_missing_line(summary.get("fred_missing", [])),
+        ) if line)
+        return "\n".join(lines)
     lines = [title_line(summary, cfg)]
     if summary.get("regime_line"):
         lines.append(summary["regime_line"])

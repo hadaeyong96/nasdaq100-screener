@@ -165,6 +165,9 @@ report:
   title: "오빠의 아침 편지" # 보고서 맨 위·HTML title·첨부 설명 첫 줄
   subtitle: "미국 대형주 · 미국 종가 기준 · 규칙 기반 분석" # 맨 아래 「보고서 정보」 접기 안에만
   short_title: "오빠의 아침 편지" # 첨부 파일 이름(오빠의 아침 편지_YYYY-MM-DD.html)
+  # 짧은 판(2026-10-17): 개인판 = 할 일 → 시장 한눈에 → 실험 중인 전략 → 접기. 아래 둘은 숨긴 화면을 다시 켜는 스위치.
+  show_screening: false # true면 오늘 스크리닝 전체(깔때기·추천 종목·제외·대기·매수매도 상세·보유·주문 방법·규칙·점수 설명)를 개인판에 다시 보임
+  show_vbooks_fold: false # true면 예전 「가상 장부 현황」 접기를 다시 보임(지금은 실험 중인 전략 칸 안 표로 같은 내용)
 
 # ── 자금 흐름 관찰 (F2, docs/design/flow_watch.md) ──────────────────────────
 # 표시·주간 기록 전용(참고용, 매수 신호 아님). 여기 값은 신호·필터·수량 계산에 쓰지 않는다.
@@ -266,6 +269,17 @@ virtual_books:
   drawdown_alert_book: "TQQQ 그냥 보유"
   drawdown_alert_pct: -50 # 이 장부 낙폭이 처음 이 값 이하가 되는 날 한 번 알림
   sheet_id_env: VIRTUAL_BOOKS_SHEETS_ID # 쓸 구글 시트 ID 환경변수(없으면 시트 기록만 건너뛰고 경고)
+  # 보여 주는 이름(2026-10-17) — 아침 편지·시트 4개 탭에만. 장부 id(name)·DB·계산은 그대로. 시트 복구는 이 표로 되돌려 읽는다.
+  display_names:
+    "QQQ 그냥 보유": "QQQ 전략"
+    "QLD 그냥 보유": "QLD 전략"
+    "TQQQ 그냥 보유": "TQQQ 전략"
+    "QLD 200일선 전환": "QLD 추세 전략"
+    "TQQQ 200일선 전환": "TQQQ 추세 전략"
+    "추천 종목 따라하기": "기술지표 전략"
+    "볼린저·RSI·MACD 따라하기": "볼린저 전략"
+    "6개월 강세 따라하기": "6개월 강세 전략"
+    "한 달 가속 따라하기": "한 달 가속 전략"
   books:
     - {name: "QQQ 그냥 보유", kind: hold, asset: QQQ}
     - {name: "QLD 그냥 보유", kind: hold, asset: QLD}
