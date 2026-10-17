@@ -45,7 +45,9 @@ def _capture(monkeypatch, fail_for=None):
     return sent
 
 
-def test_group_gets_same_file_and_same_caption(setup, monkeypatch, cfg):
+def test_group_gets_given_file_and_group_caption(setup, monkeypatch, cfg):
+    """짧은 판(2026-10-17): 첨부 설명은 제목 + 오늘 할 일. 단체방 설명에는 티커·개인 항목이 없다.
+    파일은 호출부가 넘긴 경로 그대로(engine.daily가 단체방판 보고서를 넘긴다)."""
     _, report, summary = setup
     sent = _capture(monkeypatch)
     telegram.send_briefing("본문", summary, cfg)
@@ -53,7 +55,8 @@ def test_group_gets_same_file_and_same_caption(setup, monkeypatch, cfg):
     assert res["ok"] and [s["chat"] for s in sent] == ["personal", "group"]
     p, g = sent
     assert p["path"] == g["path"] == report and p["filename"] == g["filename"] == "오빠의 아침 편지_2026-10-14.html"
-    assert p["caption"] == g["caption"] == "오빠의 아침 편지 · 10/14(수)\n오늘 국면: QQQ 200일선 위\n매수 1(NVDA) · 매도 0"
+    assert p["caption"] == "오빠의 아침 편지 · 10/14(수)\n오늘 할 일: 없음 — QQQM 적립만 그대로"
+    assert g["caption"] == p["caption"] and "NVDA" not in g["caption"]
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-10-14") and db.has_notified(conn, "2026-10-14:group")
     conn.close()
@@ -108,9 +111,12 @@ def test_daily_main_sends_both_even_if_personal_raises(monkeypatch, cfg, tmp_pat
     monkeypatch.setattr(daily.telegram, "send_group_briefing",
                         lambda text, path, s, c, force_no_send=False: calls.append(("group", path)) or {"ok": True})
     monkeypatch.setattr(daily.telegram, "notify_ops_error", lambda m: calls.append(("ops", m)) or True)
+    monkeypatch.setattr(daily, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(daily, "_fetch_qqq_close_series", lambda c: (_ for _ in ()).throw(ConnectionError("no net")))
     monkeypatch.setattr(sys, "argv", ["daily", "--mode", "live"])
     daily.main()
-    assert ("group", tmp_path / "r.html") in calls
+    group_paths = [p for k, p in calls if k == "group"]
+    assert len(group_paths) == 1 and str(group_paths[0]).endswith("_group.html")  # 단체방판 보고서(2026-10-17)
     assert any(k == "ops" and "RuntimeError" in m and "personal down" not in m for k, m in calls)  # 종류만 (토큰 노출 방지)
 
 

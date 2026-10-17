@@ -113,7 +113,7 @@ def test_view_keeps_weekly_tables_and_adds_accel():
 def test_report_shows_two_accel_tables_inside_weekly_fold(tmp_path):
     s, cfg, _ = _summary()
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    i_fold, i_next = html.index('id="fold-weekly-rs"'), html.index('id="fold-candidates"')
+    i_fold, i_next = html.index('id="fold-weekly-rs"'), html.index('id="fold-fred"')  # 짧은 판: 강한 종목 → 돈 몰림 → 시장 지표
     i_a, i_b = html.index("QQQ 이기는 힘이 세지는 종목 상위 10"), html.index("힘이 세지는 업종")
     assert i_fold < i_a < i_b < i_next
     assert html.index("이번 주 강한 업종") < i_a  # 기존 표 2개 아래

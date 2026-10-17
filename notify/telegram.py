@@ -405,7 +405,8 @@ def send_group_briefing(
     출력: {"attempted": bool, "ok": bool, "skipped_reason": str|None, "error": str|None,
           "migrate_to_chat_id": int|None, "out_path": Path}
 
-    첨부 설명은 개인 발송과 같은 build_report_caption. 따로 만들던 공개용 보고서는 없앴다.
+    첨부 설명은 build_report_caption(edition="group") — 짧은 판(2026-10-17)부터 단체방판 보고서(개인 항목·티커 없음)를
+    report_path로 받는다. 보고서가 없으면 text(호출부가 단체방용 첨부 설명을 넘김)를 대신 보낸다.
     발송 기록(중복 방지)은 개인("YYYY-MM-DD")과 따로("YYYY-MM-DD:group") 남긴다.
 
     TELEGRAM_GROUP_CHAT_ID가 없으면(Secret 미설정) 조용히 건너뛴다(skipped_reason =
@@ -461,7 +462,7 @@ def send_group_briefing(
         if report_path and Path(report_path).exists():
             ok, migrate_id, error = _send_document_checked(
                 token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
-                caption=_limit_caption(build_report_caption(summary, cfg)),
+                caption=_limit_caption(build_report_caption(summary, cfg, edition="group")),
             )
         else:
             _log("[telegram] 보고서 파일이 없어 단체방에 본문 글을 대신 보냅니다.")

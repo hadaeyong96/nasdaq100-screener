@@ -306,11 +306,11 @@ def test_engine_waits_for_first_month_end_then_starts_and_fills_next_day(cfg, tm
     assert {t["ticker"] for t in trades} == {f"S{i:02d}" for i in range(2, 12)}  # 가장 강한 10개
     summ = client.tabs["전략요약"].values
     head = summ[0]
-    row = next(x for x in summ if x and x[0] == NAME)
+    row = next(x for x in summ if x and x[0] == "6개월 강세 전략")  # 시트는 보여 주는 이름
     assert head[-2:] == ["교체 횟수", "현재 보유 10종목"]
     assert row[head.index("교체 횟수")] == "1" and row[head.index("현재 보유 10종목")].count(",") == 9
     assert row[head.index("완료 거래 수")] == "" and row[head.index("시작일")] == IDX[me].date().isoformat()
-    other = next(x for x in summ if x and x[0] == "QQQ 그냥 보유")
+    other = next(x for x in summ if x and x[0] == "QQQ 전략")
     assert other[head.index("교체 횟수")] == "" and any(x and x[0] == "config 고정값(momentum)" for x in summ)
 
 

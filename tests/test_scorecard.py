@@ -216,11 +216,12 @@ def test_without_sheet_only_first_trading_day():
     assert run.scorecard_month(date(2026, 11, 3), td, done={"2026-10"}) is None
 
 
-def test_group_send_uses_report_without_scorecard():
-    """engine/daily.py가 단체방에 group_report_path(성적표 없는 판)를 먼저 보내는지(정적 확인)."""
+def test_group_send_uses_group_edition_without_personal_fallback():
+    """engine/daily.py가 단체방에 group_report_path(단체방판 — 성적표 없음)만 보내고, 없을 때 개인판으로 대신하지 않는지(정적 확인)."""
     src = (Path(__file__).resolve().parents[1] / "engine" / "daily.py").read_text(encoding="utf-8")
     i = src.index("telegram.send_group_briefing(")
-    assert 'summary.get("group_report_path") or summary.get("report_path")' in src[i:i + 300]
+    call = src[i:i + 300]
+    assert 'summary.get("group_report_path")' in call and 'or summary.get("report_path")' not in call
 
 
 def test_scorecard_sheet_tab_is_append_only():
@@ -282,7 +283,9 @@ def test_report_renders_scorecard_fold(tmp_path):
     summary = _summary(cfg)
     summary["scorecard"] = {"month": "2026-10", "lines": ["1. QQQ 그냥 보유 · 누적 QQQ 대비 +0.0%p · 이긴 달 0/1 · 기록 짧음"]}
     html = report_html.render_report(summary, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "▶ 가상 장부 월간 성적표" in html and "기록 짧음" in html
+    assert "▶ 월간 성적표" in html and "기록 짧음" in html
+    group = report_html.render_report(summary, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
+    assert "월간 성적표" not in group and "기록 짧음" not in group  # 단체방판에는 없음
     summary.pop("scorecard")
     html2 = report_html.render_report(summary, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "가상 장부 월간 성적표" not in html2
+    assert "▶ 월간 성적표" not in html2

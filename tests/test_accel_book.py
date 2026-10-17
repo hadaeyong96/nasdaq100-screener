@@ -165,7 +165,7 @@ def test_first_run_is_first_signal_then_every_20_trading_days(cfg, tmp_path):
     first = [t for t in _rows(tmp_path, "picks_trades") if t["fill_date"] == IDX[ARMED + 1].date().isoformat()]
     assert len(first) == 10 and all(t["signal_date"] == IDX[ARMED].date().isoformat() for t in first)
     summ = client.tabs["전략요약"].values
-    head, row = summ[0], next(x for x in summ if x and x[0] == NAME)
+    head, row = summ[0], next(x for x in summ if x and x[0] == "한 달 가속 전략")  # 시트는 보여 주는 이름
     assert row[head.index("교체 횟수")] == "3" and row[head.index("현재 보유 10종목")].count(",") == 9
     assert any(x and x[0] == "config 고정값(accel)" and f'start_date: "{IDX[ARMED].date().isoformat()}"' in x[1] for x in summ)
     assert any(x and x[0] == "시작 조건(한 달 가속)" for x in summ)

@@ -421,7 +421,7 @@ def test_send_briefing_sends_only_report_file_with_caption(tmp_path, monkeypatch
     telegram.send_briefing("오빠의 아침 편지 · 9/30(수)\n\n🎯 오늘의 신호\n- 오늘 매매 신호 없음\n", summary, cfg)
 
     # 브리핑 다이어트(2026-10-14): 첨부 설명 = 제목 + (국면 줄) + "매수 n · 매도 n" + 티커
-    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html", "오빠의 아침 편지 · 9/30(수)\n매수 0 · 매도 0")]
+    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html", "오빠의 아침 편지 · 9/30(수)\n오늘 할 일: 없음 — QQQM 적립만 그대로")]
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-09-30") is True  # 보고서 한 통 성공이면 발송 기록
     conn.close()
@@ -461,13 +461,34 @@ def test_build_report_caption_compact_format():
         "buy_groups": {"b1": [{"ticker": "NVDA"}], "b2": [{"ticker": "AAPL"}, {"ticker": "NVDA"}], "b3": [], "b9": []},
         "buy_count": 3, "sell_rows": [{"티커": "ROP"}],
     }
-    assert briefing.build_report_caption(summary, {}).split("\n") == [
+    assert briefing.build_report_caption(summary, LEGACY).split("\n") == [
         "오빠의 아침 편지 · 10/13(화)",
         "오늘 국면: QQQ 200일선 위(+10.4%) · 전환 장부 QLD·TQQQ 보유 중",
         "매수 3(NVDA, AAPL) · 매도 1(ROP)",
     ]
     empty = {"as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전"}
-    assert briefing.build_report_caption(empty, {}).split("\n")[1] == "매수 0 · 매도 0"
+    assert briefing.build_report_caption(empty, LEGACY).split("\n")[1] == "매수 0 · 매도 0"
+
+
+LEGACY = {"report": {"show_screening": True}}  # 예전 첨부 설명(스크리닝 켬) — 짧은 판은 아래 test_short_caption_*
+
+
+def test_short_caption_is_title_and_todo_with_check_lines_personal_only():
+    """짧은 판(2026-10-17, 기본): 제목 + 오늘 할 일. 정정본·확인할 것 줄은 개인판만. 단체방판엔 티커·개인 항목 없음."""
+    from notify import briefing
+
+    summary = {
+        "as_of": pd.Timestamp("2026-10-13"), "mode_label": "실전", "regime_line": "오늘 국면: …",
+        "buy_groups": {"b1": [{"ticker": "NVDA"}], "b2": [], "b3": [], "b9": []}, "buy_count": 1,
+        "sell_rows": [{"티커": "ROP"}], "rebuilt_from": "2026-10-10", "fred_missing": ["DGS10"],
+        "scorecard": {"month": "2026-10", "lines": []},
+    }
+    p = briefing.build_report_caption(summary, {}).split("\n")
+    assert p == ["오빠의 아침 편지 · 10/13(화)", "오늘 할 일: 월간 성적표 보기(10월)",
+                 "정정본: 체결 기록 변경 반영 (2026-10-10부터 재계산)", "확인할 것: FRED 지표 수집 실패: DGS10"]
+    g = briefing.build_report_caption(summary, {}, edition="group").split("\n")
+    assert g == ["오빠의 아침 편지 · 10/13(화)", "오늘 할 일: 없음 — QQQM 적립만 그대로"]
+    assert "NVDA" not in "".join(p + g) and "ROP" not in "".join(p + g)
 
 
 def test_build_report_caption_adds_rebuilt_and_warning_lines_only_when_present():
@@ -480,7 +501,7 @@ def test_build_report_caption_adds_rebuilt_and_warning_lines_only_when_present()
         "buy_groups": {}, "buy_count": 0, "sell_rows": [], "rebuilt_from": "2026-10-10",
         "input_errors": ["계획 기록 오류: 3번째 줄", "체결 기록 오류: 5번째 줄"], "fred_missing": ["DGS10"],
     }
-    assert briefing.build_report_caption(summary, {}).split("\n") == [
+    assert briefing.build_report_caption(summary, LEGACY).split("\n") == [
         "오빠의 아침 편지 · 10/13(화)",
         "오늘 국면: QQQ 200일선 아래(-0.4%) · 전환 장부 SGOV 보유 중",
         "정정본: 체결 기록 변경 반영 (2026-10-10부터 재계산)",

@@ -171,11 +171,12 @@ def sheet_tables(cfg: dict, ctx: dict, updated_at: str, extra: list[dict] | None
         "initial_usd": ctx["initial_usd"], "updated_at": updated_at,
         "min_days_for_annualized": int(vb["min_days_for_annualized"]), "notes": NOTES,
     }
-    return {
+    tables = {
         vbsheet.TAB_DAILY: vbtext.daily_table(ledger, books, vb["benchmark_book"], extra),
         vbsheet.TAB_TRADES: vbtext.trades_table(ledger, books, extra),
         vbsheet.TAB_SUMMARY: vbtext.summary_table(ledger, meta, extra),
     }
+    return vbtext.rename_tables(tables, vbtext.display_map(cfg))  # 보여 주는 이름으로(2026-10-17). 복구는 되돌려 읽는다
 
 
 def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets_client=None,
@@ -358,7 +359,7 @@ def recover_picks(cfg: dict, *, db_path: Path | None = None, sheets_client=None,
         from data import sheets
 
         sheets_client = sheets.get_client()
-    tables = vbsheet.read_tables(sheets_client, sheet_id)
+    tables = vbtext.unrename_tables(vbsheet.read_tables(sheets_client, sheet_id), vbtext.display_map(cfg))  # 보여 주는 이름 → 장부 id
     conn = vbstore.connect(Path(db_path or vbstore.VBOOKS_DB_PATH))
     out = {}
     try:

@@ -280,6 +280,7 @@ _SECTOR_KO = {
     "Consumer Defensive": "필수소비재", "Healthcare": "헬스케어", "Industrials": "산업재", "Utilities": "유틸리티",
     "Financial Services": "금융", "Energy": "에너지", "Basic Materials": "소재", "Real Estate": "부동산",
 }
+_FLOW_UNCLASSIFIED = "미분류"  # core.flow_watch.UNCLASSIFIED와 같은 값
 _FLOW_STATUS_CLS = {"유입": "ok", "투매": "no", "보통": ""}
 
 
@@ -372,8 +373,10 @@ def _flow_watch_ctx(summary: dict) -> dict | None:
             "recent": f"{x['recent_share_pct']:.1f}%", "base": f"{x['base_share_pct']:.1f}%",
             "change": f"{ch:+.1f}%p" if ch else "0.0%p", "change_cls": "up" if ch > 0 else ("down" if ch < 0 else ""),
         })
+    unclassified = sum(x["recent_share_pct"] for x in view["sectors"] if x["sector"] == _FLOW_UNCLASSIFIED)
     return {"caption": _FLOW_CAPTION, "as_of_str": view["as_of_str"], "scan_count": view["scan_count"],
-            "top": top, "sectors": sectors, "excluded": view["excluded"]}
+            "top": top, "sectors": sectors, "excluded": view["excluded"],
+            "sectors_pending": unclassified > 50.0}  # 미분류가 절반 넘으면 섹터 표 대신 "업종 분류 준비 중" 한 줄
 
 
 def _pp(v: float) -> str:
@@ -434,8 +437,28 @@ def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
     }
 
 
-def build_context(summary: dict, cfg: dict) -> dict:
-    """summary dict(engine/daily.py) + cfg -> Jinja2 템플릿에 넘길 context."""
+def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
+    """짧은 판(2026-10-17) 맨 위 세 칸 + 실험 중인 전략 접은 표. 표시 전용(notify.letter)."""
+    from notify import letter
+
+    vb = summary.get("vbooks") or {}
+    books = vb.get("books") or []
+    head, rows = letter.table_rows(books, cfg, edition) if books else ([], [])
+    return {
+        "todo": letter.todo_line(summary, cfg, edition),
+        "glance": letter.glance_lines(summary.get("qqq_close"), summary.get("macro_rows", [])),
+        "strategy_header": letter.strategy_header(books) if books else "",
+        "strategy_lines": letter.strategy_lines(books, cfg, edition) if books else [],
+        "table_head": head, "table_rows": rows,
+    }
+
+
+def build_context(summary: dict, cfg: dict, edition: str = "personal") -> dict:
+    """summary dict(engine/daily.py) + cfg -> Jinja2 템플릿에 넘길 context.
+
+    edition: "personal"(개인 채팅판) | "group"(투자클럽 단체방판 — 스크리닝·강한 종목·돈 몰리는 종목·월간 성적표·
+    12월 공제 안내를 빼고, 가상 매매는 건수만). 짧은 판 순서는 템플릿이 정한다(2026-10-17).
+    """
     as_of = summary.get("as_of")
     as_of_str = as_of.date().isoformat() if as_of is not None else "알수없음"
     order_date = (as_of + pd.tseries.offsets.BDay(1)).date().isoformat() if as_of is not None else "알수없음"
@@ -570,7 +593,16 @@ def build_context(summary: dict, cfg: dict) -> dict:
     fx_date_str = summary.get("fx_date") or ""
     fx_is_fallback = bool(summary.get("fx_is_fallback"))
 
+    report_cfg = cfg.get("report") or {}
+    personal = edition != "group"
     return {
+        "edition": edition,
+        "is_group": not personal,
+        # 숨김 스위치(코드는 그대로): 스크리닝 전체는 개인판에서 설정으로만 다시 켠다. 단체방판은 항상 뺀다.
+        "show_screening": personal and bool(report_cfg.get("show_screening", False)),
+        "show_vbooks_fold": personal and bool(report_cfg.get("show_vbooks_fold", False)),
+        "letter": _letter_ctx(summary, cfg, edition),
+        "dec_tax": None,  # 12월 공제 안내 접기 자리 — 다음 작업에서 연결(개인판만)
         "stale": bool(summary.get("stale")),
         "regime_line": summary.get("regime_line") or "",  # 가상 장부 국면 한 줄 (engine.virtual_books)
         "expected_date_str": summary.get("expected_date") or "",
@@ -649,23 +681,24 @@ def build_context(summary: dict, cfg: dict) -> dict:
         "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
         "macro_disclaimer": macro_explain.DISCLAIMER,
         "screening": _screening_ctx(summary, cfg),
-        "flow_watch": _flow_watch_ctx(summary),
-        "weekly_rs": _weekly_rs_ctx(summary, cfg),
-        "scorecard": summary.get("scorecard"),  # 전략공장 F2 — 매달 첫 거래일만 있음 (factory/scorecard_run.py)
+        "flow_watch": _flow_watch_ctx(summary) if personal else None,
+        "weekly_rs": _weekly_rs_ctx(summary, cfg) if personal else None,
+        "scorecard": summary.get("scorecard") if personal else None,  # 전략공장 F2 — 성적표 날만 (factory/scorecard_run.py)
     }
 
 
-def render_report(summary: dict, cfg: dict, output_dir: Path) -> Path:
-    """보고서 HTML을 렌더링해 outputs/report_{모드}_YYYY-MM-DD.html로 저장하고 경로를 반환한다.
+def render_report(summary: dict, cfg: dict, output_dir: Path, edition: str = "personal") -> Path:
+    """보고서 HTML을 렌더링해 outputs/report_{모드}_YYYY-MM-DD.html(단체방판은 …_group.html)로 저장하고 경로를 반환한다.
 
     파일 이름에 모드(live/paper)를 넣어 실전·모의 보고서가 같은 날짜여도 서로 덮어쓰지
     않게 한다(모의를 매일 나란히 돌리기 시작하면서 생긴 요구사항).
     """
-    context = build_context(summary, cfg)
+    context = build_context(summary, cfg, edition)
     template = _env.get_template("report.html.j2")
     html = template.render(**context)
     output_dir.mkdir(exist_ok=True, parents=True)
     mode = summary.get("mode", "live")
-    path = output_dir / f"report_{mode}_{context['as_of_str']}.html"
+    suffix = "_group" if edition == "group" else ""
+    path = output_dir / f"report_{mode}_{context['as_of_str']}{suffix}.html"
     path.write_text(html, encoding="utf-8")
     return path

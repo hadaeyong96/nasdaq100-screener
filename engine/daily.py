@@ -2278,6 +2278,7 @@ def main() -> None:
     if mode == "live" and not args.dry_run and not summary.get("stale"):
         vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send, briefing=_briefing_recs(summary))
         _attach_regime_line(summary, vb_result, cfg)
+        _attach_market_glance(summary, cfg)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 (읽기 전용, 실패해도 브리핑 본문은 그대로)
         try:
             from factory import scorecard_run
@@ -2286,6 +2287,9 @@ def main() -> None:
                                            lambda s: report_html.render_report(s, cfg, OUTPUT_DIR))
         except Exception as exc:  # noqa: BLE001
             print(f"[daily] 월간 성적표 연결 오류(브리핑은 그대로): {type(exc).__name__}: {exc}")
+
+    if mode == "live" and not args.dry_run and not summary.get("stale"):
+        render_editions(summary, cfg)
 
     if not args.dry_run:
         if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 배너 보고서 한 통만 보낸다(지연 문구는 첨부 설명)
@@ -2303,8 +2307,11 @@ def main() -> None:
                 telegram.notify_ops_error(msg)
             if mode == "live":
                 try:
-                    group_result = telegram.send_group_briefing(  # 단체방은 월간 성적표 없는 보고서(전략공장 F2)
-                        text, summary.get("group_report_path") or summary.get("report_path"), summary, cfg,
+                    # 단체방은 단체방판 보고서(짧은 판, 2026-10-17 — 개인 항목·티커 없음). 단체방판을 못 그렸으면
+                    # 개인판을 대신 보내지 않고 첨부 설명 글만 보낸다.
+                    group_result = telegram.send_group_briefing(
+                        briefing.build_report_caption(summary, cfg, edition="group"),
+                        summary.get("group_report_path"), summary, cfg,
                         force_no_send=args.no_send,
                     )
                     warning = telegram.group_send_warning_line(group_result)
@@ -2327,6 +2334,58 @@ def _briefing_recs(summary: dict) -> dict:
     return {"buy": list(dict.fromkeys(buys)), "sell": list(dict.fromkeys(sells))}
 
 
+def render_editions(summary: dict, cfg: dict) -> None:
+    """짧은 판(2026-10-17): 개인판·단체방판 보고서를 마지막 summary로 다시 그린다(표시 전용).
+    개인판이 실패하면 원래 보고서를 그대로 두고, 단체방판이 실패하면 group_report_path를 비운다(개인판을 대신 보내지 않음)."""
+    try:
+        summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] 개인판을 다시 그리지 못해 원래 보고서를 씁니다: {type(exc).__name__}: {exc}")
+    try:
+        summary["group_report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR, edition="group")
+    except Exception as exc:  # noqa: BLE001
+        summary["group_report_path"] = None
+        print(f"[daily] 단체방판을 그리지 못했습니다(단체방에는 첨부 설명만): {type(exc).__name__}: {exc}")
+
+
+def _attach_market_glance(summary: dict, cfg: dict, qqq_fetch=None) -> None:
+    """[시장 한눈에] 1줄용 QQQ 확정 종가를 summary["qqq_close"]에 둔다(표시 전용). 실패하면 그 줄만 빠진다."""
+    try:
+        summary["qqq_close"] = (qqq_fetch or (lambda: _fetch_qqq_close_series(cfg)))()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] QQQ 종가를 받지 못해 시장 한눈에 첫 줄을 뺍니다: {type(exc).__name__}")
+
+
+def _waiting_books(cfg: dict, base_date, extra_names: set[str]) -> dict[str, pd.Timestamp]:
+    """아직 시작 전인 장부 → 시작 예정일. 지금은 6개월 강세(시작일 미고정, 첫 월말 신호일 시작)만."""
+    mo = (cfg.get("virtual_books") or {}).get("momentum") or {}
+    if not mo.get("enabled") or mo.get("name") in extra_names or mo.get("start_date"):
+        return {}
+    base = pd.Timestamp(base_date).normalize()
+    days = trading_days_between(base.date(), (base + pd.Timedelta(days=70)).date())
+    ends = [d for d, nxt in zip(days[:-1], days[1:]) if d.month != nxt.month]
+    return {mo["name"]: pd.Timestamp(ends[0])} if ends else {}
+
+
+def _letter_vbooks(vb_result: dict, cfg: dict) -> dict:
+    """가상 장부 결과 → 편지용 장부 목록·전환 신호(표시 전용, 계산 없음)."""
+    from notify import letter
+
+    ledger = vb_result["ledger"]
+    vb = cfg.get("virtual_books") or {}
+    base = vb_result["base_date"]
+    extra = (vb_result.get("picks") or {}).get("extra", [])
+    bench = vb.get("benchmark_book")
+    books = letter.letter_books(
+        cfg, base, ledger.summaries, {n: r.trades for n, r in ledger.books.items()}, extra,
+        ledger.books[bench].daily if bench in ledger.books else None,
+        waiting=_waiting_books(cfg, base, {x["name"] for x in extra}),
+    )
+    today = [s for s in ledger.switches if pd.Timestamp(s["signal_date"]).normalize() == pd.Timestamp(base).normalize()]
+    return {"books": books, "switch_today": bool(today),
+            "switch_next_day": today[0].get("fill_date") if today else None}
+
+
 def _attach_regime_line(summary: dict, vb_result: dict | None, cfg: dict) -> None:
     """가상 장부 국면 한 줄을 summary에 붙이고 보고서를 다시 그린다. 기준일이 다르거나
     다시 그리기가 실패하면 줄을 빼고 원래 보고서를 그대로 둔다(브리핑 보호)."""
@@ -2345,6 +2404,10 @@ def _attach_regime_line(summary: dict, vb_result: dict | None, cfg: dict) -> Non
             "benchmark": (cfg.get("virtual_books") or {}).get("benchmark_book"),
             "rows": ledger.summaries,
         }
+        try:  # 짧은 판 [실험 중인 전략]·할 일 (6~9번 포함, 표시 전용)
+            summary["vbooks"].update(_letter_vbooks(vb_result, cfg))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[daily] 실험 중인 전략 목록을 만들지 못했습니다(1~5번 표만): {type(exc).__name__}: {exc}")
     try:
         summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
     except Exception as exc:

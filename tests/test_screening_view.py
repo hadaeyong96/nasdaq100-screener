@@ -25,7 +25,9 @@ from tests.test_equivalence_main import ROOT
 
 @pytest.fixture(scope="module")
 def cfg():
-    return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    c = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    c["report"]["show_screening"] = True  # 스크리닝은 설정으로만 보인다(2026-10-17 숨김) — 켠 상태를 검증
+    return c
 
 
 @pytest.fixture(scope="module")
@@ -271,6 +273,7 @@ def test_screening_section_renders_in_report(sample_summary):
     from notify import report_html
 
     cfg_ = sample.sample_inputs()["cfg"]
+    cfg_ = {**cfg_, "report": {**(cfg_.get("report") or {}), "show_screening": True}}  # 스크리닝은 설정으로만(2026-10-17)
     html = report_html._env.get_template("report.html.j2").render(**report_html.build_context(sample_summary, cfg_))
     assert "오늘의 스크리닝" in html and "바닥 반전 3단 확인 매수법" in html
     for title in ("① 우리 전략 한눈에", "② 오늘의 깔때기", "③ 오늘 추천 종목", "1차 정찰", "2차 확인", "3차 확정", "재진입"):

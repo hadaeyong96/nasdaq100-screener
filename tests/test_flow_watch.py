@@ -296,13 +296,15 @@ def test_our_signal_text():
 
 
 @pytest.mark.parametrize("mode", ["live", "paper"])
-def test_report_renders_flow_tables_below_screening(tmp_path, mode):
+def test_report_renders_flow_tables_after_weekly_and_before_market_graphs(tmp_path, mode):
     summary, _ = _flow_summary(mode)
     html = report_html.render_report(summary, _cfg(), tmp_path).read_text(encoding="utf-8")
     assert "돈이 몰리는 종목 TOP 10" in html and "섹터별 자금 흐름" in html
     assert "참고용 · 매수 신호 아님 · 검증 중(2026-10 시작, 판정 2027-10)" in html
-    assert html.index('aria-label="오늘의 스크리닝"') < html.index('aria-label="돈이 몰리는 종목"')
-    assert "기술" in html and "제외 0종목" in html
+    assert html.index('aria-label="돈이 몰리는 종목"') < html.index('id="fold-fred"')  # 짧은 판 순서(2026-10-17)
+    assert "제외 0종목" not in html  # 0만 있는 칸은 숨김
+    # 이 합성 자료는 미분류 99% → 섹터 표 대신 한 줄(2026-10-17)
+    assert "업종 분류 준비 중" in html and "최근 5거래일 점유율" not in html
 
 
 # ── 판정 스크립트 ─────────────────────────────────────────────────────────

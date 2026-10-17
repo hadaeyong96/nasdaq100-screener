@@ -32,6 +32,7 @@ def _empty_summary(mode="live"):
 @pytest.fixture
 def cfg():
     return {
+        "report": {"show_screening": True},  # 예전 화면(스크리닝 전체)을 검증한다 — 짧은 판은 tests/test_letter.py
         "account": {"total_krw": 100_000_000},
         "plan": {"strategy_limit_pct": 60, "cash_buffer_pct": 5, "max_slots": 8},
         "risk": {
@@ -609,9 +610,9 @@ def test_top_block_comes_before_all_folds_and_folds_are_closed(tmp_path, cfg):
     assert "MACD 골든크로스 · 2차 확인" in today and "65점 · S등급" in today
     assert "로퍼" in today and "+3.1%" in today and "모멘텀 약화(E1, 데드크로스)" in today
     folds = re.findall(r"<details class=\"fold\"[^>]*>\s*<summary>([^<]+)</summary>", body)
+    # 짧은 판(2026-10-17): 돈이 몰리는 종목은 자료가 있을 때만, 가상 장부 현황 접기는 숨김(실험 중인 전략 칸 안 표)
     assert folds == ["▶ 전체 후보 목록 (오늘의 스크리닝)", "▶ 매수·매도 상세 · 보유 현황 · 경고 · 규칙",
-                     "▶ FRED 경제 그래프 (시장 온도)", "▶ 돈이 몰리는 종목", "▶ 가상 장부 현황", "▶ 지표 설명 (읽는 법·용어)",
-                     "▶ 보고서 정보"]
+                     "▶ 시장 지표 그래프 (지금의 시장 온도 전체)", "▶ 지표 설명 (읽는 법·용어)", "▶ 보고서 정보"]
     assert not re.search(r"<details class=\"fold\"[^>]*\bopen\b", body)  # 기본 닫힘
 
 
@@ -631,13 +632,21 @@ def test_no_recommendation_line_when_nothing_today(tmp_path, cfg):
     html = report_html.render_report(_empty_summary(), cfg, tmp_path).read_text(encoding="utf-8")
     today = html[html.index('<section class="today"'):html.index('<details class="fold"')]
     assert "오늘 매수·매도 추천 없음" in today and "<table" not in today
-    assert "가상 장부 정보 없음" in html
+    assert "가상 장부 정보 없음" not in html and 'id="fold-vbooks"' not in html  # 예전 접기는 설정으로만(show_vbooks_fold)
 
 
-def test_vbooks_fold_table(tmp_path, cfg):
-    html = report_html.render_report(_compact_summary(), cfg, tmp_path).read_text(encoding="utf-8")
+def test_vbooks_fold_table_comes_back_with_switch(tmp_path, cfg):
+    """예전 「가상 장부 현황」 접기는 report.show_vbooks_fold로 다시 켤 수 있다(내용은 실험 중인 전략 표와 같음)."""
+    from notify import letter
+
+    s = _compact_summary()
+    s["vbooks"]["books"] = letter.letter_books({"virtual_books": {"benchmark_book": "QQQ 그냥 보유", "books": [
+        {"name": "QQQ 그냥 보유", "kind": "hold"}, {"name": "TQQQ 200일선 전환", "kind": "sma_switch"}]}},
+        "2026-10-16", s["vbooks"]["rows"], {}, [], None)
+    shown = {**cfg, "report": {**cfg["report"], "show_vbooks_fold": True}}
+    html = report_html.render_report(s, shown, tmp_path).read_text(encoding="utf-8")
     vb = html[html.index('id="fold-vbooks"'):html.index('id="fold-guide"')]
-    assert "TQQQ 200일선 전환" in vb and "76,000" in vb and "+1.10%p" in vb and "SGOV" in vb and "시작 2026-10-14" in vb
+    assert "TQQQ 200일선 전환" in vb and "76,000" in vb and "+1.10%p" in vb and "SGOV" in vb
 
 
 def test_explanations_are_collapsed_by_default(tmp_path, cfg):
