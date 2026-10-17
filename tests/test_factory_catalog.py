@@ -19,9 +19,10 @@ def test_catalog_shape():
     assert sum(x["status"] == "관찰 중" for x in items) == 9
     assert sum(x["status"] == "기본값" for x in items) == 1
     cands = [x for x in items if x["status"] == "대기 후보"]
-    assert [x["rank"] for x in cands] == list(range(1, 9))
+    assert [x["rank"] for x in cands] == list(range(1, 10))
     assert [x["id"] for x in cands] == ["explore_a", "share_count_down", "lowvol_strength", "cheap_quality_family",
-                                        "macro_timing_family", "revenue_growth_r1", "winner_anatomy", "event_radar"]
+                                        "macro_timing_family", "revenue_growth_r1", "winner_anatomy", "event_radar",
+                                        "crash_leaders"]  # 2026-10-17 폭락 뒤 주도주(충격 웅덩이 탈락으로 맨 끝)
     for x in cands:
         assert x["source"] and ("planned_trials" in x)
         assert x["planned_trials"] is None or (isinstance(x["planned_trials"], int) and x["planned_trials"] >= 1)
