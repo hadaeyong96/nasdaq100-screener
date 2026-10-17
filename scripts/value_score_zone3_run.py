@@ -358,9 +358,13 @@ class Book:
             if g <= 0:
                 continue
             q = min(left / g, self.hold[j][0])
+            first = self.hold[j][2]
             self.sell(i, j, q, "공제 소진")
             unit = self.px(i, j) * (1 + self.cost.slip) * (1 + self.cost.comm)
             self.buy(i, j, min(q * unit, max(self.cash, 0.0)), "공제 소진 다시 사기")
+            if j in self.hold:
+                # [결과 본 뒤 수정 B1] 같은 날 다시 산 것은 새 보유가 아니다 — 전량을 팔았다 사도 첫 매수일(1년 조건·분기 표시)을 지킨다
+                self.hold[j][2] = first
             left -= q * g
             n += 1
         return n
@@ -517,8 +521,8 @@ def _december(b: Book, i, y, me, board: Board, sic2, rules: Rules, rng, ev, stat
                 b.buy(i, m.ti[t], each, "빈자리 채우기")
             stats["fills"] += len(picks)
     # ③ 공제 소진
-    if b.cost.tax or b.cost.comm > 0:
-        stats["harvest_trades"] += b.harvest(i)
+    # [결과 본 뒤 수정 B2] 공제 소진은 비용·세금과 관계없는 규칙이다(취득가를 올려 다음 해 갈아타기 수량을 바꾼다) — 늘 한다
+    stats["harvest_trades"] += b.harvest(i)
 
 
 def run_qqq(m: Market, cost: Cost, record: bool = False) -> dict:

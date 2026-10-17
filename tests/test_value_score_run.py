@@ -147,3 +147,26 @@ def test_contribution_goes_to_cash_when_vacancy():
     r = run.run_value(m, board, run.FULL, record=True)
     buys_a = [i for (i, k, j, *_r) in r["book"].log if k == "buy" and m.tickers[j] == "A" and _r[2] == "납입"]
     assert buys_a == []  # 보유 1종목 < 10 → 빈자리 → 납입은 현금
+
+
+def test_harvest_full_resell_keeps_first_buy_date():
+    """[B1] 평가 이익이 공제보다 작아 전량을 팔았다 다시 사도 첫 매수일(1년 조건·분기 표시)이 바뀌지 않는다."""
+    m = _market({"A": pd.Series(10.0, index=DAYS)})
+    b = run.Book(m, run.FULL)
+    j = m.ti["A"]
+    b.hold[j] = [100.0, 100.0 * 9.0 * FX, 3]  # 평가 이익 약 10만 원 < 공제 250만 원 → 전량 매도 후 다시 삼
+    b.cash = 10.0
+    b.harvest(200)
+    assert j in b.hold and b.hold[j][2] == 3
+    assert b.hold[j][0] == pytest.approx(100.0, rel=0.01)
+
+
+def test_harvest_runs_even_without_costs_and_tax():
+    """[B2] 비용 0·세금 없음 판에서도 12월 공제 소진(규칙)을 한다 — 단계 비교가 같은 규칙이 되게."""
+    pa = pd.Series(10.0, index=DAYS)
+    pa[DAYS >= pd.Timestamp("2012-06-01")] = 20.0
+    m = _market({"A": pa})
+    board = _board({"A": {"default": 60.0}}, {"A": "10"})
+    r = run.run_value(m, board, run.ZERO, record=True)
+    assert r["stats"]["harvest_trades"] > 0
+    assert r["book"].realized[2012] == pytest.approx(2_500_000.0, rel=1e-6)
