@@ -189,3 +189,66 @@ def test_retry_succeeds_before_limit_and_nothing_saved(monkeypatch):
     assert fn.send("explore_done", {"name": "a"}, post=flaky, now=T0) is True
     assert waits == [30, 60] and len(calls) == 3
     assert list(fn.PENDING_DIR.glob("*.json")) == []
+
+
+# ── 실제 발송은 GitHub Actions에서만 (2026-10-17) ───────────────────────────
+
+
+def test_local_default_is_dry_run_and_does_not_call_real_post(monkeypatch, capsys):
+    _target_env(monkeypatch)
+    real = []
+    monkeypatch.setattr(fn, "_post", lambda *a: real.append(a))
+    assert fn.send("error", {"stage": "월간 성적표 계산"}) is False
+    assert fn.send_safely("error", {"stage": "x"}) is False
+    out = capsys.readouterr().out
+    assert real == [] and "dry-run" in out and "[전략공장] 작업 멈춤" in out
+    assert "secret-token-value" not in out and "-100999" not in out
+    assert list(fn.PENDING_DIR.glob("*.json")) == []  # dry-run은 실패가 아니라 보관도 없음
+
+
+def test_actions_or_explicit_send_flag_really_sends(monkeypatch):
+    _target_env(monkeypatch)
+    real = []
+    monkeypatch.setattr(fn, "_post", lambda tok, chat, text: real.append(text))
+    assert fn.send("error", {"stage": "x"}, force=True) is True
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert fn.send("error", {"stage": "y"}) is True
+    assert len(real) == 2
+
+
+def test_cli_send_flag_passes_force(monkeypatch, tmp_path):
+    _target_env(monkeypatch)
+    real = []
+    monkeypatch.setattr(fn, "_post", lambda tok, chat, text: real.append(text))
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    p = tmp_path / "s.json"
+    p.write_text('{"name": "a", "verdict": "b"}', encoding="utf-8")
+    assert fn.main(["--event", "explore_done", "--summary-file", str(p)]) == 0 and real == []
+    assert fn.main(["--event", "explore_done", "--summary-file", str(p), "--send"]) == 0 and len(real) == 1
+
+
+def test_scorecard_error_in_local_daily_does_not_send(monkeypatch):
+    """사고 재현: 로컬에서 engine.daily가 월간 성적표 단계에서 실패해도(QQQ 못 받음) 전략분석기로 나가지 않는다."""
+    from datetime import date
+
+    from factory import scorecard_run
+
+    _target_env(monkeypatch)
+    real = []
+    monkeypatch.setattr(fn, "_post", lambda *a: real.append(a))
+
+    def no_net():
+        raise ConnectionError("no net")
+
+    summary = {"report_path": None}
+    scorecard_run.attach_scorecard(summary, {}, date(2026, 10, 17), no_net, lambda s: None, sheet=None)
+    assert real == []
+
+
+def test_conftest_blocks_real_telegram_requests():
+    import requests
+
+    from tests.conftest import RealTelegramSendBlocked
+
+    with pytest.raises(RealTelegramSendBlocked):
+        requests.post("https://api.telegram.org/botX/sendMessage", data={})

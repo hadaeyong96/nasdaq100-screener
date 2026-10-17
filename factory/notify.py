@@ -16,8 +16,9 @@
 토큰·chat id는 쓰지 않는다). 다음에 send가 불릴 때 보관분을 오래된 것부터 먼저 다시 보내고, 성공하면 파일을 지운다.
 3일이 지난 보관분은 보내지 않고 지운다. 보관분 재발송이 실패하면 그 뒤 보관분은 다음 기회로 미룬다.
 
-손으로 보내기:
-    python -m factory.notify --event explore_done --summary-file <결과 JSON 또는 YAML>
+실제 발송은 GitHub Actions 안에서만(2026-10-17 — 로컬 테스트가 진짜 알림을 보낸 사고 뒤). 로컬·미리보기·테스트는 dry-run.
+손으로 보내기(로컬에서 실제로 보낼 때만 --send):
+    python -m factory.notify --event explore_done --summary-file <결과 JSON 또는 YAML> --send
     python -m factory.notify --event explore_done --summary-file x.json --dry-run   # 보내지 않고 글만 출력
 """
 
@@ -172,15 +173,28 @@ def flush_pending(target: tuple[str, str], post, *, pending_dir: Path | None = N
     return sent
 
 
+def real_send_allowed(force: bool = False) -> bool:
+    """실제 텔레그램 발송을 해도 되는지 (2026-10-17): GitHub Actions 안(GITHUB_ACTIONS=true)이거나 손으로 --send를 준 때만.
+    로컬 실행·미리보기·테스트는 기본이 dry-run(글만 출력)."""
+    return force or os.environ.get("GITHUB_ACTIONS") == "true"
+
+
 def send(event: str, s: dict, *, post=None, catalog_path: Path = CATALOG, pending_dir: Path | None = None,
-         now: datetime | None = None) -> bool:
-    """알림 한 통(그 전에 보관분부터 다시 보냄). 출력: 보냈으면 True, 받는 곳이 없어 건너뛰었으면 False.
+         now: datetime | None = None, force: bool = False) -> bool:
+    """알림 한 통(그 전에 보관분부터 다시 보냄). 출력: 보냈으면 True, 받는 곳이 없거나 dry-run이면 False.
     단체방이면 FactoryNotifyForbidden. 발송이 실패하면 RETRY_DELAYS 간격으로 최대 3번 다시 보내고,
-    그래도 실패하면 글을 보관하고 마지막 예외를 다시 낸다."""
+    그래도 실패하면 글을 보관하고 마지막 예외를 다시 낸다.
+
+    실제 발송(_post)은 real_send_allowed(force)일 때만 — 그 밖에는 글만 출력(dry-run). post를 넘기면(테스트 대역) 그걸 쓴다."""
     text = build_message(event, s, catalog_path)
     target = _target()
     if target is None:
         print(f"[factory.notify] {CHAT_ENV}(또는 봇 토큰)가 없어 전략분석기 알림을 건너뜁니다 ({event})")
+        return False
+    if post is None and not real_send_allowed(force):
+        print(f"[factory.notify] 로컬 실행이라 전략분석기에 실제로 보내지 않습니다(dry-run, {event}). "
+              "실제 발송은 GitHub Actions 매일 실행에서만 — 손으로 보내려면 --send")
+        print(text)
         return False
     poster = post or _post
     flush_pending(target, poster, pending_dir=pending_dir, now=now)
@@ -228,6 +242,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--event", choices=EVENTS, required=True)
     p.add_argument("--summary-file", required=True, help="결과 요약 JSON/YAML (name, verdict, cagr, qqq_cagr, random_pct 등)")
     p.add_argument("--dry-run", action="store_true", help="보내지 않고 글만 출력")
+    p.add_argument("--send", action="store_true", help="로컬에서도 실제로 보냄(기본은 GitHub Actions 밖이면 dry-run)")
     a = p.parse_args(argv)
     try:
         from dotenv import load_dotenv
@@ -239,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.dry_run:
         print(build_message(a.event, s))
         return 0
-    send_safely(a.event, s)
+    send_safely(a.event, s, force=a.send)
     return 0  # 알림 실패로 공장 작업을 실패시키지 않는다
 
 
