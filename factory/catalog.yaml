@@ -20,7 +20,7 @@ strategies:
   - {id: vb5_tqqq_sma200, name: TQQQ 200일선 전환(SGOV), status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 5번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
   - {id: vb6_picks, name: "추천 종목 따라하기(RSI·MACD·일목)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 6번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
   - {id: vb7_bollinger, name: "볼린저·RSI·MACD 따라하기", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 7번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
-  - {id: vb8_rs26, name: "6개월 강세 따라하기(RS26)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 검증 ③ FAIL(세후 7.45% vs QQQ 18.70%), 관찰만 계속. 시작일 = 첫 월말", evidence: "rs26-prereg, docs/results/rs26_zone3.md"}
+  - {id: vb8_value_score, name: "가치평가 전략(value-score)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 2026-10-19 시작(고정, 1억 원 일시금). 검증 ③ FAIL(세후 11.32% vs QQQ 19.79%) — 관찰만, 채택 아님", evidence: "value-score-prereg, docs/results/value_score_zone3.md, config virtual_books.value_score"}
   - {id: vb9_accel, name: "한 달 가속 따라하기(ACCEL)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 9번 — 검증 ③ FAIL(세후 5.25% vs QQQ 19.29%), 관찰만 계속", evidence: "accel-prereg, docs/results/accel_zone3.md"}
 
   # ── 탈락 보관 ──────────────────────────────────────────────────────────
@@ -34,7 +34,8 @@ strategies:
   - {id: x_l3_b2_b3, name: "국면 전환 L3·B2·B3", status: 탈락 보관, zone: "구역 정책 전 (QQQ 1999~2021, ^IXIC·미국 시장 1998까지)", result: "불합격 — L3 MDD −95.56%, L1b B2·B3 불합격", evidence: "l1-prereg, l1b-prereg, docs/results/l1.md, docs/results/l1b.md"}
   - {id: x_defensive_assets, name: "고배당·1배 방어 자산", status: 탈락 보관, zone: "구역 정책 전 (프렌치 시장 1927~1998)", result: "국채보다 더 빠짐 — M2 고배당 MDD −93.07% 등 월별 M1~M3 불합격", evidence: "l1b-prereg, docs/results/l1b.md"}
   - {id: x_weekly_rs, name: "1주 강세 + 3% 익절, 1~3주 강세", status: 탈락 보관, zone: "탐색 (현재 명단)", result: "무작위와 같음 (숫자 기록 없음 — 문서 기록만)", evidence: "docs/design/weekly_rs.md"}
-  - {id: x_rs26, name: "6개월 강세 따라하기(RS26)", status: 탈락 보관, zone: "검증 ③ 1/5", result: "FAIL 7.45% (QQQ 18.70%)", evidence: "rs26-prereg, docs/results/rs26_zone3.md"}
+  - {id: x_rs26, name: "6개월 강세 따라하기(RS26)", status: 탈락 보관, zone: "검증 ③ 1/5", result: "FAIL 7.45% (QQQ 18.70%). 가상 장부 8번 계획도 탈락 보관 — 시작 기록 없음, 10/30 시작 고정 계획 취소(2026-10-18)", evidence: "rs26-prereg, docs/results/rs26_zone3.md"}
+  - {id: x_value_score, name: "가치평가 전략(value-score)", status: 탈락 보관, zone: "검증 ③ 3/5", result: "FAIL 11.32% (QQQ 19.79%, 동일 비중 12.07%), 무작위 36.2백분위", evidence: "value-score-prereg, docs/results/value_score_zone3.md"}
   - {id: x_accel, name: "한 달 가속 따라하기(ACCEL)", status: 탈락 보관, zone: "검증 ③ 2/5", result: "FAIL 5.25% (QQQ 19.29%)", evidence: "accel-prereg, docs/results/accel_zone3.md"}
   - {id: x_sector_pullback, name: "강한 업종 속 강한 종목 첫 눌림(탐색 B)", status: 탈락 보관, zone: "탐색 (시점별 나스닥100 ∪ S&P 100, 2012~2021)", result: "B0 16.29% vs QQQ 19.98%, 가짜 1등 95백분위 18.32% 미달 (B0~B3 모두 기준 미충족, 판정 아님)", evidence: "sector-pullback-prereg, docs/factory/explore/sector_pullback.md"}
   - {id: x_shock_dip, name: "충격 웅덩이 A·B1·B2·B3·B4", status: 탈락 보관, zone: "지수 탐색 (S&P500 1960-04~1998, 나스닥 1972~1998, QQQ 1999~2021, 해외 5곳 ~2021)", result: "QQQ 세후 A 5.28% vs 1배 6.98%, 6개 모두 FAIL", evidence: "shock-dip-prereg-v3, research/shock-dip 24964b0 docs/research/shock_dip_results.md"}
@@ -92,11 +93,11 @@ strategies:
     result: ""
     evidence: ""
     source: 외부 AI 1·2 (기존 후보 PG1 '과거 PEG 1 미만' 흡수)
-    planned_trials: 4
+    planned_trials: 3  # 2026-10-18 b(PEG)는 가치평가 전략 시험에 흡수
     variants:
       base: "영업이익/매출 백분위와 영업이익/EV 백분위의 평균 상위 10, 영업이익 > 0, 매월"
       a: "최근 4분기 FCF(영업현금흐름 − 자본적지출)/EV 상위 10, FCF > 0"
-      b: "과거 PEG 1 미만 (기존 PG1 규칙)"
+      b: "과거 PEG 1 미만 (기존 PG1 규칙) — 2026-10-18 가치평가 전략 시험(value-score-prereg)에 흡수, 따로 시험하지 않음"
       c: "최근 4분기 FCF 금액 상위 20 동일 비중, 분기 재조정 — 반드시 대조군 '시가총액 상위 20 동일 비중'과 비교 (금액 순위는 사실상 회사 크기 순위)"
   - id: macro_timing_family
     rank: 5

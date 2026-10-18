@@ -256,3 +256,47 @@ def load_rec_log(conn: sqlite3.Connection) -> dict[str, dict]:
         if side in rec:
             rec[side].add(t)
     return out
+
+
+# ── 8번 장부 「가치평가 따라하기」 월말 점수표·SIC (core/value_book.py, engine/value_book.py) ─────────
+
+
+def _ensure_value_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS value_scores (book TEXT, date TEXT, scores_json TEXT, PRIMARY KEY (book, date));
+        """
+    )
+
+
+def save_value_scores(conn: sqlite3.Connection, book: str, date: str, scores: pd.DataFrame) -> None:
+    """그 월말 점수표(index=티커)를 남긴다 — 다음 실행·12월 실행일이 같은 점수를 다시 쓴다(같은 키면 바꿔 쓴다)."""
+    _ensure_value_schema(conn)
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO value_scores (book, date, scores_json) VALUES (?, ?, ?)",
+                     (book, date, scores.to_json(orient="split")))
+
+
+def load_value_scores(conn: sqlite3.Connection, book: str, date: str) -> pd.DataFrame | None:
+    """저장된 그 월말 점수표 (없으면 None)."""
+    import io
+
+    _ensure_value_schema(conn)
+    row = conn.execute("SELECT scores_json FROM value_scores WHERE book = ? AND date = ?", (book, date)).fetchone()
+    return pd.read_json(io.StringIO(row[0]), orient="split") if row else None
+
+
+def latest_value_scores_date(conn: sqlite3.Connection, book: str) -> str | None:
+    _ensure_value_schema(conn)
+    row = conn.execute("SELECT MAX(date) FROM value_scores WHERE book = ?", (book,)).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def load_sic_cache(conn: sqlite3.Connection) -> dict:
+    """{티커: SIC} — SEC submissions에서 한 번 받은 값(meta 표 value_sic_cache)."""
+    raw = get_meta(conn, "value_sic_cache")
+    return json.loads(raw) if raw else {}
+
+
+def save_sic_cache(conn: sqlite3.Connection, cache: dict) -> None:
+    set_meta(conn, "value_sic_cache", json.dumps(cache, ensure_ascii=False))

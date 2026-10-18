@@ -18,7 +18,7 @@ concurrency:
 jobs:
   daily:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60 # 2026-10-18 30→60: 8번 가치평가 장부가 월말에 EDGAR 재무 약 350종목을 받는다
     steps:
       - uses: actions/checkout@v4
 
@@ -68,6 +68,8 @@ jobs:
           VIRTUAL_BOOKS_SHEETS_ID: ${{ secrets.VIRTUAL_BOOKS_SHEETS_ID }}
           # 값은 쓰지 않고 있는지만 본다: 없고 시작일도 미고정이면 가상 장부가 매일 새로 시작하므로 멈춘다
           GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
+          # 8번 가치평가 장부의 EDGAR 요청 User-Agent(연락처) — 없으면 8번만 오류로 기다리고 나머지는 그대로
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
         run: |
           python -m engine.daily --mode live
           python -m engine.daily --mode paper --no-send

@@ -161,7 +161,8 @@ def trades_table(ledger: LedgerResult, books: list[BookSpec], extra: list[dict] 
 
 
 # 정해진 신호일마다 상위 10을 같은 비중으로 맞추는 장부 kind → (시작 조건 줄 이름, 시작일 설명)
-REBALANCE_KINDS = {"momentum": ("6개월 강세", "첫 월말 신호일"), "accel": ("한 달 가속", "처음 돈 기준일 = 첫 신호일")}
+REBALANCE_KINDS = {"momentum": ("6개월 강세", "첫 월말 신호일"), "value_score": ("가치평가", "배포 다음 거래일(고정)"),
+                   "accel": ("한 달 가속", "처음 돈 기준일 = 첫 신호일")}
 
 
 def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = None) -> list[list]:
@@ -169,7 +170,7 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
 
     meta: {start_krw, start_fx, fx_date, initial_usd, updated_at, min_days_for_annualized, notes([str])}
     extra: 추천 따라하기 장부 [{name, start, summary, meta}] — 이 장부들만 완료 거래 수·승률·평균 보유일·
-    SGOV 보유액 열을 채운다(전환 횟수는 비움). kind == "momentum"(6개월 강세 따라하기)은 이 장부만
+    SGOV 보유액 열을 채운다(전환 횟수는 비움). kind가 REBALANCE_KINDS(6개월 강세·가치평가·한 달 가속)인 장부만
     교체 횟수·현재 보유 10종목 열을 채운다.
     """
     extra = extra or []
@@ -210,6 +211,8 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
         rows.append([f"시작 조건({label})", f"장부당 {m['start_krw']:,.0f}원 ÷ {m['start_fx']:,.2f}원/$ ({m['fx_date']}) "
                      f"= ${m['initial_usd']:,.2f}, 이후 달러 운용 · 시작일 {_d(x['start'])}({first})"])
         rows.append([f"config 고정값({x['kind']})", f"start_date: \"{_d(x['start'])}\"  start_fx: {m['start_fx']!r}"])
+        if x["summary"].get("rules"):  # 8번 가치평가: 규칙 한 줄(점수·문턱은 100점 만점 표시)
+            rows.append([f"규칙({label})", x["summary"]["rules"]])
     rows.append(["갱신", meta["updated_at"]])
     rows.append(["연환산", f"시작 후 {meta['min_days_for_annualized']}일 미만이면 비움"])
     for n in meta.get("notes", []):
