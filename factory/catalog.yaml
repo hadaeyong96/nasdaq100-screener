@@ -20,7 +20,7 @@ strategies:
   - {id: vb5_tqqq_sma200, name: TQQQ 200일선 전환(SGOV), status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 5번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
   - {id: vb6_picks, name: "추천 종목 따라하기(RSI·MACD·일목)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 6번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
   - {id: vb7_bollinger, name: "볼린저·RSI·MACD 따라하기", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 7번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
-  - {id: vb8_value_score, name: "가치평가 전략(value-score)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 2026-10-19 시작(고정, 1억 원 일시금). 검증 ③ FAIL(세후 11.32% vs QQQ 19.79%) — 관찰만, 채택 아님", evidence: "value-score-prereg, docs/results/value_score_zone3.md, config virtual_books.value_score"}
+  - {id: vb8_value_score, name: "가치평가 전략(value-score)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 2026-10-19 시작(고정, 1억 원 일시금). 대상: S&P500 + 나스닥100(금융 제외, 2026-10-18 결정 — 판정 구역과 다름). 검증 ③ FAIL(세후 11.32% vs QQQ 19.79%) — 관찰만, 채택 아님", evidence: "value-score-prereg, docs/results/value_score_zone3.md, config virtual_books.value_score"}
   - {id: vb9_accel, name: "한 달 가속 따라하기(ACCEL)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 9번 — 검증 ③ FAIL(세후 5.25% vs QQQ 19.29%), 관찰만 계속", evidence: "accel-prereg, docs/results/accel_zone3.md"}
 
   # ── 탈락 보관 ──────────────────────────────────────────────────────────
