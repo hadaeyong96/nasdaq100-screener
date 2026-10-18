@@ -280,3 +280,29 @@ def test_sp500_rollback_with_changes_table():
                       columns=pd.MultiIndex.from_tuples([("Effective Date", "Effective Date"), ("Added", "Ticker"), ("Removed", "Ticker")]))
     assert vl.sp500_on(date(2026, 9, 30), [cur], [ch]) == {"AAA", "BRK-B", "OLD"}
     assert vl.sp500_on(date(2026, 10, 7), [cur], [ch]) == {"AAA", "BRK-B", "NEW"}
+
+
+def test_missing_sec_user_agent_skips_book8_with_one_warning(tmp_path, monkeypatch):
+    """Actions에 SEC_USER_AGENT Secret이 아직 없을 때: 8번만 건너뛰고 경고 한 줄, 오류(운영 알림) 없음, DB에 아무것도 안 씀."""
+    from data import edgar, value_live
+
+    monkeypatch.delenv("SEC_USER_AGENT", raising=False)
+    monkeypatch.setattr(edgar, "get_user_agent", lambda: (_ for _ in ()).throw(edgar.EdgarConfigError("없음")))
+    monkeypatch.setattr(value_live, "universe_on", lambda d: {"AAA"})
+    conn = vbstore.connect(tmp_path / "v.db")
+    r = ev.run_value_score(_cfg(), conn, _ctx("2026-10-19"), dry_run=False, history_fn=_hist,
+                           fx_range_fn=lambda a, b: {d.date().isoformat(): FX for d in DAYS})
+    assert r["errors"] == [] and r["extra"] == []
+    assert len([w for w in r["warnings"] if "SEC_USER_AGENT" in w]) == 1
+    assert vbstore.load_picks_book(conn, "가치평가 따라하기") is None  # 다음 실행이 시작일부터 따라잡는다
+
+
+def test_virtual_books_run_keeps_other_books_when_book8_skipped(monkeypatch):
+    """8번이 건너뛰어도 run 결과의 오류가 없어 운영 오류 알림이 나가지 않는다(다른 장부·편지는 그대로)."""
+    from engine import virtual_books as evb
+
+    sent = []
+    monkeypatch.setattr(evb, "run", lambda cfg, **kw: {"errors": [], "warnings": ["가치평가 따라하기: SEC_USER_AGENT가 없어 오늘은 건너뜁니다"],
+                                                         "alerts": [], "picks": {"extra": []}})
+    out = evb.run_safely(_cfg(), ops_sender=sent.append)
+    assert out is not None and sent == []

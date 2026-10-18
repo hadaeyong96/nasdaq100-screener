@@ -17,6 +17,7 @@ import pandas as pd
 
 from core import tax_harvest as th
 from core import value_book as vbk
+from data.edgar import EdgarConfigError
 from data import virtual_books_data as vbdata
 from data.market_calendar import trading_days_between
 from store import virtual_books as vbstore
@@ -205,6 +206,10 @@ def run_value_score(cfg: dict, conn, ctx: dict, *, dry_run: bool, history_fn=Non
             "meta": {"start_krw": p.start_krw, "start_fx": book.get("start_fx"), "fx_date": str(pd.Timestamp(book["start_date"]).date()),
                      "initial_usd": book["initial_usd"]},
         })
+    except EdgarConfigError:
+        # SEC_USER_AGENT(GitHub Secret)가 아직 없음: 오늘은 8번만 건너뛰고 경고 한 줄(매일 오류 알림을 보내지 않는다).
+        # DB에 아무것도 쓰지 않았으므로 Secret을 넣은 뒤 첫 실행이 시작일부터 따라잡는다.
+        out["warnings"].append(f"{name}: SEC_USER_AGENT가 없어 오늘은 건너뜁니다(GitHub Secret 추가 필요, 넣으면 시작일부터 따라잡음)")
     except Exception as exc:  # 이 장부의 오류가 다른 장부·브리핑을 막지 않게
         out["errors"].append(f"{name} 오류: {type(exc).__name__}: {exc}")
     return out
