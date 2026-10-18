@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -30,7 +31,8 @@ from core.radar import term_monthly as tm  # noqa: E402
 from data.radar import guard  # noqa: E402
 
 ARX = ROOT / "data" / "cache" / "arxiv"
-OUT = ROOT / "data" / "cache" / "radar"
+# RADAR_OUT: 시험 실행용 다른 출력 폴더(작업자 프로세스도 같은 값을 물려받는다). 없으면 data/cache/radar
+OUT = Path(os.environ["RADAR_OUT"]) if os.environ.get("RADAR_OUT") else ROOT / "data" / "cache" / "radar"
 CORPUS = OUT / "corpus"
 WIDTH = 26
 MIN_TOTAL = 20
