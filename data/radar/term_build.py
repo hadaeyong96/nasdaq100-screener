@@ -37,6 +37,7 @@ CORPUS = OUT / "corpus"
 WIDTH = 26
 MIN_TOTAL = 20
 LAST_MONTH = "2021-12"
+FIRST_V1 = "1991-01-01"  # 지시 기간 1991~2021 (arXiv 레코드에 v1 날짜가 1991 전인 것이 있다 — 가장 이른 것 1988-11-11)
 ONE_WORD = frozenset({"blockchain", "bitcoin", "graphene", "lidar"})  # 감지율 참고 칸 전용 (사용자 결정 2026-10-18)
 TARGETS = ["deep learning", "convolutional neural network", "generative adversarial network", "reinforcement learning",
            "large language model", "federated learning", "internet of things", "cloud computing", "edge computing",
@@ -70,7 +71,7 @@ def step_corpus() -> None:
     n_raw = len(df)
     df = df.drop_duplicates("id", keep="first")
     bad_date = df["v1_date"].str.match(r"^\d{4}-\d{2}-\d{2}$") == False  # noqa: E712
-    df = df[~bad_date & (df["v1_date"] <= "2021-12-31")]
+    df = df[~bad_date & (df["v1_date"] >= FIRST_V1) & (df["v1_date"] <= "2021-12-31")]
     df["month"] = df["v1_date"].str[:7]
     miss = {c: int((df[c].fillna("") == "").sum()) for c in ("title", "abstract", "categories")}
     CORPUS.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,6 @@
 """arXiv 메타데이터 수집기 (신기술 레이더 G0) — 공식 OAI-PMH, 이어받기·재시도.
 
-    python -m data.radar.arxiv_oai harvest            # 처음부터 또는 저장된 resumption token에서 이어받기
+    python -m data.radar.arxiv_oai harvest [초]       # 처음부터 또는 저장된 token에서 이어받기 (초: 그 시간 뒤 쪽 사이에서 멈춤)
     python -m data.radar.arxiv_oai window 2015-03-02 2015-03-03 out_dir   # 재현성 확인용 datestamp 구간 수집
 
 - 주소: export.arxiv.org/oai2 (지시) → 지금은 oaipmh.arxiv.org/oai로 301 이동한다(같은 공식 서비스). 이동한 주소로 직접 부른다.
@@ -86,7 +86,8 @@ def _save_page(n: int, raw: bytes, recs: list[dict]) -> None:
         OUT / "parsed" / f"page_{n:05d}.parquet", index=False)
 
 
-def harvest() -> None:
+def harvest(max_seconds: float | None = None) -> None:
+    """max_seconds가 있으면 그 시간이 지난 뒤 쪽 사이에서 깨끗이 멈춘다(다음 실행이 이어받음)."""
     guard.install()
     OUT.mkdir(parents=True, exist_ok=True)
     state_p = OUT / "state.json"
@@ -122,6 +123,9 @@ def harvest() -> None:
         if nxt is None:
             break
         token = nxt
+        if max_seconds is not None and time.time() - t0 > max_seconds:
+            print(f"시간 제한 {max_seconds:.0f}초 — 쪽 {page}에서 멈춤(이어받기 가능)", flush=True)
+            break
     run["ended"] = datetime.now(timezone.utc).isoformat()
     with open(OUT / "runs.jsonl", "a", encoding="utf-8") as fh:
         fh.write(json.dumps(run, ensure_ascii=False) + "\n")
@@ -157,6 +161,6 @@ if __name__ == "__main__":
     for s in (sys.stdout, sys.stderr):
         s.reconfigure(encoding="utf-8")
     if sys.argv[1] == "harvest":
-        harvest()
+        harvest(float(sys.argv[2]) if len(sys.argv) > 2 else None)
     elif sys.argv[1] == "window":
         window(sys.argv[2], sys.argv[3], sys.argv[4])
