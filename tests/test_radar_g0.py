@@ -143,3 +143,45 @@ def test_radar_modules_never_name_price_caches():
             if f.name == "guard.py":
                 continue
             assert f'"{bad}"' not in s and f"/{bad}" not in s, (f.name, bad)
+
+
+# ── G0-보완 (core/radar/g0b.py) ─────────────────────────────────────────────
+
+from core.radar import g0b  # noqa: E402
+
+
+def test_g0b_filters():
+    assert g0b.is_industrial("cs.LG") and g0b.is_industrial("eess.SP") and g0b.is_industrial("quant-ph")
+    assert g0b.is_industrial("cond-mat.mtrl-sci") and not g0b.is_industrial("cond-mat.str-el") and not g0b.is_industrial("hep-th")
+    assert g0b.generic_edge("cnn based") and g0b.generic_edge("model achieve") and g0b.generic_edge("large language model")
+    assert not g0b.generic_edge("deep learning") and not g0b.generic_edge("modeling tool")
+    assert g0b.event_term("novel coronavirus") and g0b.event_term("respiratory syndrome coronavirus") and g0b.event_term("second wave")
+    assert not g0b.event_term("sarsa learning") and not g0b.event_term("wave background")
+    assert g0b.contains("convolutional neural network", "convolutional neural") and g0b.contains("deep neural network", "neural network")
+    assert not g0b.contains("deep neural network", "deep network")
+
+
+def test_register_growth_rule():
+    T = 72
+    total = np.full(T, 10_000.0)
+    n = np.zeros((3, T))
+    n[0] = np.round(30 * 1.4 ** (np.arange(T) / 12))  # 연 40% 성장 → 12개월 합 ≥ 200이 되면 등록
+    n[1] = np.round(30 * 1.2 ** (np.arange(T) / 12))  # 연 20% → 미등록
+    n[2, 40:] = 50  # 3년 전 0 → 꾸준한 성장 아님(급증 규칙 몫)
+    reg = g0b.register_growth(n, total)
+    assert reg[0] >= 47 and n[0, reg[0] - 11:reg[0] + 1].sum() >= 200 and reg[1] == -1 and reg[2] == -1
+    for t in (50, reg[0], 70):  # 미래 데이터 방지
+        cut = g0b.register_growth(n[:, :t + 1], total[:t + 1])
+        assert all((c == r) if r <= t else (c == -1) for c, r in zip(cut, reg))
+
+
+def test_section_business_skips_toc_and_risk_factors():
+    body = "Item 1. Business " + "We design lidar sensors. lidar sensors " + "x " * 1200
+    text = ("TABLE OF CONTENTS Item 1. Business 3 Item 1A. Risk Factors 9 Item 2. Properties 20 " + body +
+            " Item 1A. Risk Factors " + "lidar sensors risk " * 200 + " Item 2. Properties ...")
+    s = g0b.section(text, "10-K")
+    assert s is not None and s.startswith("Item 1. Business We design") and "Risk Factors" not in s
+    assert el.mentions(s, "lidar sensor")[0] == 2
+    q = "Item 2. Management’s Discussion and Analysis " + "edge computing " * 3 + "y " * 1200 + " Item 3. Quantitative"
+    assert el.mentions(g0b.section(q, "10-Q"), "edge computing")[0] == 3
+    assert g0b.section("no items here", "10-K") is None and g0b.section(text, "8-K") is None
