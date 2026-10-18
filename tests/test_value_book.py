@@ -306,3 +306,16 @@ def test_virtual_books_run_keeps_other_books_when_book8_skipped(monkeypatch):
                                                          "alerts": [], "picks": {"extra": []}})
     out = evb.run_safely(_cfg(), ops_sender=sent.append)
     assert out is not None and sent == []
+
+
+def test_universe_is_sp500_union_nasdaq100():
+    """[사용자 결정 2026-10-18 23:12] 앞으로 기록 대상 = 그날 S&P 500 ∪ 나스닥 100 (S&P 100도 빼지 않음). 금융 제외는 compute_scores가 그대로 한다."""
+    cur = pd.DataFrame({"Symbol": [f"S{i}" for i in range(460)] + ["AAPL", "JPM"]})
+    ch = pd.DataFrame([["October 6, 2026", "S0", "OLD"]],
+                      columns=pd.MultiIndex.from_tuples([("Effective Date", "Effective Date"), ("Added", "Ticker"), ("Removed", "Ticker")]))
+    ndx = {f"N{i}" for i in range(99)} | {"AAPL"}
+    u = vl.universe_on(date(2026, 9, 30), [cur], ndx_fn=lambda d: ndx, change_tables=[ch])
+    assert {"AAPL", "JPM", "OLD", "N0"} <= u and "S0" not in u
+    assert len(u) == 460 + 2 + len(ndx) - 1  # S0 되돌림(−1), OLD(+1), AAPL 겹침(−1)
+    with pytest.raises(vl.ValueLiveError):
+        vl.universe_on(date(2026, 9, 30), [cur], ndx_fn=lambda d: {"AAPL"}, change_tables=[ch])  # 나스닥 100이 비면 멈춤

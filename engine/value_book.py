@@ -199,7 +199,7 @@ def run_value_score(cfg: dict, conn, ctx: dict, *, dry_run: bool, history_fn=Non
             summary["holdings_list"] = ", ".join(
                 f"{t}({vbk.display_score(bd['total'].get(t)):.0f})" if bd["total"].get(t) is not None else f"{t}(-)"
                 for t in sorted(book["positions"]))
-        summary["rules"] = f"재무 점수 상위 10종목 오래 보유, 12월에 세금 없는 만큼만 갈아타기 · 문턱 {vbk.threshold_text(p)}"
+        summary["rules"] = f"재무 점수 상위 10종목 오래 보유, 12월에 세금 없는 만큼만 갈아타기 · 대상: S&P500 + 나스닥100(금융 제외) · 문턱 {vbk.threshold_text(p)}"
         out["extra"].append({
             "name": name, "kind": KIND, "start": pd.Timestamp(book["start_date"]), "daily": daily, "trades": trade_rows,
             "summary": summary, "positions": book["positions"],

@@ -1,8 +1,9 @@
 """가상 장부 8번 「가치평가 따라하기」 — 라이브 명단·월말 점수 (네트워크). 계산은 core.value_score 그대로.
 
-- 명단(그 월말 기준): S&P 500 − (나스닥 100 ∪ S&P 100).
-  S&P 500 = 위키 "List of S&P 500 companies" 현재 표 + 변경 표로 그 날짜까지 되돌림. 나스닥 100 = data.universe_history 역산.
-  S&P 100 = 위키 현재 표(되돌림 없음 — 한계). 티커는 BRK.B → BRK-B.
+- 명단(그 월말 기준): **S&P 500 ∪ 나스닥 100** [사용자 결정 2026-10-18 23:12 — 앞으로 기록에는 구역 제한이 필요 없다.
+  검증 ③ 판정 장부는 S&P 500 − (나스닥 100 ∪ S&P 100)였다 — docs/results/value_score_zone3.md].
+  S&P 500 = 위키 "List of S&P 500 companies" 현재 표 + "Historical components" 변경 표로 그 날짜까지 되돌림.
+  나스닥 100 = data.universe_history 역산. 티커는 BRK.B → BRK-B. 금융(SIC 6000~6799) 등 나머지 필터는 그대로(compute_scores).
 - 재무: EDGAR companyfacts(SEC User-Agent, 초당 10회 이하) 10-K·10-K/A 사실만, 판단일 전 접수본만(core.value_score.annual_table).
 - SIC: SEC submissions (한 번 받은 값은 sic_cache로 재사용).
 - 그날 실제 종가: yfinance 종가 × (그날 뒤 ~ 오늘 분할·분사 비율 곱). EPS·주식 수 분할 조정은 흔한 분할 비율만(사전 등록 4-1-5).
@@ -79,10 +80,9 @@ def sp100_now(tables=None) -> set[str]:
 
 
 def universe_on(asof: date, sp500_tables=None, sp100_tables=None, ndx_fn=None, change_tables=None) -> set[str]:
-    """그날 구역: S&P 500 − (나스닥 100 ∪ S&P 100)."""
+    """그날 대상 명단: S&P 500 ∪ 나스닥 100 (사용자 결정 2026-10-18 23:12). sp100_tables는 예전 호출 호환용(쓰지 않음)."""
     try:
         sp = sp500_on(asof, sp500_tables, change_tables)
-        s100 = sp100_now(sp100_tables)
         if ndx_fn is None:
             from data import universe_history as uh
 
@@ -95,7 +95,9 @@ def universe_on(asof: date, sp500_tables=None, sp100_tables=None, ndx_fn=None, c
         raise ValueLiveError(f"가치평가 명단을 받지 못했습니다: {type(exc).__name__}: {exc}") from exc
     if len(sp) < 450:
         raise ValueLiveError(f"S&P 500 명단이 {len(sp)}종목뿐입니다 — 표 형식이 바뀌었을 수 있습니다")
-    return sp - ndx - s100
+    if len(ndx) < 90:
+        raise ValueLiveError(f"나스닥 100 명단이 {len(ndx)}종목뿐입니다")
+    return sp | ndx
 
 
 def _facts_frame(cf: dict) -> pd.DataFrame:
