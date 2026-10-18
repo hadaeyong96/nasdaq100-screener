@@ -1,6 +1,7 @@
 # 제안서 — 가상 장부 8번 「6개월 강세 전략」 → 「가치평가 전략」 교체 (구현하지 않음)
 
-> 작성 2026-10-18 (research/value-score). **승인 전에는 아무것도 바꾸지 않는다.** main 병합·daily 코드 수정은 사용자 승인 뒤 별도 작업이다.
+> 작성 2026-10-18 (research/value-score). **2026-10-18 사용자 승인 → feat/book8-value-score에서 구현** (아래 1장 결정: 납입 없음·1억 원 일시금, 공용 규칙 세금(8번만 원화·공제), 시작일 2026-10-19 고정). 구현 내용은 `docs/design/virtual_books.md` 「가치평가 따라하기」.
+> 원래 문구: **승인 전에는 아무것도 바꾸지 않는다.** main 병합·daily 코드 수정은 사용자 승인 뒤 별도 작업이다.
 > 근거: `docs/prereg/value_score.md`(태그 `value-score-prereg`), 판정 결과 `docs/results/value_score_zone3.md`, `factory/catalog.yaml`(8번 자리).
 > 실제 주문 없음. 로컬에서는 텔레그램을 보내지 않는다(Actions만 보냄) — 시험은 dry-run.
 

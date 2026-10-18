@@ -127,9 +127,10 @@ def _family_of(cfg: dict) -> dict[str, str]:
         fam[b["name"]] = "trend" if b.get("kind") == "sma_switch" else "hold"
     for b in (vb.get("picks") or {}).get("books", []):
         fam[b["name"]] = "picks"
-    for key in ("momentum", "accel"):
-        if (vb.get(key) or {}).get("name"):
-            fam[vb[key]["name"]] = "rebalance"
+    for key in ("momentum", "value_score", "accel"):  # 8번 자리: 2026-10-18부터 가치평가(6개월 강세는 꺼 둠)
+        c = vb.get(key) or {}
+        if c.get("name") and c.get("enabled", True):
+            fam[c["name"]] = "rebalance"
     return fam
 
 

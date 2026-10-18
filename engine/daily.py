@@ -2414,14 +2414,21 @@ def _fetch_close_series(ticker: str, cfg: dict) -> pd.Series:
 
 
 def _waiting_books(cfg: dict, base_date, extra_names: set[str]) -> dict[str, pd.Timestamp]:
-    """아직 시작 전인 장부 → 시작 예정일. 지금은 6개월 강세(시작일 미고정, 첫 월말 신호일 시작)만."""
-    mo = (cfg.get("virtual_books") or {}).get("momentum") or {}
-    if not mo.get("enabled") or mo.get("name") in extra_names or mo.get("start_date"):
-        return {}
+    """아직 시작 전인 장부 → 시작 예정일: 8번 가치평가(시작일 고정 — 그날 전까지), 6개월 강세(켜져 있을 때, 첫 월말 신호일)."""
+    vb = cfg.get("virtual_books") or {}
     base = pd.Timestamp(base_date).normalize()
+    out: dict[str, pd.Timestamp] = {}
+    va = vb.get("value_score") or {}
+    if va.get("enabled") and va.get("name") not in extra_names and va.get("start_date"):
+        out[va["name"]] = pd.Timestamp(va["start_date"])
+    mo = vb.get("momentum") or {}
+    if not mo.get("enabled") or mo.get("name") in extra_names or mo.get("start_date"):
+        return out
     days = trading_days_between(base.date(), (base + pd.Timedelta(days=70)).date())
     ends = [d for d, nxt in zip(days[:-1], days[1:]) if d.month != nxt.month]
-    return {mo["name"]: pd.Timestamp(ends[0])} if ends else {}
+    if ends:
+        out[mo["name"]] = pd.Timestamp(ends[0])
+    return out
 
 
 def _letter_vbooks(vb_result: dict, cfg: dict) -> dict:

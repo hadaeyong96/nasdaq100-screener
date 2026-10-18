@@ -39,13 +39,14 @@ class Strategy:
 
 
 def strategies_from_cfg(cfg: dict) -> list[Strategy]:
-    """config.yaml virtual_books → 전략 1~9번 (1~5 기존 장부, 6·7 추천 따라하기, 8 6개월 강세, 9 한 달 가속)."""
+    """config.yaml virtual_books → 전략 1~9번 (1~5 기존 장부, 6·7 추천 따라하기, 8 가치평가(2026-10-18~, 전 6개월 강세), 9 한 달 가속)."""
     vb = cfg["virtual_books"]
     names = [b["name"] for b in vb["books"]]
     names += [b["name"] for b in (vb.get("picks") or {}).get("books", [])]
-    for key in ("momentum", "accel"):
-        if (vb.get(key) or {}).get("name"):
-            names.append(vb[key]["name"])
+    for key in ("momentum", "value_score", "accel"):  # 8번 자리: 2026-10-18부터 가치평가(꺼 둔 장부는 뺀다)
+        c = vb.get(key) or {}
+        if c.get("name") and c.get("enabled", True):
+            names.append(c["name"])
     labels = vb.get("display_names") or {}
     return [Strategy(i + 1, n, labels.get(n, n)) for i, n in enumerate(names)]
 

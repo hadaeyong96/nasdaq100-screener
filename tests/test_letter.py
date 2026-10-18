@@ -43,7 +43,7 @@ def _books(cfg, *, trend_holding="QLD", accel_positions=None, accel_trades=None,
             _sum("TQQQ 200일선 전환", 3.0 if trend_holding == "QLD" else 0.0, "TQQQ" if trend_holding == "QLD" else trend_holding)]
     extra = [_extra("추천 종목 따라하기", 0.0), _extra("볼린저·RSI·MACD 따라하기", 0.0),
              _extra("한 달 가속 따라하기", 0.4, accel_positions, accel_trades)]
-    wait = {"6개월 강세 따라하기": pd.Timestamp("2026-10-30")} if waiting else None
+    wait = {"가치평가 따라하기": pd.Timestamp("2026-10-19")} if waiting else None  # 8번: 2026-10-18 교체
     return letter.letter_books(cfg, BASE, sums, book_trades or {}, extra, _bench(), waiting=wait)
 
 
@@ -87,13 +87,13 @@ def test_glance_danger_line_lists_only_red_with_short_names():
 def test_strategy_lines_group_same_status_returns_in_parens_and_six_to_nine(cfg):
     books = _books(cfg)
     assert [b["label"] for b in books] == ["QQQ 전략", "QLD 전략", "TQQQ 전략", "QLD 추세 전략", "TQQQ 추세 전략",
-                                           "기술지표 전략", "볼린저 전략", "6개월 강세 전략", "한 달 가속 전략"]
+                                           "기술지표 전략", "볼린저 전략", "가치평가 전략", "한 달 가속 전략"]
     lines = letter.strategy_lines(books, cfg)
     assert lines == [
         "QQQ·QLD·TQQQ 전략: 그냥 보유 (+1.0% · +2.0% · +3.0%)",
         "QLD·TQQQ 추세 전략: 상승 추세라 QLD·TQQQ 보유 (+2.0% · +3.0%)",
         "기술지표·볼린저·한 달 가속 전략: 살 종목이 없어 현금 보관 (0.0% · 0.0% · +0.4%)",
-        "6개월 강세 전략: 10/30 시작",
+        "가치평가 전략: 10/19 시작",
         "오늘 거래 없음",  # 칸 맨 끝에 한 번만
     ]
     assert not any("QQQ 대비" in x for x in lines)  # 표로 보기 접기에만
@@ -214,7 +214,8 @@ def test_scorecard_skips_months_before_ledger_start():
 def test_display_names_in_scorecard_and_sheet_tables_roundtrip(cfg):
     strats = sc.strategies_from_cfg(cfg)
     assert [s.label for s in strats] == ["QQQ 전략", "QLD 전략", "TQQQ 전략", "QLD 추세 전략", "TQQQ 추세 전략",
-                                         "기술지표 전략", "볼린저 전략", "6개월 강세 전략", "한 달 가속 전략"]
+                                         "기술지표 전략", "볼린저 전략", "가치평가 전략", "한 달 가속 전략"]
+    assert strats[7].name == "가치평가 따라하기"  # 8번 자리 교체(2026-10-18), 꺼 둔 6개월 강세는 빠짐
     assert strats[5].name == "추천 종목 따라하기"  # DB 조회용 id는 그대로
     m = vbtext.display_map(cfg)
     tables = {"전략비교_일일": [["날짜", "QLD 200일선 전환 총자산($)", "추천 종목 따라하기 누적(%)"]],
