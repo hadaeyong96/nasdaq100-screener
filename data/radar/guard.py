@@ -21,6 +21,7 @@ ALLOWED_FILES = [
     CACHE / "sp500" / "renames.csv",
     CACHE / "sw1" / "cik.csv",
     CACHE / "sw1" / "sp100_monthly.csv",
+    CACHE / "smallmid" / "tickers.csv",
     CACHE / "nasdaq100_changes.json",
     CACHE / "edgar" / "company_tickers.json",
 ]
