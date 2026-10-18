@@ -75,6 +75,20 @@ def intervals() -> pd.DataFrame:
     return el.build_intervals(rows)
 
 
+def _get_retry(url: str, ua: str, tries: int = 5):
+    """EDGAR 요청 + 일시 오류(HTTP 5xx·네트워크) 재시도 10·20·40·80·160초. 끝내 실패하면 그대로 올린다."""
+    for k in range(tries + 1):
+        try:
+            return edgar._get(url, ua)
+        except edgar.EdgarFetchError as exc:
+            msg = str(exc)
+            if k == tries or not ("HTTP 5" in msg or "네트워크" in msg or "HTTP 429" in msg):
+                raise
+            wait = 10 * 2 ** k
+            print(f"  재시도 {k + 1}/{tries}: {msg.split(' — ')[0]} · {wait}초", flush=True)
+            time.sleep(wait)
+
+
 def step_hits() -> None:
     guard.install()
     ua = edgar.get_user_agent()
@@ -87,7 +101,7 @@ def step_hits() -> None:
             continue
         rows, frm, total = [], 0, None
         while True:
-            r = edgar._get("https://efts.sec.gov/LATEST/search-index?" + up.urlencode(el.efts_params(term, frm)), ua)
+            r = _get_retry("https://efts.sec.gov/LATEST/search-index?" + up.urlencode(el.efts_params(term, frm)), ua)
             n_req += 1
             hits, total = el.parse_hits(r.json())
             rows += hits
@@ -140,7 +154,7 @@ def step_docs() -> None:
             continue
         url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{adsh.replace('-', '')}/{fn}"
         try:
-            raw = edgar._get(url, ua, timeout=60).text
+            raw = _get_retry(url, ua).text
         except Exception as exc:  # noqa: BLE001 — 실패 목록을 모아 보고
             failed.append(f"{adsh}/{fn}({str(exc)[:50]})")
             continue

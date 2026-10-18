@@ -29,3 +29,6 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+
+# 엑셀 보기용 내보내기 (커밋하지 않음, 2026-10-18)
+exports/
