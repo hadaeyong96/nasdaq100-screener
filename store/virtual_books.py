@@ -300,3 +300,35 @@ def load_sic_cache(conn: sqlite3.Connection) -> dict:
 
 def save_sic_cache(conn: sqlite3.Connection, cache: dict) -> None:
     set_meta(conn, "value_sic_cache", json.dumps(cache, ensure_ascii=False))
+
+
+# ── 10번 동전주 장부 선정 기록 (종목명은 저장소에 커밋하지 않는다 — 이 DB와 시트에만) ─────────────────
+
+_PENNY_PICK_COLS = ["book", "date", "rank", "ticker", "ratio", "width", "close", "dollar_volume"]
+
+
+def _ensure_penny_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS penny_picks (
+            book TEXT, date TEXT, rank INTEGER, ticker TEXT, ratio REAL, width REAL, close REAL, dollar_volume REAL,
+            PRIMARY KEY (book, date, ticker)
+        );
+        """
+    )
+
+
+def save_penny_picks(conn: sqlite3.Connection, book: str, date: str, rows: list[dict]) -> None:
+    """그날 선정 명단(순위·수렴 비율·가격 폭·P일 종가·거래대금). 같은 날 다시 쓰면 바꿔 쓴다."""
+    _ensure_penny_schema(conn)
+    with conn:
+        conn.execute("DELETE FROM penny_picks WHERE book = ? AND date = ?", (book, date))
+        conn.executemany(f"INSERT INTO penny_picks ({', '.join(_PENNY_PICK_COLS)}) VALUES ({', '.join('?' * len(_PENNY_PICK_COLS))})",
+                         [tuple(_cell({**r, "book": book, "date": date}.get(c)) for c in _PENNY_PICK_COLS) for r in rows])
+
+
+def penny_picks(conn: sqlite3.Connection, book: str) -> list[dict]:
+    """선정 기록 전체 (날짜·순위 순)."""
+    _ensure_penny_schema(conn)
+    cur = conn.execute(f"SELECT {', '.join(_PENNY_PICK_COLS)} FROM penny_picks WHERE book = ? ORDER BY date, rank", (book,))
+    return [dict(zip(_PENNY_PICK_COLS, r)) for r in cur.fetchall()]

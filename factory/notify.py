@@ -216,6 +216,28 @@ def send(event: str, s: dict, *, post=None, catalog_path: Path = CATALOG, pendin
     return True
 
 
+def send_text_safely(text: str, *, force_no_send: bool = False, post=None, force: bool = False) -> bool:
+    """글 한 통을 전략분석기에만 그대로 보낸다(10번 동전주 알림 등, 2026-10-21). 예외를 내지 않는다.
+
+    받는 곳이 없거나 force_no_send·로컬(dry-run)이면 보내지 않고 False. 단체방과 같은 chat id면 보내지 않는다.
+    실패분 보관·재시도는 하지 않는다(알림은 그날만 의미가 있음). 값(토큰·chat id)과 오류 상세는 출력하지 않는다."""
+    try:
+        target = _target()
+        if target is None:
+            print(f"[factory.notify] {CHAT_ENV}(또는 봇 토큰)가 없어 전략분석기 알림을 건너뜁니다 (글)")
+            return False
+        if force_no_send or (post is None and not real_send_allowed(force)):
+            print("[factory.notify] 전략분석기에 실제로 보내지 않습니다(dry-run):")
+            print(text)
+            return False
+        (post or _post)(target[0], target[1], text)
+        print("[factory.notify] 전략분석기에 알림 보냄 (글)")
+        return True
+    except Exception as exc:  # noqa: BLE001 — 토큰 URL이 있을 수 있어 종류만
+        print(f"[factory.notify] 전략분석기 알림 실패(글): {type(exc).__name__}")
+        return False
+
+
 def send_safely(event: str, s: dict, **kw) -> bool:
     """send와 같지만 어떤 오류도 밖으로 내지 않는다(공장 작업 결과 보호). 오류는 종류만 로그."""
     try:

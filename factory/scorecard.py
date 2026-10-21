@@ -39,11 +39,11 @@ class Strategy:
 
 
 def strategies_from_cfg(cfg: dict) -> list[Strategy]:
-    """config.yaml virtual_books → 전략 1~9번 (1~5 기존 장부, 6·7 추천 따라하기, 8 가치평가(2026-10-18~, 전 6개월 강세), 9 한 달 가속)."""
+    """config.yaml virtual_books → 전략 1~9번 (1~5 기존 장부, 6·7 추천 따라하기, 8 가치평가(2026-10-18~, 전 6개월 강세), 9 QQQ 대비 1개월 강세(전 한 달 가속), 10 동전주 거래량 수렴)."""
     vb = cfg["virtual_books"]
     names = [b["name"] for b in vb["books"]]
     names += [b["name"] for b in (vb.get("picks") or {}).get("books", [])]
-    for key in ("momentum", "value_score", "accel"):  # 8번 자리: 2026-10-18부터 가치평가(꺼 둔 장부는 뺀다)
+    for key in ("momentum", "value_score", "accel", "penny"):  # 8번 자리: 2026-10-18부터 가치평가(꺼 둔 장부는 뺀다), 10번 동전주
         c = vb.get(key) or {}
         if c.get("name") and c.get("enabled", True):
             names.append(c["name"])

@@ -162,7 +162,9 @@ def trades_table(ledger: LedgerResult, books: list[BookSpec], extra: list[dict] 
 
 # 정해진 신호일마다 상위 10을 같은 비중으로 맞추는 장부 kind → (시작 조건 줄 이름, 시작일 설명)
 REBALANCE_KINDS = {"momentum": ("6개월 강세", "첫 월말 신호일"), "value_score": ("가치평가", "배포 다음 거래일(고정)"),
-                   "accel": ("한 달 가속", "처음 돈 기준일 = 첫 신호일")}
+                   "accel": ("QQQ 대비 1개월 강세", "처음 돈 기준일 = 첫 신호일"),  # 2026-10-21 표시 이름 변경(전 "한 달 가속")
+                   "penny": ("동전주 거래량 수렴", "첫 실행 기준일 = 첫 선정일"),  # 10번 (2026-10-21)
+                   "penny_random": ("무작위 동전주 20", "10번과 같은 날")}
 
 
 def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = None) -> list[list]:
@@ -170,7 +172,7 @@ def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = N
 
     meta: {start_krw, start_fx, fx_date, initial_usd, updated_at, min_days_for_annualized, notes([str])}
     extra: 추천 따라하기 장부 [{name, start, summary, meta}] — 이 장부들만 완료 거래 수·승률·평균 보유일·
-    SGOV 보유액 열을 채운다(전환 횟수는 비움). kind가 REBALANCE_KINDS(6개월 강세·가치평가·한 달 가속)인 장부만
+    SGOV 보유액 열을 채운다(전환 횟수는 비움). kind가 REBALANCE_KINDS(6개월 강세·가치평가·QQQ 대비 1개월 강세)인 장부만
     교체 횟수·현재 보유 10종목 열을 채운다.
     """
     extra = extra or []
@@ -253,6 +255,14 @@ def rename_tables(tables: dict[str, list[list]], mapping: dict[str, str]) -> dic
     return {tab: [[_swap_cell(v, long_first) for v in row] for row in rows] for tab, rows in tables.items()}
 
 
-def unrename_tables(tables: dict[str, list[list]], mapping: dict[str, str]) -> dict[str, list[list]]:
-    """rename_tables의 반대 — 시트에서 읽은 값을 장부 id로 되돌린다(DB 복구용). 옛 이름 그대로인 값은 그대로 둔다."""
-    return rename_tables(tables, {v: k for k, v in mapping.items()})
+def display_aliases(cfg: dict) -> dict[str, str]:
+    """config virtual_books.display_aliases → {예전 보여 주는 이름: 장부 id} (이름을 바꾸기 전 시트 복구용)."""
+    return dict(((cfg or {}).get("virtual_books") or {}).get("display_aliases") or {})
+
+
+def unrename_tables(tables: dict[str, list[list]], mapping: dict[str, str],
+                    aliases: dict[str, str] | None = None) -> dict[str, list[list]]:
+    """rename_tables의 반대 — 시트에서 읽은 값을 장부 id로 되돌린다(DB 복구용). 옛 이름 그대로인 값은 그대로 둔다.
+    aliases({예전 보여 주는 이름: 장부 id})도 함께 되돌린다."""
+    back = {**(aliases or {}), **{v: k for k, v in mapping.items()}}
+    return rename_tables(tables, back)

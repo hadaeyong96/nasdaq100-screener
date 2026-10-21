@@ -440,8 +440,8 @@ def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
 def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
     """아침 편지 v2.1(2026-10-21) 맨 위 칸들 — 표시 전용(notify.letter).
 
-    개인판: 점검 → 할 일 → [1 내 돈 · QQQM] → [2 시장 한눈에] → [3 가상 장부] → [4 연구 진행](월요일만).
-    단체방판: 할 일 → [시장 한눈에] → [가상 장부](QQQ 대비 %p·거래 건수만). 점검·내 돈·연구 진행 없음.
+    개인판: 점검 → 할 일 → [1 내 돈 · QQQM] → [2 시장 한눈에] → [3 가상 장부] → [4 연구 소식](판정 다음 날·월요일).
+    단체방판: 할 일 → [시장 한눈에] → [가상 장부](QQQ 대비 %p·거래 건수만) → [연구 소식]. 점검·내 돈 없음.
     """
     from notify import letter
 
@@ -464,8 +464,8 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
                              start=letter._md(first) if first is not None else "-")),
         "strategy_lines": letter.book_lines(books, cfg, edition) if books else [],
         "trade_detail": letter.trade_detail_line(books) if (personal and books) else "",
-        "research": letter.research_line(cfg, summary.get("letter_today_kst")) if personal else None,
-        "research_header": letter.RESEARCH_HEADER,
+        "research": list(summary.get("research_news") or []),  # 개인판·단체방판 모두 (2026-10-21)
+        "research_header": letter.RESEARCH_HEADER if personal else letter.RESEARCH_HEADER_GROUP,
         "table_head": head, "table_rows": rows,
     }
 

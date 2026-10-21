@@ -20,7 +20,9 @@ BASE = pd.Timestamp("2026-10-16")
 
 @pytest.fixture
 def cfg():
-    return copy.deepcopy(load_config())
+    c = copy.deepcopy(load_config())
+    c["virtual_books"]["penny"]["enabled"] = False  # 1~9번 기준 문구 시험 — 10번은 tests/test_penny_book.py
+    return c
 
 
 def _sum(book, cum, holding, start="2026-10-14", value=100_000.0):
@@ -87,16 +89,16 @@ def test_glance_danger_line_lists_only_red_with_short_names():
 def test_strategy_lines_group_same_status_returns_in_parens_and_six_to_nine(cfg):
     books = _books(cfg)
     assert [b["label"] for b in books] == ["QQQ 전략", "QLD 전략", "TQQQ 전략", "QLD 추세 전략", "TQQQ 추세 전략",
-                                           "기술지표 전략", "볼린저 전략", "가치평가 전략", "한 달 가속 전략"]
+                                           "기술지표 전략", "볼린저 전략", "가치평가 전략", "QQQ 대비 1개월 강세 전략"]
     lines = letter.strategy_lines(books, cfg)
     assert lines == [
         "QQQ·QLD·TQQQ 전략: 그냥 보유 (+1.0% · +2.0% · +3.0%)",
         "QLD·TQQQ 추세 전략: 상승 추세라 QLD·TQQQ 보유 (+2.0% · +3.0%)",
-        "기술지표·볼린저·한 달 가속 전략: 살 종목이 없어 현금 보관 (0.0% · 0.0% · +0.4%)",
+        "기술지표·볼린저·QQQ 대비 1개월 강세 전략: 살 종목이 없어 현금 보관 (0.0% · 0.0% · +0.4%)",
         "가치평가 전략: 10/19 시작",
         "오늘 거래 없음",  # 칸 맨 끝에 한 번만
     ]
-    assert not any("QQQ 대비" in x for x in lines)  # 표로 보기 접기에만
+    assert not any("%p" in x for x in lines)  # QQQ 대비 %p는 표로 보기 접기에만
     assert letter.strategy_header(books) == "[실험 중인 전략] 가상 1억 · 10/14 시작 · 매수 추천 아님"
 
 
@@ -108,7 +110,7 @@ def test_status_texts_down_and_positions_and_minus_sign(cfg):
     assert letter.strategy_lines(down, cfg)[1] == "QLD·TQQQ 추세 전략: 하락 추세라 단기 국채로 피신 (−5.3% · −5.3%)"
     held = _books(cfg, accel_positions={"MU": {}, "AMD": {}})
     lines = letter.strategy_lines(held, cfg)
-    assert "기술지표·볼린저 전략: 살 종목이 없어 현금 보관 (0.0% · 0.0%)" in lines and "한 달 가속 전략: 2종목 보유 (+0.4%)" in lines
+    assert "기술지표·볼린저 전략: 살 종목이 없어 현금 보관 (0.0% · 0.0%)" in lines and "QQQ 대비 1개월 강세 전략: 2종목 보유 (+0.4%)" in lines
 
 
 def test_virtual_trades_once_at_end_personal_names_tickers_group_count(cfg):
@@ -117,7 +119,7 @@ def test_virtual_trades_once_at_end_personal_names_tickers_group_count(cfg):
     books = _books(cfg, accel_positions={"MU": {}, "AMD": {}}, accel_trades=trades,
                    book_trades={"QLD 200일선 전환": [{"side": "매도", "ticker": "QLD", "fill_date": BASE}]})
     p = letter.strategy_lines(books, cfg)
-    assert p[-1] == "오늘 가상 매수: 한 달 가속 전략 MU, AMD / 오늘 가상 매도: QLD 추세 전략 QLD"
+    assert p[-1] == "오늘 가상 매수: QQQ 대비 1개월 강세 전략 MU, AMD / 오늘 가상 매도: QLD 추세 전략 QLD"
     assert sum("오늘 가상" in x or "오늘 거래" in x for x in p) == 1
     g = letter.strategy_lines(books, cfg, letter.GROUP)
     assert g[-1] == "오늘 가상 거래 3건" and "MU" not in "".join(g) and "2종목 보유" in "".join(g)
@@ -184,7 +186,7 @@ def test_group_edition_excludes_personal_sections_and_tickers(cfg, tmp_path):
     assert _folds(body) == ["▶ 시장 지표 그래프 (지금의 시장 온도 전체)", "▶ 지표 설명 (읽는 법·용어)", "▶ 보고서 정보"]
     for x in ("오늘 할 일:", "[시장 한눈에]", "[가상 장부]", "오늘 가상 거래 1건"):
         assert x in body
-    for x in ("점검:", "[1 내 돈", "[4 연구 진행]", "[2 시장", "[3 가상"):
+    for x in ("점검:", "[1 내 돈", "[4 연구", "[2 시장", "[3 가상"):
         assert x not in body
     for x in ("월간 성적표", "돈이 몰리는", "강한 종목", "올해 세금 없는 매도 한도", "오늘의 스크리닝", 'id="fold-detail"'):
         assert x not in body
@@ -192,7 +194,7 @@ def test_group_edition_excludes_personal_sections_and_tickers(cfg, tmp_path):
     for t in ("MU", "AMD", "NVDA", "엔비디아", "마이크론", "SGOV"):
         assert not re.search(rf"(?<![A-Za-z]){t}(?![A-Za-z])", body), t
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "오늘 가상 매수: 한 달 가속 전략 MU" in personal and "▶ 돈이 몰리는 종목 (관찰용)" in personal
+    assert "오늘 가상 매수: QQQ 대비 1개월 강세 전략 MU" in personal and "▶ 돈이 몰리는 종목 (관찰용)" in personal
 
 
 # ── 월간 성적표: 시작 전 달은 만들지 않음 ────────────────────────────────────
@@ -217,7 +219,7 @@ def test_scorecard_skips_months_before_ledger_start():
 def test_display_names_in_scorecard_and_sheet_tables_roundtrip(cfg):
     strats = sc.strategies_from_cfg(cfg)
     assert [s.label for s in strats] == ["QQQ 전략", "QLD 전략", "TQQQ 전략", "QLD 추세 전략", "TQQQ 추세 전략",
-                                         "기술지표 전략", "볼린저 전략", "가치평가 전략", "한 달 가속 전략"]
+                                         "기술지표 전략", "볼린저 전략", "가치평가 전략", "QQQ 대비 1개월 강세 전략"]
     assert strats[7].name == "가치평가 따라하기"  # 8번 자리 교체(2026-10-18), 꺼 둔 6개월 강세는 빠짐
     assert strats[5].name == "추천 종목 따라하기"  # DB 조회용 id는 그대로
     m = vbtext.display_map(cfg)

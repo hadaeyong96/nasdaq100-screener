@@ -6,7 +6,9 @@ outputs/letter_preview/에 그리고, 접힌 상태에서 보이는 글을 화�
 가상 장부 DB가 없는 PC용 근사: 1~5번은 고정 시작일부터 다시 계산(실제와 같음), 6·7번은 시작일 = 기준일이면 첫날을
 새로 계산, 9번(한 달 가속)은 이 미리보기에서만 시작일 고정을 풀어 기준일에 새로 시작한다(DB 없이 고정 시작일이면 멈추게 돼 있어서).
 
-실행: python scripts/letter_preview.py [--scorecard 2026-10]   (--scorecard는 성적표 날 모양만 흉내 냄)
+실행: python scripts/letter_preview.py [--scorecard 2026-10] [--news-dates 2026-10-22,2026-10-26]
+  --scorecard는 성적표 날 모양만 흉내 낸다. --news-dates는 「연구 소식」만 그 한국 날짜로 바꿔 판마다 다시 그린다
+  (기준일·점검 줄은 오늘 그대로, 보인 판정 기록은 없는 것으로 봄).
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ def main() -> None:
         s.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--scorecard", default=None, help="성적표 날 모양 흉내(예: 2026-10) — 계산은 하지 않고 접기 자리만")
+    ap.add_argument("--news-dates", default=None, help="연구 소식만 이 한국 날짜들로(쉼표, 예: 2026-10-22,2026-10-26) 다시 그림")
     ap.add_argument("--dec-date", default=None, help="12월 공제 안내를 이 날짜(예: 2026-12-01)를 기준일로 가정해 계산·출력(시트 읽기만)")
     a = ap.parse_args()
     try:
@@ -87,7 +90,7 @@ def main() -> None:
     daily._attach_regime_line(summary, vb, cfg)
     daily._attach_market_glance(summary, cfg)
     daily._attach_dec_tax(summary, cfg)
-    daily._attach_letter_v2(summary, vb, cfg)  # 아침 편지 v2.1: 점검·내 돈·연구 진행(월요일)
+    daily._attach_letter_v2(summary, vb, cfg)  # 아침 편지: 점검·내 돈·연구 소식(판정 다음 날·월요일)
     if a.scorecard:
         summary["scorecard"] = {"month": a.scorecard, "lines": ["(미리보기 — 성적표 접기 자리)"]}
     daily.render_editions(summary, cfg)
@@ -95,6 +98,17 @@ def main() -> None:
         p = Path(summary[key])
         print(f"\n===== {label} ({p.name}) =====")
         print(visible_text(p.read_text(encoding="utf-8")))
+    if a.news_dates:
+        import pandas as pd
+
+        from notify import letter
+
+        for d in a.news_dates.split(","):
+            fake = {**summary, "letter_today_kst": pd.Timestamp(d), "research_news": letter.research_news(cfg, pd.Timestamp(d), [])[0]}
+            daily.render_editions(fake, cfg)
+            for label, key in (("개인 채팅판", "report_path"), ("투자클럽 단체방판", "group_report_path")):
+                print(f"\n===== {d}(연구 소식 날짜) {label} =====")
+                print(visible_text(Path(fake[key]).read_text(encoding="utf-8")))
     from notify import briefing
 
     print("\n===== 첨부 설명 =====")

@@ -39,6 +39,7 @@ if str(ROOT) not in sys.path:
 from core import virtual_books as vbc  # noqa: E402
 from data import virtual_books_data as vbdata  # noqa: E402
 from data import virtual_books_sheet as vbsheet  # noqa: E402
+from engine import penny_book  # noqa: E402
 from engine import picks_books  # noqa: E402
 from engine import value_book  # noqa: E402
 from notify import virtual_books as vbtext  # noqa: E402
@@ -183,10 +184,11 @@ def sheet_tables(cfg: dict, ctx: dict, updated_at: str, extra: list[dict] | None
 def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets_client=None,
         now_et: datetime | None = None, history_fn=None, fx_fn=None, year_end_fn=None, next_day_fn=None,
         briefing: dict | None = None, market_fn=None, actions_fn=None, month_end_fn=None, cycle_fn=None,
-        value_history_fn=None, value_fx_fn=None, value_score_fn=None) -> dict:
+        value_history_fn=None, value_fx_fn=None, value_score_fn=None, penny_fns: dict | None = None) -> dict:
     """가상 장부 하루 실행 (알림은 아직 보내지 않는다 — send_alerts가 브리핑 뒤에 보낸다).
 
     value_history_fn·value_fx_fn·value_score_fn: 8번 「가치평가 따라하기」 테스트 주입(가격·환율·월말 점수표).
+    penny_fns: 10번 「동전주 거래량 수렴」 테스트 주입 {list_fn, batch_fn, history_fn, fx_range_fn, calendar_fn}.
     briefing: 오늘 브리핑 매수·매도 추천 티커 {"buy": [...], "sell": [...]} — 추천 따라하기 장부의
     "브리핑 추천에도 있었음" 기록용(없으면 그 칸은 빈칸). market_fn·actions_fn: 추천 따라하기 장부 테스트 주입.
     출력: {run_id, status, base_date, start, regime_line, alerts, errors(시트·추천 따라하기 장부 등 부분 실패),
@@ -240,9 +242,14 @@ def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets
                                          fx_range_fn=value_fx_fn, score_fn=value_score_fn)
         acc = picks_books.run_accel(cfg, conn, ctx, dry_run=dry_run, market_fn=market_fn, actions_fn=actions_fn,
                                     fx_fn=fx_fn, year_end_fn=year_end_fn, cycle_fn=cycle_fn)  # 9번 「한 달 가속 따라하기」
-        picks = {**picks, "extra": picks["extra"] + mom["extra"] + val["extra"] + acc["extra"],
-                 "errors": picks["errors"] + mom["errors"] + val["errors"] + acc["errors"],
-                 "warnings": picks["warnings"] + mom["warnings"] + val["warnings"] + acc["warnings"]}
+        pny = penny_book.run_penny(cfg, conn, ctx, dry_run=dry_run, **(penny_fns or {}))  # 10번 「동전주 거래량 수렴」+ 그림자
+        picks = {**picks, "extra": picks["extra"] + mom["extra"] + val["extra"] + acc["extra"] + pny["extra"],
+                 "errors": picks["errors"] + mom["errors"] + val["errors"] + acc["errors"] + pny["errors"],
+                 "warnings": picks["warnings"] + mom["warnings"] + val["warnings"] + acc["warnings"] + pny["warnings"]}
+        result["penny"] = {k: pny[k] for k in ("notes", "timing", "selection")}
+        result["alerts"] = result["alerts"] + pny["alerts"]
+        if pny["timing"]:
+            print(f"[virtual_books] 10번 동전주 걸린 시간(초): {pny['timing']} · 선정 {pny['selection'] and {d: (v['main'], v['shadow'], v['eligible']) for d, v in pny['selection'].items()}}")
         result["picks"] = picks
         result["errors"].extend(picks["errors"])
         result["warnings"].extend(picks["warnings"])
@@ -282,7 +289,7 @@ def run(cfg: dict, *, db_path: Path | None = None, dry_run: bool = False, sheets
         conn.close()
 
 
-def send_alerts(result: dict, *, force_no_send: bool = False, sender=None) -> list[dict]:
+def send_alerts(result: dict, *, force_no_send: bool = False, sender=None, penny_sender=None) -> list[dict]:
     """run 결과의 알림을 보낸다. 실제로 보낸 것만 alerts 표에 기록한다(같은 날 다시 실행해도 한 번만).
 
     출력: 보낸 알림 목록
@@ -293,13 +300,19 @@ def send_alerts(result: dict, *, force_no_send: bool = False, sender=None) -> li
         from notify import telegram
 
         sender = telegram.send_alert_text
+    if penny_sender is None:
+        from factory import notify as factory_notify
+
+        penny_sender = factory_notify.send_text_safely
     sent = []
     conn = vbstore.connect(result["db_path"])
     try:
         for a in result["alerts"]:
             if vbstore.has_alert(conn, a["kind"], a["key"]):
                 continue
-            if sender(a["text"], force_no_send=force_no_send):
+            # 10번 동전주 알림은 개인 전략분석기 텔레그램에만(개인 채팅·단체방 아님, 2026-10-21)
+            send = penny_sender if a["kind"] == penny_book.ALERT_KIND else sender
+            if send(a["text"], force_no_send=force_no_send):
                 vbstore.record_alert(conn, a["kind"], a["key"], _now_kst().isoformat(timespec="seconds"))
                 sent.append(a)
     finally:
@@ -341,10 +354,11 @@ def run_safely(cfg: dict, *, force_no_send: bool = False, ops_sender=None, **kwa
     return result
 
 
-def send_alerts_safely(result: dict | None, *, force_no_send: bool = False, sender=None, ops_sender=None) -> list[dict]:
+def send_alerts_safely(result: dict | None, *, force_no_send: bool = False, sender=None, ops_sender=None,
+                       penny_sender=None) -> list[dict]:
     """send_alerts를 감싼다 — 예외를 밖으로 내보내지 않는다."""
     try:
-        return send_alerts(result, force_no_send=force_no_send, sender=sender)
+        return send_alerts(result, force_no_send=force_no_send, sender=sender, penny_sender=penny_sender)
     except Exception as exc:
         _ops_alert(f"가상 장부 알림 발송 오류: {type(exc).__name__}: {exc}", force_no_send, ops_sender)
         return []
@@ -364,7 +378,8 @@ def recover_picks(cfg: dict, *, db_path: Path | None = None, sheets_client=None,
         from data import sheets
 
         sheets_client = sheets.get_client()
-    tables = vbtext.unrename_tables(vbsheet.read_tables(sheets_client, sheet_id), vbtext.display_map(cfg))  # 보여 주는 이름 → 장부 id
+    tables = vbtext.unrename_tables(vbsheet.read_tables(sheets_client, sheet_id), vbtext.display_map(cfg),
+                                    vbtext.display_aliases(cfg))  # 보여 주는 이름 → 장부 id
     conn = vbstore.connect(Path(db_path or vbstore.VBOOKS_DB_PATH))
     out = {}
     try:
