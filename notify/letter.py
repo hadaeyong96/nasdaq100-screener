@@ -312,3 +312,150 @@ def _nonzero(cell: str) -> bool:
         return float(s) != 0.0
     except ValueError:
         return True
+
+
+# ── 아침 편지 v2.1 (2026-10-21) — 점검·내 돈·가상 장부 3줄 묶음·연구 진행 ─────────────────────────
+
+WEEKDAY_KR = "월화수목금토일"
+MONEY_HEADER = "[1 내 돈 · QQQM]"
+GLANCE_HEADER_V2 = "[2 시장 한눈에]"
+BOOKS_HEADER_V2 = "[3 가상 장부] 가상 1억 · {start} 시작 · QQQ 대비 누적 · 매수 추천 아님"
+RESEARCH_HEADER = "[4 연구 진행]"
+MONEY_EMPTY = "체결 탭에 QQQM 평균단가를 넣으면 여기에 표시됩니다"
+GROUPS = (("base", "기준선"), ("lev", "레버리지(1~5)"), ("picks", "종목 고르기(6~9)"))
+
+
+def _mdw(ts) -> str:
+    """"10/16(금)"."""
+    ts = pd.Timestamp(ts)
+    return f"{ts.month}/{ts.day}({WEEKDAY_KR[ts.dayofweek]})"
+
+
+def _pp(v: float) -> str:
+    """%p 한 칸: +1.2%p / −0.3%p / 0.0%p (음수는 긴 빼기표)."""
+    v = round(v, 1) + 0.0
+    return "0.0%p" if v == 0 else (f"+{v:.1f}%p" if v > 0 else f"−{abs(v):.1f}%p")
+
+
+def check_info(books: list[dict], base_date, expected_date, lag_days: int, skipped: dict[str, str] | None = None) -> dict:
+    """점검 줄 재료 (표시 전용). books: letter_books 결과, skipped: {보여 주는 이름: 사유}(건너뛴 장부)."""
+    skipped = dict(skipped or {})
+    recorded = [b["label"] for b in books if b["status"] == "ok"]
+    waiting = [b["label"] for b in books if b["status"] == "waiting"]
+    for b in books:  # 계산 못 한 장부는 사유를 모르면 "오류"
+        if b["status"] == "missing" and b["label"] not in skipped:
+            skipped[b["label"]] = "오류"
+    return {"base": pd.Timestamp(base_date) if base_date is not None else None,
+            "expected": pd.Timestamp(expected_date) if expected_date is not None else None,
+            "lag": int(lag_days or 0), "recorded": recorded, "waiting": waiting, "skipped": skipped}
+
+
+def check_line(info: dict) -> str:
+    """"점검: 기준일 10/16(금) · 장부 8개 기록, 1개 시작 대기(가치평가 전략) · 데이터 지연 없음".
+    기준일이 직전 거래일보다 늦으면 "데이터 지연 k거래일(기대 10/19(월))", 건너뛴 장부는 " · 건너뜀(이름·사유)"를 붙인다."""
+    parts = [f"기준일 {_mdw(info['base'])}" if info.get("base") is not None else "기준일 알수없음"]
+    rec = f"장부 {len(info['recorded'])}개 기록"
+    if info["waiting"]:
+        rec += f", {len(info['waiting'])}개 시작 대기({', '.join(info['waiting'])})"
+    parts.append(rec)
+    if info["lag"] > 0:
+        exp = f"(기대 {_mdw(info['expected'])})" if info.get("expected") is not None else ""
+        parts.append(f"데이터 지연 {info['lag']}거래일{exp}")
+    else:
+        parts.append("데이터 지연 없음")
+    if info["skipped"]:
+        parts.append("건너뜀(" + ", ".join(f"{k}·{v}" for k, v in info["skipped"].items()) + ")")
+    return "점검: " + " · ".join(parts)
+
+
+def skip_reasons(cfg: dict, messages: list[str]) -> dict[str, str]:
+    """가상 장부 경고·오류 문구 → {보여 주는 이름: 짧은 사유}. 문구가 "장부 id: …" 또는 "장부 id 오류: …"로 시작하는 것만."""
+    out = {}
+    names = list(vbtext.display_map(cfg))
+    for msg in messages or []:
+        for n in names:
+            if msg.startswith(n + ":") or msg.startswith(n + " 오류"):
+                if "SEC_USER_AGENT" in msg:
+                    reason = "SEC 키 없음"
+                elif "시작일" in msg and "전" in msg:
+                    continue  # 시작 전은 '시작 대기'로 센다
+                elif "오류" in msg:
+                    reason = "오류"
+                else:
+                    reason = msg.split(":", 1)[1].strip()[:20]
+                out[vbtext.display_name(cfg, n)] = reason
+    return out
+
+
+def money_summary(pos, close_usd: float | None, fx: float | None, year: int) -> dict | None:
+    """「체결」 탭 QQQM 이동평균 보유(core.tax_harvest.Position) → 내 돈 숫자. 보유 기록이 없으면 None."""
+    if pos is None or pos.rows == 0 or pos.qty <= 0 or not close_usd or not fx:
+        return None
+    from core import tax_harvest as th
+
+    value = pos.qty * close_usd * fx
+    plan = th.harvest_plan(pos, year, close_usd, fx)
+    return {"qty": pos.qty, "close_usd": close_usd, "value_krw": value, "cost_krw": pos.cost_krw,
+            "pnl_krw": value - pos.cost_krw, "pnl_pct": (value / pos.cost_krw - 1) * 100 if pos.cost_krw > 0 else None,
+            "realized_krw": plan.realized_this_year_krw, "remaining_krw": plan.remaining_krw}
+
+
+def money_lines(m: dict | None) -> list[str]:
+    """[1 내 돈 · QQQM] 2줄. 기록이 없으면 안내 한 줄."""
+    if not m:
+        return [MONEY_EMPTY]
+    pct = f"({m['pnl_pct']:+.1f}%)" if m.get("pnl_pct") is not None else ""
+    return [f"QQQM {m['qty']:g}주 · 평가 {m['value_krw']:,.0f}원 · 손익 {m['pnl_krw']:+,.0f}원{pct}",
+            f"올해 실현 이익 {m['realized_krw']:,.0f}원 · 12월 공제 남은 금액 {m['remaining_krw']:,.0f}원"]
+
+
+def _group_of(b: dict, cfg: dict) -> str:
+    bench = (cfg.get("virtual_books") or {}).get("benchmark_book")
+    if b["name"] == bench:
+        return "base"
+    return "picks" if b["family"] in ("picks", "rebalance") else "lev"
+
+
+def _book_cell(b: dict) -> str:
+    if b["status"] == "waiting":
+        return f"{b['label']} 시작 대기"
+    if b["status"] == "missing" or b.get("vs_qqq_pp") is None:
+        return f"{b['label']} 계산 못함" if b["status"] == "missing" else f"{b['label']} -"
+    return f"{b['label']} {_pp(b['vs_qqq_pp'])}"
+
+
+def book_lines(books: list[dict], cfg: dict, edition: str = PERSONAL) -> list[str]:
+    """[3 가상 장부] 3줄 묶음(기준선 / 레버리지 1~5 / 종목 고르기 6~9) + 오늘 거래 건수 한 줄.
+    QQQ 대비 누적 %p를 먼저 보인다. 기준선은 개인판만 누적 수익률을 붙인다. 종목명은 쓰지 않는다(상세는 접기)."""
+    lines = []
+    for key, title in GROUPS:
+        bs = [b for b in books if _group_of(b, cfg) == key]
+        if not bs:
+            continue
+        if key == "base":
+            b = bs[0]
+            if b["status"] == "ok" and b["cum_return_pct"] is not None and edition == PERSONAL:
+                lines.append(f"{title}: {b['label']} {_ret(b)} (아래 %p의 기준)")
+            else:
+                lines.append(f"{title}: {b['label']} (아래 %p의 기준)")
+            continue
+        lines.append(f"{title}: " + " · ".join(_book_cell(b) for b in bs))
+    n = sum(len(b["trades_today"]) for b in books)
+    if edition == GROUP:
+        lines.append(f"오늘 가상 거래 {n}건" if n else "오늘 거래 없음")
+    else:
+        lines.append(f"오늘 가상 거래 {n}건 (상세는 아래 접기)" if n else "오늘 거래 없음")
+    return lines
+
+
+def trade_detail_line(books: list[dict]) -> str:
+    """개인판 접기 안 오늘 거래 상세(전략명 + 티커)."""
+    return _trades_line(books, PERSONAL)
+
+
+def research_line(cfg: dict, today_kst) -> str | None:
+    """[4 연구 진행] 한 줄 — 월요일(한국 날짜)만, config research_status. 없으면 None."""
+    text = (cfg.get("research_status") or "").strip()
+    if not text or today_kst is None or pd.Timestamp(today_kst).dayofweek != 0:
+        return None
+    return text

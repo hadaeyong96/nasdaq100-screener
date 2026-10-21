@@ -360,3 +360,6 @@ virtual_books:
     min_history: 60
     min_price: 5.0
     top_n: 10
+
+# 아침 편지 v2.1 [4 연구 진행] — 개인판·월요일(한국 날짜)만 한 줄 (2026-10-21)
+research_status: "신기술 레이더: 관심도 대시보드로 전환 · 3단 거르기: 탐색 중"

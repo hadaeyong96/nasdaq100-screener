@@ -321,6 +321,7 @@ details.exp[open]>summary{color:var(--info)}
 .letter h2{font-size:14px;font-weight:800;margin:0 0 4px}
 .letter .todo{font-size:15px;font-weight:800}
 .letter .ln{font-size:13.5px;line-height:1.55}
+.letter .mini{font-size:12px;color:var(--sub);line-height:1.55}
 .letter details.more>summary{cursor:pointer;color:var(--info);font-size:12px;font-weight:700;margin:6px 0}
 </style>
 </head>
@@ -368,22 +369,34 @@ details.exp[open]>summary{color:var(--info)}
 </header>
 
 {% if letter %}
-<!-- 짧은 판 (2026-10-17): 할 일 → 시장 한눈에 → 실험 중인 전략. 표시 전용 -->
+{# 아침 편지 v2.1 (2026-10-21): 개인판 점검·할 일·내 돈·시장·가상 장부·연구 진행(월요일), 단체방판은 할 일·시장·가상 장부만. 표시 전용 #}
+{% if letter.check %}
+<section class="letter" aria-label="점검">
+  <div class="ln mini">{{ letter.check }}</div>
+</section>
+{% endif %}
 <section class="letter" aria-label="오늘 할 일">
   <div class="todo">{{ letter.todo }}</div>
 </section>
+{% if letter.personal %}
+<section class="letter" aria-label="내 돈">
+  <h2>{{ letter.money_header }}</h2>
+  {% for line in letter.money %}<div class="ln">{{ line }}</div>{% endfor %}
+</section>
+{% endif %}
 {% if letter.glance %}
 <section class="letter" aria-label="시장 한눈에">
-  <h2>[시장 한눈에]</h2>
+  <h2>{{ letter.glance_header }}</h2>
   {% for line in letter.glance %}<div class="ln">{{ line }}</div>{% endfor %}
 </section>
 {% endif %}
 {% if letter.strategy_lines %}
-<section class="letter" aria-label="실험 중인 전략">
-  <h2>{{ letter.strategy_header }}</h2>
+<section class="letter" aria-label="가상 장부">
+  <h2>{{ letter.books_header }}</h2>
   {% for line in letter.strategy_lines %}<div class="ln">{{ line }}</div>{% endfor %}
   {% if letter.table_rows %}
-  <details class="more"><summary>전략 {{ letter.table_rows|length }}개 표로 보기</summary>
+  <details class="more"><summary>전략 {{ letter.table_rows|length }}개 표로 보기{% if letter.trade_detail %} · 오늘 거래 상세{% endif %}</summary>
+  {% if letter.trade_detail %}<div class="ln mini">{{ letter.trade_detail }}</div>{% endif %}
   <div class="sheet"><table>
   <thead><tr>{% for h in letter.table_head %}<th class="nosort">{{ h }}</th>{% endfor %}</tr></thead>
   <tbody>{% for r in letter.table_rows %}<tr>{% for c in r %}<td{% if not loop.first %} class="num"{% endif %}>{{ c }}</td>{% endfor %}</tr>{% endfor %}</tbody>
@@ -391,6 +404,12 @@ details.exp[open]>summary{color:var(--info)}
   <p class="mini">관찰 전용 가상 장부(실제 주문 아님) · 달러 기준 · 상세는 구글 시트 전략비교_일일·매매기록·전략요약 탭</p>
   </details>
   {% endif %}
+</section>
+{% endif %}
+{% if letter.research %}
+<section class="letter" aria-label="연구 진행">
+  <h2>{{ letter.research_header }}</h2>
+  <div class="ln">{{ letter.research }}</div>
 </section>
 {% endif %}
 {% endif %}

@@ -438,17 +438,34 @@ def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
 
 
 def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
-    """짧은 판(2026-10-17) 맨 위 세 칸 + 실험 중인 전략 접은 표. 표시 전용(notify.letter)."""
+    """아침 편지 v2.1(2026-10-21) 맨 위 칸들 — 표시 전용(notify.letter).
+
+    개인판: 점검 → 할 일 → [1 내 돈 · QQQM] → [2 시장 한눈에] → [3 가상 장부] → [4 연구 진행](월요일만).
+    단체방판: 할 일 → [시장 한눈에] → [가상 장부](QQQ 대비 %p·거래 건수만). 점검·내 돈·연구 진행 없음.
+    """
     from notify import letter
 
     vb = summary.get("vbooks") or {}
     books = vb.get("books") or []
+    personal = edition != letter.GROUP
     head, rows = letter.table_rows(books, cfg, edition) if books else ([], [])
+    first = min((b["start"] for b in books if b.get("start") is not None and b["status"] == "ok"), default=None)
+    info = summary.get("letter_check")
     return {
+        "personal": personal,
+        "check": letter.check_line(info) if (personal and info) else "",
         "todo": letter.todo_line(summary, cfg, edition),
+        "money_header": letter.MONEY_HEADER,
+        "money": letter.money_lines(summary.get("my_money")) if personal else [],
+        "glance_header": letter.GLANCE_HEADER_V2 if personal else letter.GLANCE_HEADER,
         "glance": letter.glance_lines(summary.get("qqq_close"), summary.get("macro_rows", [])),
-        "strategy_header": letter.strategy_header(books) if books else "",
-        "strategy_lines": letter.strategy_lines(books, cfg, edition) if books else [],
+        "books_header": (letter.BOOKS_HEADER_V2.format(start=letter._md(first) if first is not None else "-") if personal
+                         else letter.BOOKS_HEADER_V2.replace("[3 가상 장부]", "[가상 장부]").format(
+                             start=letter._md(first) if first is not None else "-")),
+        "strategy_lines": letter.book_lines(books, cfg, edition) if books else [],
+        "trade_detail": letter.trade_detail_line(books) if (personal and books) else "",
+        "research": letter.research_line(cfg, summary.get("letter_today_kst")) if personal else None,
+        "research_header": letter.RESEARCH_HEADER,
         "table_head": head, "table_rows": rows,
     }
 
