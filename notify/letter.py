@@ -339,12 +339,11 @@ def _pp(v: float) -> str:
 
 def check_info(books: list[dict], base_date, expected_date, lag_days: int, skipped: dict[str, str] | None = None) -> dict:
     """점검 줄 재료 (표시 전용). books: letter_books 결과, skipped: {보여 주는 이름: 사유}(건너뛴 장부)."""
-    skipped = dict(skipped or {})
+    reasons = dict(skipped or {})
     recorded = [b["label"] for b in books if b["status"] == "ok"]
     waiting = [b["label"] for b in books if b["status"] == "waiting"]
-    for b in books:  # 계산 못 한 장부는 사유를 모르면 "오류"
-        if b["status"] == "missing" and b["label"] not in skipped:
-            skipped[b["label"]] = "오류"
+    # 건너뜀은 그날 계산 못 한 장부만(계산은 됐는데 경고만 있는 장부는 빼고), 사유를 모르면 "오류"
+    skipped = {b["label"]: reasons.get(b["label"], "오류") for b in books if b["status"] == "missing"}
     return {"base": pd.Timestamp(base_date) if base_date is not None else None,
             "expected": pd.Timestamp(expected_date) if expected_date is not None else None,
             "lag": int(lag_days or 0), "recorded": recorded, "waiting": waiting, "skipped": skipped}

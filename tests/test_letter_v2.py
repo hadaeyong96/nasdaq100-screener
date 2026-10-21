@@ -52,6 +52,10 @@ def test_check_line_skipped_with_reason(cfg):
     assert line.endswith("건너뜀(가치평가 전략·SEC 키 없음)")
     assert letter.skip_reasons(cfg, ["가치평가 따라하기: 시작일 2026-10-19 전이라 계산하지 않았습니다"]) == {}  # 시작 전은 건너뜀 아님
     assert letter.skip_reasons(cfg, ["한 달 가속 따라하기 오류: KeyError: 'x'"]) == {"한 달 가속 전략": "오류"}
+    # 계산은 된 장부의 경고(점수 못 낸 종목 등)는 건너뜀이 아니다
+    ok_books = [b for b in _books(cfg) if b["status"] != "waiting"]
+    warn = letter.skip_reasons(cfg, ["한 달 가속 따라하기: 2026-09-30 점수 못 낸 종목 1개 — X"])
+    assert "건너뜀" not in letter.check_line(_info(ok_books, skipped=warn))
 
 
 # ── 내 돈 ────────────────────────────────────────────────────────────────────
