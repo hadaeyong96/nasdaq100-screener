@@ -20,7 +20,9 @@ BASE = pd.Timestamp("2026-10-16")
 
 @pytest.fixture
 def cfg():
-    return copy.deepcopy(load_config())
+    c = copy.deepcopy(load_config())
+    c["virtual_books"]["penny"]["enabled"] = False  # 1~9번 기준 문구 시험 — 10번은 tests/test_penny_book.py
+    return c
 
 
 def _sum(book, cum, holding, start="2026-10-14", value=100_000.0):

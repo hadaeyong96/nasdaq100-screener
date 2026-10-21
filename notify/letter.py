@@ -131,6 +131,11 @@ def _family_of(cfg: dict) -> dict[str, str]:
         c = vb.get(key) or {}
         if c.get("name") and c.get("enabled", True):
             fam[c["name"]] = "rebalance"
+    pn = vb.get("penny") or {}
+    if pn.get("name") and pn.get("enabled", True):  # 10번 동전주 + 판정 비교용 그림자(2026-10-21)
+        fam[pn["name"]] = "penny"
+        if pn.get("shadow_name"):
+            fam[pn["shadow_name"]] = "shadow"
     return fam
 
 
@@ -201,7 +206,7 @@ def _status(b: dict, cfg: dict) -> tuple[str, str]:
         if b["holding"] == defensive:
             return "down", "하락 추세라 단기 국채로 피신"
         return "up", "상승 추세라 {holdings} 보유"
-    if b["family"] in ("picks", "rebalance"):
+    if b["family"] in ("picks", "rebalance", "penny", "shadow"):
         n = b["n_positions"] or 0
         return ("cash", "살 종목이 없어 현금 보관") if n == 0 else (f"n:{n}", f"{n}종목 보유")
     return "hold", "그냥 보유"
@@ -273,13 +278,14 @@ def _holding_cell(b: dict, cfg: dict, edition: str) -> str:
     """보유 칸. 단체방판은 종목 티커 대신 "n종목"·"단기 국채"(전략 이름에 있는 QQQ·QLD·TQQQ만 그대로)."""
     ok = b["status"] == "ok"
     defensive = (cfg.get("virtual_books") or {}).get("defensive_ticker", "SGOV")
-    if b["family"] in ("picks", "rebalance"):
+    if b["family"] in ("picks", "rebalance", "penny", "shadow"):
         n = b["n_positions"] or 0
         if not ok:
             return ""
         if n == 0:
             return "현금" if edition == GROUP else f"현금({defensive})"
-        return f"{n}종목" if edition == GROUP else b["holding"]
+        # 10번 동전주·그림자는 개인판도 종목 수만(20종목 명단은 시트에)
+        return f"{n}종목" if edition == GROUP or b["family"] in ("penny", "shadow") else b["holding"]
     if edition == GROUP and b["holding"] == defensive:
         return "단기 국채"
     return b["holding"]
@@ -323,7 +329,8 @@ BOOKS_HEADER_V2 = "[3 가상 장부] 가상 1억 · {start} 시작 · QQQ 대비
 RESEARCH_HEADER = "[4 연구 소식]"
 RESEARCH_HEADER_GROUP = "[연구 소식]"
 MONEY_EMPTY = "체결 탭에 QQQM 평균단가를 넣으면 여기에 표시됩니다"
-GROUPS = (("base", "기준선"), ("lev", "레버리지(1~5)"), ("picks", "종목 고르기(6~9)"))
+GROUPS = (("base", "기준선"), ("lev", "레버리지(1~5)"), ("picks", "종목 고르기(6~10)"))
+SHADOW_LINE = "비교: {cell} (10번 판정용, QQQ 대비)"
 
 
 def _mdw(ts) -> str:
@@ -338,16 +345,20 @@ def _pp(v: float) -> str:
     return "0.0%p" if v == 0 else (f"+{v:.1f}%p" if v > 0 else f"−{abs(v):.1f}%p")
 
 
-def check_info(books: list[dict], base_date, expected_date, lag_days: int, skipped: dict[str, str] | None = None) -> dict:
-    """점검 줄 재료 (표시 전용). books: letter_books 결과, skipped: {보여 주는 이름: 사유}(건너뛴 장부)."""
+def check_info(books: list[dict], base_date, expected_date, lag_days: int, skipped: dict[str, str] | None = None,
+               notes: list[str] | None = None) -> dict:
+    """점검 줄 재료 (표시 전용). books: letter_books 결과, skipped: {보여 주는 이름: 사유}(건너뛴 장부),
+    notes: 끝에 붙일 말(예: "동전주 선정 못함(목록 못 받음)")."""
     reasons = dict(skipped or {})
+    books = [b for b in books if b.get("family") != "shadow"]  # 판정 비교용 그림자는 장부 수에 넣지 않는다
     recorded = [b["label"] for b in books if b["status"] == "ok"]
     waiting = [b["label"] for b in books if b["status"] == "waiting"]
     # 건너뜀은 그날 계산 못 한 장부만(계산은 됐는데 경고만 있는 장부는 빼고), 사유를 모르면 "오류"
     skipped = {b["label"]: reasons.get(b["label"], "오류") for b in books if b["status"] == "missing"}
     return {"base": pd.Timestamp(base_date) if base_date is not None else None,
             "expected": pd.Timestamp(expected_date) if expected_date is not None else None,
-            "lag": int(lag_days or 0), "recorded": recorded, "waiting": waiting, "skipped": skipped}
+            "lag": int(lag_days or 0), "recorded": recorded, "waiting": waiting, "skipped": skipped,
+            "notes": list(dict.fromkeys(notes or []))}
 
 
 def check_line(info: dict) -> str:
@@ -365,6 +376,7 @@ def check_line(info: dict) -> str:
         parts.append("데이터 지연 없음")
     if info["skipped"]:
         parts.append("건너뜀(" + ", ".join(f"{k}·{v}" for k, v in info["skipped"].items()) + ")")
+    parts.extend(info.get("notes") or [])
     return "점검: " + " · ".join(parts)
 
 
@@ -413,7 +425,9 @@ def _group_of(b: dict, cfg: dict) -> str:
     bench = (cfg.get("virtual_books") or {}).get("benchmark_book")
     if b["name"] == bench:
         return "base"
-    return "picks" if b["family"] in ("picks", "rebalance") else "lev"
+    if b["family"] == "shadow":
+        return "shadow"
+    return "picks" if b["family"] in ("picks", "rebalance", "penny") else "lev"
 
 
 def _book_cell(b: dict) -> str:
@@ -425,7 +439,7 @@ def _book_cell(b: dict) -> str:
 
 
 def book_lines(books: list[dict], cfg: dict, edition: str = PERSONAL) -> list[str]:
-    """[3 가상 장부] 3줄 묶음(기준선 / 레버리지 1~5 / 종목 고르기 6~9) + 오늘 거래 건수 한 줄.
+    """[3 가상 장부] 3줄 묶음(기준선 / 레버리지 1~5 / 종목 고르기 6~10) + 10번 그림자 %p 한 줄 + 오늘 거래 건수 한 줄.
     QQQ 대비 누적 %p를 먼저 보인다. 기준선은 개인판만 누적 수익률을 붙인다. 종목명은 쓰지 않는다(상세는 접기)."""
     lines = []
     for key, title in GROUPS:
@@ -440,7 +454,9 @@ def book_lines(books: list[dict], cfg: dict, edition: str = PERSONAL) -> list[st
                 lines.append(f"{title}: {b['label']} (아래 %p의 기준)")
             continue
         lines.append(f"{title}: " + " · ".join(_book_cell(b) for b in bs))
-    n = sum(len(b["trades_today"]) for b in books)
+    for b in (b for b in books if _group_of(b, cfg) == "shadow"):  # 그림자는 %p 한 줄만
+        lines.append(SHADOW_LINE.format(cell=_book_cell(b)))
+    n = sum(len(b["trades_today"]) for b in books if b["family"] != "shadow")
     if edition == GROUP:
         lines.append(f"오늘 가상 거래 {n}건" if n else "오늘 거래 없음")
     else:
@@ -449,8 +465,8 @@ def book_lines(books: list[dict], cfg: dict, edition: str = PERSONAL) -> list[st
 
 
 def trade_detail_line(books: list[dict]) -> str:
-    """개인판 접기 안 오늘 거래 상세(전략명 + 티커)."""
-    return _trades_line(books, PERSONAL)
+    """개인판 접기 안 오늘 거래 상세(전략명 + 티커). 판정 비교용 그림자 거래는 넣지 않는다."""
+    return _trades_line([b for b in books if b.get("family") != "shadow"], PERSONAL)
 
 
 def research_news(cfg: dict, today_kst, shown=()) -> tuple[list[str], list[str]]:

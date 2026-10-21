@@ -43,7 +43,7 @@ def strategies_from_cfg(cfg: dict) -> list[Strategy]:
     vb = cfg["virtual_books"]
     names = [b["name"] for b in vb["books"]]
     names += [b["name"] for b in (vb.get("picks") or {}).get("books", [])]
-    for key in ("momentum", "value_score", "accel"):  # 8번 자리: 2026-10-18부터 가치평가(꺼 둔 장부는 뺀다)
+    for key in ("momentum", "value_score", "accel", "penny"):  # 8번 자리: 2026-10-18부터 가치평가(꺼 둔 장부는 뺀다), 10번 동전주
         c = vb.get(key) or {}
         if c.get("name") and c.get("enabled", True):
             names.append(c["name"])

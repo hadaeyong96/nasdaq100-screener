@@ -2432,7 +2432,8 @@ def _attach_letter_v2(summary: dict, vb_result: dict | None, cfg: dict, *, fills
         if base_d is not None and base_d < expected:
             lag = len(trading_days_between(base_d + timedelta(days=1), expected))
         msgs = list((vb_result or {}).get("warnings", [])) + list((vb_result or {}).get("errors", []))
-        summary["letter_check"] = letter.check_info(books or [], base, expected, lag, letter.skip_reasons(cfg, msgs))
+        notes = ((vb_result or {}).get("penny") or {}).get("notes") or []  # 10번 동전주 선정 못한 날
+        summary["letter_check"] = letter.check_info(books or [], base, expected, lag, letter.skip_reasons(cfg, msgs), notes)
     except Exception as exc:  # noqa: BLE001 — 점검 줄 실패가 브리핑을 막으면 안 된다
         summary.pop("letter_check", None)
         print(f"[daily] 점검 줄을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
@@ -2492,13 +2493,18 @@ def _fetch_close_series(ticker: str, cfg: dict) -> pd.Series:
 
 
 def _waiting_books(cfg: dict, base_date, extra_names: set[str]) -> dict[str, pd.Timestamp]:
-    """아직 시작 전인 장부 → 시작 예정일: 8번 가치평가(시작일 고정 — 그날 전까지).
+    """아직 시작 전인 장부 → 시작 예정일: 8번 가치평가(시작일 고정 — 그날 전까지), 10번 동전주·그림자(첫 선정 전).
     6개월 강세는 2026-10-18 탈락 보관(꺼 둠)이라 시작 대기로 보이지 않는다(아침 편지 v2.1, 2026-10-21)."""
     vb = cfg.get("virtual_books") or {}
     out: dict[str, pd.Timestamp] = {}
     va = vb.get("value_score") or {}
     if va.get("enabled") and va.get("name") not in extra_names and va.get("start_date"):
         out[va["name"]] = pd.Timestamp(va["start_date"])
+    pn = vb.get("penny") or {}  # 10번 동전주: 첫 선정 전(목록 실패 등)이면 그날 기준일 시작 대기로 보인다
+    if pn.get("enabled") and pn.get("name") not in extra_names and base_date is not None:
+        for n in (pn.get("name"), pn.get("shadow_name")):
+            if n:
+                out[n] = pd.Timestamp(pn.get("start_date") or base_date)
     return out
 
 

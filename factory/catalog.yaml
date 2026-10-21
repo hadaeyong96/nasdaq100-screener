@@ -12,7 +12,7 @@ strategies:
     result: "실제 돈은 QQQM만. 매수 시점 바꾸기(D1~D5)는 매달 그대로 사기(D0)를 못 이김"
     evidence: "docs/results/d1.md (d1-prereg)"
 
-  # ── 관찰 중 (가상 장부 9개, 실제 주문 없음) ────────────────────────────
+  # ── 관찰 중 (가상 장부 10개, 실제 주문 없음) ────────────────────────────
   - {id: vb1_qqq_hold, name: QQQ 그냥 보유, status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 1번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
   - {id: vb2_qld_hold, name: QLD 그냥 보유, status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 2번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
   - {id: vb3_tqqq_hold, name: TQQQ 그냥 보유, status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 3번 (2026-10-14 시작)", evidence: "docs/design/virtual_books.md"}
@@ -22,6 +22,7 @@ strategies:
   - {id: vb7_bollinger, name: "볼린저·RSI·MACD 따라하기", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 7번 — 시작일 미고정(첫 실제 실행일)", evidence: "docs/design/virtual_books.md"}
   - {id: vb8_value_score, name: "가치평가 전략(value-score)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 8번 — 2026-10-19 시작(고정, 1억 원 일시금). 대상: S&P500 + 나스닥100(금융 제외, 2026-10-18 결정 — 판정 구역과 다름). 검증 ③ FAIL(세후 11.32% vs QQQ 19.79%) — 관찰만, 채택 아님", evidence: "value-score-prereg, docs/results/value_score_zone3.md, config virtual_books.value_score"}
   - {id: vb9_accel, name: "QQQ 대비 1개월 강세 전략(ACCEL, 전 한 달 가속)", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 9번 — 검증 ③ FAIL(세후 5.25% vs QQQ 19.29%), 관찰만 계속", evidence: "accel-prereg, docs/results/accel_zone3.md"}
+  - {id: vb10_penny_squeeze, name: "동전주 거래량 수렴 전략", status: 관찰 중, zone: 앞으로 기록, result: "가상 장부 10번 — 첫 실행 기준일 시작, 12개월 뒤 1회 판정(세후 > QQQ·> 무작위 동전주 20·최대 낙폭 > −50%). 과거 시험 없음, 검증 예산 미사용", evidence: "penny-squeeze-prereg, docs/prereg/penny_volume_squeeze.md, config virtual_books.penny"}
 
   # ── 탈락 보관 ──────────────────────────────────────────────────────────
   - {id: x_macd126, name: "MACD 1:2:6 분할(P5)", status: 탈락 보관, zone: "구역 정책 전 (2015~2021, 2007~2014)", result: "우위 없음 — P5-4 최종 후보 없음, P5-5 판정 불가(데이터 부족)", evidence: "docs/results/trial_log.md 이전 기록, configs/p5_5_preregistration.yaml"}

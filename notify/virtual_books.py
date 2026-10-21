@@ -162,7 +162,9 @@ def trades_table(ledger: LedgerResult, books: list[BookSpec], extra: list[dict] 
 
 # 정해진 신호일마다 상위 10을 같은 비중으로 맞추는 장부 kind → (시작 조건 줄 이름, 시작일 설명)
 REBALANCE_KINDS = {"momentum": ("6개월 강세", "첫 월말 신호일"), "value_score": ("가치평가", "배포 다음 거래일(고정)"),
-                   "accel": ("QQQ 대비 1개월 강세", "처음 돈 기준일 = 첫 신호일")}  # 2026-10-21 표시 이름 변경(전 "한 달 가속")
+                   "accel": ("QQQ 대비 1개월 강세", "처음 돈 기준일 = 첫 신호일"),  # 2026-10-21 표시 이름 변경(전 "한 달 가속")
+                   "penny": ("동전주 거래량 수렴", "첫 실행 기준일 = 첫 선정일"),  # 10번 (2026-10-21)
+                   "penny_random": ("무작위 동전주 20", "10번과 같은 날")}
 
 
 def summary_table(ledger: LedgerResult, meta: dict, extra: list[dict] | None = None) -> list[list]:

@@ -16,7 +16,7 @@ def test_catalog_shape():
     for x in items:
         assert {"id", "name", "status", "zone", "result", "evidence"} <= set(x)
         assert x["status"] in STATUSES
-    assert sum(x["status"] == "관찰 중" for x in items) == 9
+    assert sum(x["status"] == "관찰 중" for x in items) == 10  # 가상 장부 10개 (2026-10-21 10번 동전주)
     assert sum(x["status"] == "기본값" for x in items) == 1
     cands = [x for x in items if x["status"] == "대기 후보"]
     assert [x["rank"] for x in cands] == list(range(1, 10))

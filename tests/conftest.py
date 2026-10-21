@@ -40,6 +40,15 @@ def _no_real_telegram(monkeypatch, tmp_path):
 
     monkeypatch.setattr(fnotify, "_sleep", lambda s: None)
     monkeypatch.setattr(fnotify, "PENDING_DIR", tmp_path / "notify_pending")
+    # 10번 동전주 장부(2026-10-21): 목록·가격 받기는 네트워크라 막는다 — 주입하지 않은 테스트에선 "목록 못 받음"(선정 미룸)으로 돈다
+    from data import penny_universe as pu
+
+    def _no_net(*a, **k):
+        raise pu.PennyListError("테스트 중 네트워크 없음")
+
+    monkeypatch.setattr(pu, "fetch_lists", _no_net)
+    monkeypatch.setattr(pu, "download_batch", _no_net)
+    monkeypatch.setattr(pu, "history", _no_net)
 
 
 @pytest.fixture(scope="session")

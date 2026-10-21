@@ -18,7 +18,9 @@ from tests.test_letter import BASE, _books, _summary
 
 @pytest.fixture
 def cfg():
-    return copy.deepcopy(load_config())
+    c = copy.deepcopy(load_config())
+    c["virtual_books"]["penny"]["enabled"] = False  # 1~9번 기준 문구 시험 — 10번은 tests/test_penny_book.py
+    return c
 
 
 def _info(books, *, lag=0, skipped=None, base=BASE, expected=BASE):
@@ -88,7 +90,7 @@ def test_book_lines_three_groups_vs_qqq_pp(cfg):
     lines = letter.book_lines(books, cfg)
     assert lines[0] == "기준선: QQQ 전략 +1.0% (아래 %p의 기준)"
     assert lines[1] == "레버리지(1~5): QLD 전략 +1.0%p · TQQQ 전략 +2.0%p · QLD 추세 전략 +1.0%p · TQQQ 추세 전략 +2.0%p"
-    assert lines[2].startswith("종목 고르기(6~9): 기술지표 전략 ") and "가치평가 전략 시작 대기" in lines[2]
+    assert lines[2].startswith("종목 고르기(6~10): 기술지표 전략 ") and "가치평가 전략 시작 대기" in lines[2]
     assert lines[3] == "오늘 거래 없음"
 
 
