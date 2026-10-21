@@ -232,30 +232,36 @@ def test_plan_fill_columns_moves_are_leftward_and_keep_unknown_columns():
     assert header[:13] == ss.FILLS_HEADERS and header[13:] == ["내 열"]
 
 
-# ── 투자현황 B2·B3 ──────────────────────────────────────────────────────────
+# ── 투자현황 예전 설정 두 칸 (v4: 맨 아래로 옮김, 값 보존) ─────────────────────────
 
 
-def test_portfolio_keeps_existing_b2_b3(tmp_path):
+def test_portfolio_keeps_existing_settings_moved_down(tmp_path):
     existing = [["항목", "값"], ["총 투자금(원)", "77,000,000"], ["종목당 계획금액(원)", "6000000"]]
     sh = _sheet(extra_tabs={"투자현황": existing})
     _run(sh, tmp_path=tmp_path)
-    g = sh.tabs["투자현황"].grid
-    assert g[1][1] == "77,000,000" and g[2][1] == "6000000"
+    g = sh.tabs["투자현황"].get_all_values()
+    assert (g[ss.P_OLD_TOTAL_ROW - 1][0], g[ss.P_OLD_TOTAL_ROW - 1][1]) == ("총 투자금(원)", "77,000,000")
+    assert (g[ss.P_OLD_BUDGET_ROW - 1][0], g[ss.P_OLD_BUDGET_ROW - 1][1]) == ("종목당 계획금액(원)", "6000000")
+    assert g[1][0] != "총 투자금(원)"  # 2행은 QQQM 계좌 칸
 
 
 def test_portfolio_fills_defaults_when_empty(tmp_path):
     sh = _sheet()
     _run(sh, tmp_path=tmp_path)
-    g = sh.tabs["투자현황"].grid
-    assert (g[1][0], g[1][1]) == ("총 투자금(원)", "40000000")
-    assert (g[2][0], g[2][1]) == ("종목당 계획금액(원)", "5000000")
+    g = sh.tabs["투자현황"].get_all_values()
+    assert (g[ss.P_OLD_TOTAL_ROW - 1][0], g[ss.P_OLD_TOTAL_ROW - 1][1]) == ("총 투자금(원)", "40000000")
+    assert (g[ss.P_OLD_BUDGET_ROW - 1][0], g[ss.P_OLD_BUDGET_ROW - 1][1]) == ("종목당 계획금액(원)", "5000000")
 
 
 def test_portfolio_labels_match_program_reader():
     from data import sheets
 
     values, _ = ss.portfolio_values("", "")
-    grid = [values["A1:B1"][0], [values["A2"][0][0], values["B2"][0][0]], [values["A3"][0][0], values["B3"][0][0]]]
+    grid = [[""] * 2 for _ in range(ss.P_OLD_BUDGET_ROW)]
+    for rng, rows in values.items():
+        r0 = int("".join(ch for ch in rng.split(":")[0] if ch.isdigit()))
+        for i, row in enumerate(rows):
+            grid[r0 - 1 + i] = list(row) + [""] * (2 - len(row))
     assert sheets.parse_portfolio_values(grid) == {"total_krw": 40_000_000.0, "per_ticker_budget_krw": 5_000_000.0}
 
 
@@ -461,17 +467,15 @@ def test_portfolio_two_columns_only(tmp_path):
     g = sh.tabs["투자현황"].get_all_values()
     assert all(not str(v).strip() for row in g for v in row[2:])  # C열 이후 비어 있음
     labels = [row[0] for row in g]
-    for label in ["[자산]", "환율(원/$)", "투자 중 원금(원)", "평가금액(원)", "남은 현금(원)", "투자 비중", "전체 손익률",
-                  "[코어·위성]", "코어(QQQM) 평가금액(원)", "코어 비중", "위성 평가금액(원)", "위성 비중",
-                  "[세금 (근사값, 실제는 증권사 기준)]", "올해 실현손익(원)", "250만 원 공제 남은 금액(원)", "예상 양도세(원)",
-                  "[업종별 비중 (위성 대비)]"]:
+    for label in ["[0번 QQQM 실제 계좌 (체결 탭 기준)]", "환율(원/$)", "보유주", "평균단가($)", "현재가($)", "투자 원금(원)",
+                  "평가금액(원)", "손익(원)", "손익률", "[세금 (근사값, 실제는 증권사 기준)]", "올해 실현 이익(원)",
+                  "250만 원 공제 남은 금액(원)", "예상 양도세(원)", "총 투자금(원)", "종목당 계획금액(원)"]:
         assert label in labels, label
-    assert g[1][0] == "총 투자금(원)" and g[2][0] == "종목당 계획금액(원)"
-    sector = g[ss.P_SECTOR_FIRST - 1][0]
-    assert "QUERY(" in sector and "'위성'" in sector and "desc" in sector and "$B$16" in sector
+    for old in ["[코어·위성]", "위성 평가금액(원)", "[업종별 비중 (위성 대비)]", "남은 현금(원)"]:
+        assert old not in labels, old
 
 
-def test_portfolio_old_layout_reset_keeps_b2_b3_and_program_reads_them(tmp_path):
+def test_portfolio_old_layout_reset_keeps_settings_and_program_reads_them(tmp_path):
     from data import sheets
 
     p_old = _old_portfolio_layout()
@@ -481,7 +485,7 @@ def test_portfolio_old_layout_reset_keeps_b2_b3_and_program_reads_them(tmp_path)
     result, _ = _run(sh, tmp_path=tmp_path)
     assert any("예전 배치 지우기" in c for c in result["changes"])
     g = sh.tabs["투자현황"].get_all_values()
-    assert g[1][1] == "77,000,000" and g[2][1] == "6,000,000"  # 입력값 보존
+    assert g[ss.P_OLD_TOTAL_ROW - 1][1] == "77,000,000" and g[ss.P_OLD_BUDGET_ROW - 1][1] == "6,000,000"  # 입력값 보존
     assert all(not str(v).strip() for row in g for v in row[2:])
     assert "종목" not in [row[0] for row in g[3:]]  # 예전 종목별 현황 머리글 없음
     assert "=AND(ISNUMBER($C23),$C23>0.3)" not in [r["booleanRule"]["condition"]["values"][0]["userEnteredValue"] for r in sh.cf[pid]]
@@ -490,16 +494,44 @@ def test_portfolio_old_layout_reset_keeps_b2_b3_and_program_reads_them(tmp_path)
     assert second["changes"] == []
 
 
-def test_holdings_tab_columns_and_protection(tmp_path):
+def test_portfolio_v32_layout_also_reset(tmp_path):
+    """바로 전 배치(A·B 두 열, [자산]·[코어·위성]·업종 펼침)도 한 번 지우고 새 배치로."""
+    v32 = [["항목", "값"], ["총 투자금(원)", "100,000,000"], ["종목당 계획금액(원)", "100,000,000"], [""], ["[자산]"],
+           ["환율(원/$)", "=x"]] + [[""]] * 7 + [["[코어·위성]"]] + [[""]] * 9 + [["[업종별 비중 (위성 대비)]"], ["=IFERROR(LET(q,QUERY(...)))"]]
+    sh = _sheet(extra_tabs={"투자현황": v32})
+    result, _ = _run(sh, tmp_path=tmp_path)
+    assert any("투자현황 예전 배치 지우기" in c for c in result["changes"])
+    g = sh.tabs["투자현황"].get_all_values()
+    labels = [row[0] for row in g]
+    assert "[업종별 비중 (위성 대비)]" not in labels and not any("QUERY" in str(x) for x in labels)
+    assert g[ss.P_OLD_TOTAL_ROW - 1][1] == "100,000,000"
+    second, _ = _run(sh, tmp_path=tmp_path)
+    assert second["changes"] == []
+
+
+def test_holdings_tab_is_qqqm_account(tmp_path):
     sh = _sheet()
     _run(sh, tmp_path=tmp_path)
     g = sh.tabs["보유현황"].get_all_values()
-    assert g[0][:11] == ["종목", "종목명", "업종", "구분", "보유주", "평균단가($)", "현재가($)", "손익률", "투자 원금(원)",
-                         "평가금액(원)", "비중"]
-    assert g[1][0].startswith("=IFERROR(SORT(UNIQUE(FILTER(UPPER('체결'!$B$2")
-    assert '"코어","위성"' in g[1][3] and '"대기자금"' in g[1][3] and '"ETF"' in g[1][3]
+    assert g[0][:10] == ss.HOLDINGS_HEADERS
+    assert g[1][0] == "QQQM" and len([r for r in g[2:] if any(str(v).strip() for v in r[:10])]) == 0
+    assert '"매수"' in g[1][1] and "'매매일지'!$R$" in g[1][8] and "2500000" in g[1][9]
     assert any(p["description"] == ss.PROTECT_PREFIX + "보유현황 전체" and p["warningOnly"] for p in sh.protected)
     assert ss.H_FX_COL - 1 in sh.hidden_cols[sh.tabs["보유현황"].id]
+
+
+def test_holdings_old_layout_cleared_once(tmp_path):
+    old = [["종목", "종목명", "업종", "구분", "보유주", "평균단가($)", "현재가($)", "손익률", "투자 원금(원)", "평가금액(원)", "비중", "",
+            "환율(보조)"], ["=IFERROR(SORT(...))", "=b", "=c", "=d", "", "", "", "", "", "", "", "", "=GOOGLEFINANCE(\"CURRENCY:USDKRW\")"],
+           ["", "=b3"]]
+    sh = _sheet(extra_tabs={"보유현황": old})
+    result, _ = _run(sh, tmp_path=tmp_path)
+    assert any("보유현황 예전 배치 지우기" in c for c in result["changes"])
+    g = sh.tabs["보유현황"].get_all_values()
+    assert g[0][:10] == ss.HOLDINGS_HEADERS and g[1][0] == "QQQM"
+    assert len(g) < 3 or not any(str(v).strip() for v in g[2][:10])
+    second, _ = _run(sh, tmp_path=tmp_path)
+    assert second["changes"] == []
 
 
 def test_tab_order_v32(tmp_path):
@@ -509,10 +541,10 @@ def test_tab_order_v32(tmp_path):
     assert sh.props["목록"]["hidden"] is True
 
 
-def test_portfolio_formulas_reference_holdings_not_hidden_columns():
+def test_portfolio_formulas_reference_holdings_row():
     vals, _ = ss.portfolio_values("1", "1")
     formulas = " ".join(v for rng in vals.values() for row in rng for v in row)
-    assert "'보유현황'!$J$" in formulas and "'보유현황'!$I$" in formulas
+    assert "'보유현황'!$G$2" in formulas and "'보유현황'!$I$2" in formulas and "'보유현황'!$J$2" in formulas
     assert all(re.fullmatch(r"[AB]\d+(:[AB]\d+)?", k) for k in vals)  # A·B 열만 쓴다
 
 
@@ -547,7 +579,7 @@ def test_formulas_follow_new_fill_columns():
     assert "'체결'!K2" in row["v_amount"]  # 매수 줄 환율
     assert "'체결'!L2" in row["v_pnl"] and "'체결'!$L$1:$L$401" in row["v_pnl"]  # 수수료
     assert "'체결'!J2" in row["v_rule"] and "'체결'!H2" in row["v_stop"]
-    holdings = " ".join(ss.holdings_values()[f"B{ss.H_FIRST}:K{ss.H_LAST}"][0])
+    holdings = " ".join(ss.holdings_values()[f"A{ss.H_FIRST}:J{ss.H_LAST}"][0])
     assert "IF('체결'!$K$2:$K$401=\"\"" in holdings and "'체결'!$L$" not in holdings
     ids = {t: i for i, t in enumerate(ss.TAB_ORDER)}
     rules = {r["setDataValidation"]["range"]["startColumnIndex"]: r["setDataValidation"]["rule"]["condition"]
@@ -557,11 +589,11 @@ def test_formulas_follow_new_fill_columns():
     assert 12 not in rules  # M 메모는 검사 없음
 
 
-def test_total_return_is_value_over_principal():
+def test_return_cells_follow_holdings():
     layout = {label: formula for _, label, formula, _ in ss.portfolio_layout()}
-    assert layout["전체 손익률"] == '=IF(N(B7)=0,"",B8/B7-1)'
-    b7, b8 = 961_016, 959_346
-    assert round(b8 / b7 - 1, 3) == -0.002
+    assert layout["손익률"] == "='보유현황'!$E$2" and layout["예상 양도세(원)"] == "=MAX(0,N(B13)-2500000)*22%"
+    row = ss.holdings_values()[f"A{ss.H_FIRST}:J{ss.H_LAST}"][0]
+    assert row[4] == '=IF(OR(C2="",D2=""),"",D2/C2-1)' and row[7] == '=IF(N(F2)=0,"",G2-F2)'
 
 
 def test_center_alignment_every_tab_no_right_alignment():

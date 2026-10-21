@@ -1,4 +1,4 @@
-"""아침 편지 짧은 판 미리보기 (일회성 점검, 2026-10-17) — 실제 발송·DB·시트 쓰기 없음.
+"""아침 편지 미리보기 (일회성 점검, 2026-10-17 · v2.1 2026-10-21) — 실제 발송·DB·시트 쓰기 없음.
 
 오늘 확정 봉으로 engine.daily.run(dry_run=True) → 가상 장부 run(dry_run=True, 임시 DB) → 개인판·단체방판 보고서를
 outputs/letter_preview/에 그리고, 접힌 상태에서 보이는 글을 화면에 출력한다.
@@ -87,6 +87,7 @@ def main() -> None:
     daily._attach_regime_line(summary, vb, cfg)
     daily._attach_market_glance(summary, cfg)
     daily._attach_dec_tax(summary, cfg)
+    daily._attach_letter_v2(summary, vb, cfg)  # 아침 편지 v2.1: 점검·내 돈·연구 진행(월요일)
     if a.scorecard:
         summary["scorecard"] = {"month": a.scorecard, "lines": ["(미리보기 — 성적표 접기 자리)"]}
     daily.render_editions(summary, cfg)

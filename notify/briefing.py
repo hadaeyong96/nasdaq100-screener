@@ -154,7 +154,10 @@ def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") ->
     if edition == letter.GROUP:
         return "\n".join([title_line(summary, cfg), letter.todo_line(summary, cfg, letter.GROUP)])
     if not (cfg.get("report") or {}).get("show_screening", False):
-        lines = [title_line(summary, cfg), letter.todo_line(summary, cfg, letter.PERSONAL)]
+        lines = [title_line(summary, cfg)]
+        if summary.get("letter_check"):  # 아침 편지 v2.1: 머리말 → 점검 → 할 일 (개인판만)
+            lines.append(letter.check_line(summary["letter_check"]))
+        lines.append(letter.todo_line(summary, cfg, letter.PERSONAL))
         if summary.get("rebuilt_from"):
             lines.append(f"{REBUILT_PREFIX} 체결 기록 변경 반영 ({summary['rebuilt_from']}부터 재계산)")
         lines.extend(line for line in (

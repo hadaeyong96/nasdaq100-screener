@@ -2288,6 +2288,7 @@ def main() -> None:
         _attach_regime_line(summary, vb_result, cfg)
         _attach_market_glance(summary, cfg)
         _attach_dec_tax(summary, cfg)
+        _attach_letter_v2(summary, vb_result, cfg)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 (읽기 전용, 실패해도 브리핑 본문은 그대로)
         try:
             from factory import scorecard_run
@@ -2407,6 +2408,51 @@ def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, da
         print(f"[daily] 12월 공제 안내를 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
 
 
+def _attach_letter_v2(summary: dict, vb_result: dict | None, cfg: dict, *, fills_fn=None, qqqm_fn=None,
+                      now_fn=None) -> None:
+    """아침 편지 v2.1(2026-10-21) 재료: 점검 줄(summary["letter_check"]), 내 돈(summary["my_money"]),
+    오늘 한국 날짜(summary["letter_today_kst"], 연구 진행은 월요일만). 시트·가격은 읽기만. 실패하면 그 칸만 빠진다.
+
+    점검의 기준일은 가상 장부 기준일(없으면 브리핑 기준일), 기대 기준일은 실행 시각 기준 가장 최근 마감 NYSE 거래일.
+    """
+    from core import tax_harvest as th
+    from notify import letter
+
+    now_kst = (now_fn or (lambda: datetime.now(KST)))()
+    summary["letter_today_kst"] = pd.Timestamp(now_kst.date())
+    try:
+        books = (summary.get("vbooks") or {}).get("books")
+        if not books and vb_result and vb_result.get("ledger") is not None:
+            books = _letter_vbooks(vb_result, cfg)["books"]  # 기준일이 달라 편지에 안 붙은 날도 점검은 한다
+        base = (vb_result or {}).get("base_date") or summary.get("as_of")
+        expected = latest_closed_trading_day(now_kst.astimezone(US_EASTERN))
+        base_d = pd.Timestamp(base).date() if base is not None else None
+        lag = 0
+        if base_d is not None and base_d < expected:
+            lag = len(trading_days_between(base_d + timedelta(days=1), expected))
+        msgs = list((vb_result or {}).get("warnings", [])) + list((vb_result or {}).get("errors", []))
+        summary["letter_check"] = letter.check_info(books or [], base, expected, lag, letter.skip_reasons(cfg, msgs))
+    except Exception as exc:  # noqa: BLE001 — 점검 줄 실패가 브리핑을 막으면 안 된다
+        summary.pop("letter_check", None)
+        print(f"[daily] 점검 줄을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+    try:
+        fills = (fills_fn or (lambda: _default_fills(cfg)))()
+        pos = th.moving_average_position(fills)
+        money = None
+        if pos.rows and pos.qty > 0:
+            close = (qqqm_fn or (lambda: _fetch_close_series("QQQM", cfg)))()
+            as_of = summary.get("as_of")
+            if as_of is not None:
+                close = close[close.index <= pd.Timestamp(as_of)]
+            close = close.dropna()
+            money = letter.money_summary(pos, float(close.iloc[-1]) if len(close) else None, summary.get("fx_rate"),
+                                         now_kst.year)
+        summary["my_money"] = money
+    except Exception as exc:  # noqa: BLE001
+        summary["my_money"] = None
+        print(f"[daily] 내 돈 칸을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+
+
 def _fetch_close_series(ticker: str, cfg: dict) -> pd.Series:
     from data.prices import fetch_one
 
@@ -2414,20 +2460,13 @@ def _fetch_close_series(ticker: str, cfg: dict) -> pd.Series:
 
 
 def _waiting_books(cfg: dict, base_date, extra_names: set[str]) -> dict[str, pd.Timestamp]:
-    """아직 시작 전인 장부 → 시작 예정일: 8번 가치평가(시작일 고정 — 그날 전까지), 6개월 강세(켜져 있을 때, 첫 월말 신호일)."""
+    """아직 시작 전인 장부 → 시작 예정일: 8번 가치평가(시작일 고정 — 그날 전까지).
+    6개월 강세는 2026-10-18 탈락 보관(꺼 둠)이라 시작 대기로 보이지 않는다(아침 편지 v2.1, 2026-10-21)."""
     vb = cfg.get("virtual_books") or {}
-    base = pd.Timestamp(base_date).normalize()
     out: dict[str, pd.Timestamp] = {}
     va = vb.get("value_score") or {}
     if va.get("enabled") and va.get("name") not in extra_names and va.get("start_date"):
         out[va["name"]] = pd.Timestamp(va["start_date"])
-    mo = vb.get("momentum") or {}
-    if not mo.get("enabled") or mo.get("name") in extra_names or mo.get("start_date"):
-        return out
-    days = trading_days_between(base.date(), (base + pd.Timedelta(days=70)).date())
-    ends = [d for d, nxt in zip(days[:-1], days[1:]) if d.month != nxt.month]
-    if ends:
-        out[mo["name"]] = pd.Timestamp(ends[0])
     return out
 
 
