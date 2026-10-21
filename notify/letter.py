@@ -215,7 +215,7 @@ def _ret(b: dict) -> str:
 
 def join_names(labels: list[str]) -> str:
     """보여 주는 이름 묶기: "QLD 추세 전략"+"TQQQ 추세 전략" → "QLD·TQQQ 추세 전략",
-    "기술지표 전략"+"볼린저 전략"+"한 달 가속 전략" → "기술지표·볼린저·한 달 가속 전략"."""
+    "기술지표 전략"+"볼린저 전략"+"가치평가 전략" → "기술지표·볼린저·가치평가 전략"."""
     if len(labels) == 1:
         return labels[0]
     words = [x[:-3].split() if x.endswith(" 전략") else x.split() for x in labels]

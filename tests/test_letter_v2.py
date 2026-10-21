@@ -51,7 +51,7 @@ def test_check_line_skipped_with_reason(cfg):
     line = letter.check_line(_info(books, skipped=letter.skip_reasons(cfg, msgs)))
     assert line.endswith("건너뜀(가치평가 전략·SEC 키 없음)")
     assert letter.skip_reasons(cfg, ["가치평가 따라하기: 시작일 2026-10-19 전이라 계산하지 않았습니다"]) == {}  # 시작 전은 건너뜀 아님
-    assert letter.skip_reasons(cfg, ["한 달 가속 따라하기 오류: KeyError: 'x'"]) == {"한 달 가속 전략": "오류"}
+    assert letter.skip_reasons(cfg, ["한 달 가속 따라하기 오류: KeyError: 'x'"]) == {"QQQ 대비 1개월 강세 전략": "오류"}
     # 계산은 된 장부의 경고(점수 못 낸 종목 등)는 건너뜀이 아니다
     ok_books = [b for b in _books(cfg) if b["status"] != "waiting"]
     warn = letter.skip_reasons(cfg, ["한 달 가속 따라하기: 2026-09-30 점수 못 낸 종목 1개 — X"])
@@ -98,7 +98,7 @@ def test_book_lines_trades_count_personal_detail_folded_group_no_names(cfg):
     p = letter.book_lines(books, cfg)
     g = letter.book_lines(books, cfg, letter.GROUP)
     assert p[-1] == "오늘 가상 거래 1건 (상세는 아래 접기)" and "MU" not in "".join(p)
-    assert letter.trade_detail_line(books) == "오늘 가상 매수: 한 달 가속 전략 MU"
+    assert letter.trade_detail_line(books) == "오늘 가상 매수: QQQ 대비 1개월 강세 전략 MU"
     assert g[-1] == "오늘 가상 거래 1건" and g[0] == "기준선: QQQ 전략 (아래 %p의 기준)"  # 단체방판: 기준선 수익률도 빼고 %p만
 
 
@@ -229,3 +229,33 @@ def test_attach_letter_v2_isolates_errors(cfg):
 
     daily._attach_letter_v2(s, None, cfg, fills_fn=boom, now_fn=lambda: datetime(2026, 10, 19, 7, 0, tzinfo=KST))
     assert s["my_money"] is None and "letter_check" in s and s["letter_check"]["recorded"] == []
+
+
+# ── 이름 변경 (2026-10-21): 9번 표시 이름만 바뀌고 기존 열 값은 이어진다 ──────────────────────
+
+
+def test_rename_9_header_keeps_history(cfg):
+    from core.virtual_books import BookSpec, LedgerResult
+    from notify import virtual_books as vbtext
+
+    assert vbtext.display_name(cfg, "한 달 가속 따라하기") == "QQQ 대비 1개월 강세 전략"
+    idx = pd.to_datetime(["2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19"])
+    q = pd.DataFrame({"value": [100.0, 101, 102, 103], "cum_return_pct": [0.0, 1, 2, 3], "drawdown_pct": [0.0] * 4,
+                      "holding": ["QQQ"] * 4}, index=idx)
+    regime = pd.DataFrame({"close": [1.0] * 4, "sma": [1.0] * 4, "above": [1.0] * 4}, index=idx)
+    led = LedgerResult(start=idx[0], base_date=idx[-1], books={"QQQ 그냥 보유": type("B", (), {"daily": q, "trades": []})()},
+                       summaries=[], regime=regime, switches=[])
+    acc = pd.DataFrame({"value": [70.0, 71, 72], "cum_return_pct": [0.0, 1.4, 2.9], "drawdown_pct": [0.0] * 3},
+                       index=idx[1:])
+    old_cfg = copy.deepcopy(cfg)
+    old_cfg["virtual_books"]["display_names"]["한 달 가속 따라하기"] = "한 달 가속 전략"
+    raw = {"전략비교_일일": vbtext.daily_table(led, [BookSpec("QQQ 그냥 보유", "hold", "QQQ")], "QQQ 그냥 보유",
+                                         [{"name": "한 달 가속 따라하기", "start": idx[1], "daily": acc}])}
+    old = vbtext.rename_tables(raw, vbtext.display_map(old_cfg))["전략비교_일일"]
+    new = vbtext.rename_tables(raw, vbtext.display_map(cfg))["전략비교_일일"]
+    io, inew = old[0].index("한 달 가속 전략 누적(%)"), new[0].index("QQQ 대비 1개월 강세 전략 누적(%)")
+    assert io == inew and [r[io] for r in old[1:]] == [r[inew] for r in new[1:]] == ["", 0.0, 1.4, 2.9]
+    # 복구: 이름을 바꾸기 전 시트(옛 머리글)도, 바꾼 뒤 시트도 같은 장부 id로 되돌린다
+    back_old = vbtext.unrename_tables({"전략비교_일일": old}, vbtext.display_map(cfg), vbtext.display_aliases(cfg))
+    back_new = vbtext.unrename_tables({"전략비교_일일": new}, vbtext.display_map(cfg), vbtext.display_aliases(cfg))
+    assert back_old == back_new == raw

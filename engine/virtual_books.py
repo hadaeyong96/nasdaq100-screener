@@ -364,7 +364,8 @@ def recover_picks(cfg: dict, *, db_path: Path | None = None, sheets_client=None,
         from data import sheets
 
         sheets_client = sheets.get_client()
-    tables = vbtext.unrename_tables(vbsheet.read_tables(sheets_client, sheet_id), vbtext.display_map(cfg))  # 보여 주는 이름 → 장부 id
+    tables = vbtext.unrename_tables(vbsheet.read_tables(sheets_client, sheet_id), vbtext.display_map(cfg),
+                                    vbtext.display_aliases(cfg))  # 보여 주는 이름 → 장부 id
     conn = vbstore.connect(Path(db_path or vbstore.VBOOKS_DB_PATH))
     out = {}
     try:
