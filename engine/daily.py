@@ -2411,7 +2411,8 @@ def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, da
 def _attach_letter_v2(summary: dict, vb_result: dict | None, cfg: dict, *, fills_fn=None, qqqm_fn=None,
                       now_fn=None) -> None:
     """아침 편지 v2.1(2026-10-21) 재료: 점검 줄(summary["letter_check"]), 내 돈(summary["my_money"]),
-    오늘 한국 날짜(summary["letter_today_kst"], 연구 진행은 월요일만). 시트·가격은 읽기만. 실패하면 그 칸만 빠진다.
+    오늘 한국 날짜(summary["letter_today_kst"]), 연구 소식(summary["research_news"] — 판정 다음 첫 편지·월요일).
+    시트·가격은 읽기만. 실패하면 그 칸만 빠진다. 연구 소식에 처음 보인 판정은 가상 장부 DB meta에 남긴다(dry-run이면 안 남김).
 
     점검의 기준일은 가상 장부 기준일(없으면 브리핑 기준일), 기대 기준일은 실행 시각 기준 가장 최근 마감 NYSE 거래일.
     """
@@ -2436,6 +2437,11 @@ def _attach_letter_v2(summary: dict, vb_result: dict | None, cfg: dict, *, fills
         summary.pop("letter_check", None)
         print(f"[daily] 점검 줄을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
     try:
+        summary["research_news"] = _research_news(cfg, summary["letter_today_kst"], vb_result)
+    except Exception as exc:  # noqa: BLE001
+        summary["research_news"] = []
+        print(f"[daily] 연구 소식 칸을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+    try:
         fills = (fills_fn or (lambda: _default_fills(cfg)))()
         pos = th.moving_average_position(fills)
         money = None
@@ -2451,6 +2457,32 @@ def _attach_letter_v2(summary: dict, vb_result: dict | None, cfg: dict, *, fills
     except Exception as exc:  # noqa: BLE001
         summary["my_money"] = None
         print(f"[daily] 내 돈 칸을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+
+
+RESEARCH_SHOWN_KEY = "research_news_shown"
+
+
+def _research_news(cfg: dict, today_kst, vb_result: dict | None) -> list[str]:
+    """연구 소식 줄 (notify.letter.research_news). 이미 보인 판정 이름은 가상 장부 DB meta(JSON 목록)에서 읽고,
+    이번에 처음 보인 것은 dry-run이 아닐 때만 덧붙여 쓴다. DB가 없으면(미리보기 등) 기록 없이 계산만."""
+    import json
+
+    from notify import letter
+    from store import virtual_books as vbstore
+
+    db_path = (vb_result or {}).get("db_path")
+    shown: list[str] = []
+    conn = vbstore.connect(db_path) if db_path is not None and Path(db_path).exists() else None
+    try:
+        if conn is not None:
+            shown = json.loads(vbstore.get_meta(conn, RESEARCH_SHOWN_KEY) or "[]")
+        lines, new = letter.research_news(cfg, today_kst, shown)
+        if new and conn is not None and not (vb_result or {}).get("dry_run", True):
+            vbstore.set_meta(conn, RESEARCH_SHOWN_KEY, json.dumps(shown + new, ensure_ascii=False))
+        return lines
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _fetch_close_series(ticker: str, cfg: dict) -> pd.Series:

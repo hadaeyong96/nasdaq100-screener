@@ -184,7 +184,7 @@ def test_group_edition_excludes_personal_sections_and_tickers(cfg, tmp_path):
     assert _folds(body) == ["▶ 시장 지표 그래프 (지금의 시장 온도 전체)", "▶ 지표 설명 (읽는 법·용어)", "▶ 보고서 정보"]
     for x in ("오늘 할 일:", "[시장 한눈에]", "[가상 장부]", "오늘 가상 거래 1건"):
         assert x in body
-    for x in ("점검:", "[1 내 돈", "[4 연구 진행]", "[2 시장", "[3 가상"):
+    for x in ("점검:", "[1 내 돈", "[4 연구", "[2 시장", "[3 가상"):
         assert x not in body
     for x in ("월간 성적표", "돈이 몰리는", "강한 종목", "올해 세금 없는 매도 한도", "오늘의 스크리닝", 'id="fold-detail"'):
         assert x not in body

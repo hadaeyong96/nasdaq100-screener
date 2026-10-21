@@ -314,13 +314,14 @@ def _nonzero(cell: str) -> bool:
         return True
 
 
-# ── 아침 편지 v2.1 (2026-10-21) — 점검·내 돈·가상 장부 3줄 묶음·연구 진행 ─────────────────────────
+# ── 아침 편지 v2.1 (2026-10-21) — 점검·내 돈·가상 장부 3줄 묶음·연구 소식 ─────────────────────────
 
 WEEKDAY_KR = "월화수목금토일"
 MONEY_HEADER = "[1 내 돈 · QQQM]"
 GLANCE_HEADER_V2 = "[2 시장 한눈에]"
 BOOKS_HEADER_V2 = "[3 가상 장부] 가상 1억 · {start} 시작 · QQQ 대비 누적 · 매수 추천 아님"
-RESEARCH_HEADER = "[4 연구 진행]"
+RESEARCH_HEADER = "[4 연구 소식]"
+RESEARCH_HEADER_GROUP = "[연구 소식]"
 MONEY_EMPTY = "체결 탭에 QQQM 평균단가를 넣으면 여기에 표시됩니다"
 GROUPS = (("base", "기준선"), ("lev", "레버리지(1~5)"), ("picks", "종목 고르기(6~9)"))
 
@@ -452,9 +453,34 @@ def trade_detail_line(books: list[dict]) -> str:
     return _trades_line(books, PERSONAL)
 
 
-def research_line(cfg: dict, today_kst) -> str | None:
-    """[4 연구 진행] 한 줄 — 월요일(한국 날짜)만, config research_status. 없으면 None."""
-    text = (cfg.get("research_status") or "").strip()
-    if not text or today_kst is None or pd.Timestamp(today_kst).dayofweek != 0:
-        return None
-    return text
+def research_news(cfg: dict, today_kst, shown=()) -> tuple[list[str], list[str]]:
+    """[4 연구 소식] 줄들 (2026-10-21, config research_news) — 개인판·단체방판 같은 글. 날짜는 한국 날짜.
+
+    보이는 날: ① 판정일 다음 첫 편지(판정일 < 오늘, 아직 보인 적 없음 — shown에 이름이 없음) ② 매주 월요일(최근 7일 안에
+    판정 난 것 + 연구 중 목록). 그 밖의 날은 빈 목록. 보이는 날에는 연구 중 줄도 붙인다.
+    입력: cfg, today_kst(오늘 한국 날짜), shown(이미 편지에 보인 판정 이름들)
+    출력: (줄 목록, 이번에 처음 보인 판정 이름 목록 — 호출부가 기록)
+    """
+    news = cfg.get("research_news") or {}
+    if today_kst is None:
+        return [], []
+    today = pd.Timestamp(today_kst).normalize()
+    monday = today.dayofweek == 0
+    seen = set(shown or ())
+    show = []
+    for item in news.get("finished") or []:
+        days = (today - pd.Timestamp(item["date"]).normalize()).days
+        if days <= 0:
+            continue
+        if item["name"] not in seen or (monday and days <= 7):
+            show.append(item)
+    lines = []
+    for it in show:
+        lines += [f"시험 끝: 「{it['name']}」({it['desc']})", f"{it['period']} 시험 → {it['result']} → {it['verdict']}",
+                  f"이유: {it['reason']}"]
+    if not show and not monday:
+        return [], []
+    prog = [str(x) for x in news.get("in_progress") or []]
+    if prog:
+        lines.append("연구 중: " + " · ".join(prog))
+    return lines, [it["name"] for it in show if it["name"] not in seen]

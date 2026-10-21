@@ -369,7 +369,7 @@ details.exp[open]>summary{color:var(--info)}
 </header>
 
 {% if letter %}
-{# 아침 편지 v2.1 (2026-10-21): 개인판 점검·할 일·내 돈·시장·가상 장부·연구 진행(월요일), 단체방판은 할 일·시장·가상 장부만. 표시 전용 #}
+{# 아침 편지 v2.1 (2026-10-21): 개인판 점검·할 일·내 돈·시장·가상 장부·연구 소식(판정 다음 날·월요일), 단체방판은 할 일·시장·가상 장부·연구 소식. 표시 전용 #}
 {% if letter.check %}
 <section class="letter" aria-label="점검">
   <div class="ln mini">{{ letter.check }}</div>
@@ -407,9 +407,9 @@ details.exp[open]>summary{color:var(--info)}
 </section>
 {% endif %}
 {% if letter.research %}
-<section class="letter" aria-label="연구 진행">
+<section class="letter" aria-label="연구 소식">
   <h2>{{ letter.research_header }}</h2>
-  <div class="ln">{{ letter.research }}</div>
+  {% for line in letter.research %}<div class="ln">{{ line }}</div>{% endfor %}
 </section>
 {% endif %}
 {% endif %}

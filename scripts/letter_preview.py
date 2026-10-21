@@ -87,7 +87,7 @@ def main() -> None:
     daily._attach_regime_line(summary, vb, cfg)
     daily._attach_market_glance(summary, cfg)
     daily._attach_dec_tax(summary, cfg)
-    daily._attach_letter_v2(summary, vb, cfg)  # 아침 편지 v2.1: 점검·내 돈·연구 진행(월요일)
+    daily._attach_letter_v2(summary, vb, cfg)  # 아침 편지: 점검·내 돈·연구 소식(판정 다음 날·월요일)
     if a.scorecard:
         summary["scorecard"] = {"month": a.scorecard, "lines": ["(미리보기 — 성적표 접기 자리)"]}
     daily.render_editions(summary, cfg)
