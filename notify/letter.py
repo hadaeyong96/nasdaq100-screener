@@ -41,6 +41,8 @@ def todo_items(summary: dict, cfg: dict, edition: str = PERSONAL) -> list[str]:
     if vb.get("switch_today"):
         items.append(f"추세 전략 전환 신호(가상) — {_md(vb['switch_next_day'])} 체결" if vb.get("switch_next_day")
                      else "추세 전략 전환 신호(가상)")
+    if edition == PERSONAL and summary.get("savings_day"):  # A1 저축일(개인판만, 2026-10-22) — 할 일 맨 앞
+        items.insert(0, SAVINGS_TODO)
     if edition == PERSONAL:
         sc = summary.get("scorecard")
         if sc:
@@ -560,3 +562,40 @@ def research_lines(cfg: dict, today_kst) -> list[str]:
     if judged:
         lines.append(f"결과: {cur.get('result', '')} → {cur['verdict']}")
     return lines
+
+
+# ── 아침 편지 개선 2줄 (2026-10-22) — A2 급락장 경고·A1 저축일 ─────────────────────────────
+
+CRASH_WARNING = "급락장 — 우리 실험의 손해는 대부분 이때 빠졌다가 급반등을 놓친 데서 나왔어요. 적립 그대로, 팔지 않기"
+SAVINGS_TODO = "저축일 — 들어온 돈 오늘 바로 매수(ISA 먼저, 넘치면 일반 계좌 QQQM)"
+
+
+def crash_warning(qqq_close: pd.Series | None) -> str | None:
+    """QQQ 국면(factory.regimes: 200일선 아래 = 하락장, 252일 고점 −20% 이하 또는 20일 −10% 이하 = 폭락장)이
+    하락장·폭락장이면 경고 한 줄, 상승장·판단불가·자료 없음이면 None. 개인판·단체방판 모두."""
+    if qqq_close is None or len(qqq_close.dropna()) == 0:
+        return None
+    from factory import regimes
+
+    r = regimes.classify(qqq_close.dropna().astype(float)).iloc[-1]
+    return CRASH_WARNING if r in (regimes.DOWN, regimes.CRASH) else None
+
+
+def savings_date(day: int, year: int, month: int, trading_days) -> pd.Timestamp | None:
+    """그달 저축일: day일(달의 마지막 날보다 크면 마지막 날), 그날이 거래일이 아니면 그 뒤 첫 거래일.
+    trading_days: 그달 1일부터 다음 달 초까지의 거래일(오름차순)."""
+    last = pd.Timestamp(year=year, month=month, day=1) + pd.offsets.MonthEnd(0)
+    target = pd.Timestamp(year=year, month=month, day=min(int(day), last.day))
+    after = [pd.Timestamp(d) for d in trading_days if pd.Timestamp(d) >= target]
+    return after[0] if after else None
+
+
+def is_savings_day(cfg: dict, today, trading_days) -> bool:
+    """config savings_day(숫자)가 있고 오늘(한국 날짜)이 저축일이면 True. 빈칸이면 False.
+    이번 달 저축일과, 달 말 휴장으로 이번 달로 밀려 온 지난달 저축일을 모두 본다."""
+    day = cfg.get("savings_day")
+    if day in (None, "") or today is None:
+        return False
+    t = pd.Timestamp(today).normalize()
+    prev = t - pd.offsets.MonthBegin(1)
+    return t in {savings_date(int(day), t.year, t.month, trading_days), savings_date(int(day), prev.year, prev.month, trading_days)}

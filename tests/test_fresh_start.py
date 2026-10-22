@@ -235,3 +235,79 @@ def test_research_current_verdict_in_config(cfg):
     lines = letter.research_lines(cfg, pd.Timestamp("2026-10-23"))  # 판정(10/22) 다음 날
     assert lines[0] == "「변동성 맞춤 레버리지 전략」 사전 등록 → 탐색 중 → [판정]" and lines[1].endswith("→ 탈락")
     assert letter.research_lines(cfg, pd.Timestamp("2026-10-24")) == []
+
+
+# ── 아침 편지 개선 2줄 (2026-10-22): A2 급락장 경고·A1 저축일 ────────────────────────────
+
+
+def _qqq(kind):
+    idx = pd.bdate_range("2024-01-01", periods=300)
+    up = np.linspace(100, 160, 300)
+    if kind == "up":
+        v = up
+    elif kind == "down":  # 200일선 아래로 천천히(폭락 조건은 안 됨: 252일 고점 대비 −20% 안, 20일 −10% 안)
+        v = np.concatenate([np.linspace(100, 130, 240), np.linspace(130, 114, 60)])
+    else:  # 폭락: 20일 −10% 넘게
+        v = np.concatenate([up[:280], np.linspace(up[279], up[279] * 0.85, 20)])
+    return pd.Series(v, index=idx)
+
+
+def test_crash_warning_regimes():
+    from factory import regimes
+
+    assert regimes.classify(_qqq("down")).iloc[-1] == regimes.DOWN
+    assert regimes.classify(_qqq("crash")).iloc[-1] == regimes.CRASH
+    assert letter.crash_warning(_qqq("up")) is None
+    assert letter.crash_warning(_qqq("down")) == letter.CRASH_WARNING
+    assert letter.crash_warning(_qqq("crash")) == letter.CRASH_WARNING
+    assert letter.crash_warning(None) is None and letter.crash_warning(_qqq("up").iloc[:50]) is None  # 판단불가
+
+
+def test_crash_warning_both_editions_below_todo(cfg, tmp_path):
+    for kind, shown in (("up", False), ("down", True), ("crash", True)):
+        s = _summary(cfg)
+        s["qqq_close"] = _qqq(kind)
+        for ed in ("personal", "group"):
+            body = report_html.render_report(s, cfg, tmp_path, edition=ed).read_text(encoding="utf-8")
+            body = body[body.index("<header>"):body.index("<script>")]
+            assert (letter.CRASH_WARNING in body) is shown, (kind, ed)
+            if shown:
+                assert body.index("오늘 할 일:") < body.index(letter.CRASH_WARNING) < body.index("시장 한눈에]")
+
+
+def test_savings_day_weekend_holiday_and_blank(cfg):
+    from data.market_calendar import trading_days_between
+
+    tdays = trading_days_between(pd.Timestamp("2026-09-01").date(), pd.Timestamp("2027-02-28").date())
+    cfg["savings_day"] = 25
+    assert letter.is_savings_day(cfg, "2026-11-25", tdays)  # 수요일
+    assert not letter.is_savings_day(cfg, "2026-11-24", tdays)
+    assert not letter.is_savings_day(cfg, "2026-10-25", tdays)  # 일요일 → 다음 거래일 10/26(월)
+    assert letter.is_savings_day(cfg, "2026-10-26", tdays)
+    assert letter.is_savings_day(cfg, "2026-12-28", tdays) and not letter.is_savings_day(cfg, "2026-12-25", tdays)  # 성탄 휴장·주말
+    cfg["savings_day"] = 31
+    assert letter.is_savings_day(cfg, "2026-11-30", tdays)  # 31일이 없는 달 → 그달 마지막 날
+    assert letter.is_savings_day(cfg, "2026-12-31", tdays) and not letter.is_savings_day(cfg, "2027-01-04", tdays)  # 12/31(목) 거래일
+    assert letter.is_savings_day(cfg, "2027-02-01", tdays) and not letter.is_savings_day(cfg, "2027-01-29", tdays)  # 1/31(일) → 2/1(월)
+    cfg["savings_day"] = None
+    assert not letter.is_savings_day(cfg, "2026-11-25", tdays)
+    cfg["savings_day"] = ""
+    assert not letter.is_savings_day(cfg, "2026-11-25", tdays)
+
+
+def test_savings_todo_personal_only(cfg):
+    s = _summary(cfg)
+    s["savings_day"] = True
+    assert letter.todo_line(s, cfg, letter.PERSONAL) == "오늘 할 일: " + letter.SAVINGS_TODO
+    assert letter.todo_line(s, cfg, letter.GROUP) == "오늘 할 일: " + letter.TODO_NONE
+    s["savings_day"] = False
+    assert letter.todo_line(s, cfg, letter.PERSONAL) == "오늘 할 일: " + letter.TODO_NONE
+
+
+def test_attach_v3_sets_savings_flag(cfg):
+    cfg["savings_day"] = 26
+    s = {"as_of": pd.Timestamp("2026-10-23"), "fx_rate": 1400.0}
+    daily._attach_letter_v3(s, cfg, None, now_fn=lambda: datetime(2026, 10, 26, 8, 7, tzinfo=KST))
+    assert s["savings_day"] is True
+    daily._attach_letter_v3(s, cfg, None, now_fn=lambda: datetime(2026, 10, 27, 8, 7, tzinfo=KST))
+    assert s["savings_day"] is False
