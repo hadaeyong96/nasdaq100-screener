@@ -2421,6 +2421,12 @@ def _attach_letter_v3(summary: dict, cfg: dict, holdings: dict | None, *, qqqm_f
         summary.pop("letter_check", None)
         print(f"[daily] 점검 줄을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
     summary["research_news"] = letter.research_lines(cfg, today)
+    try:  # A1 저축일(config savings_day, 2026-10-22): 그달 그날(주말·휴장이면 다음 NYSE 거래일)
+        tdays = trading_days_between((today - pd.offsets.MonthBegin(1)).date(), (today + pd.Timedelta(days=40)).date())
+        summary["savings_day"] = letter.is_savings_day(cfg, today, tdays)
+    except Exception as exc:  # noqa: BLE001
+        summary["savings_day"] = False
+        print(f"[daily] 저축일 확인 실패(할 일은 그대로): {type(exc).__name__}")
     try:
         money = None
         if holdings and holdings.get("qty") and holdings.get("avg_price"):

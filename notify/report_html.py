@@ -456,6 +456,7 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
         "personal": personal,
         "check": letter.check_line(info) if (personal and info) else "",
         "todo": letter.todo_line(summary, cfg, edition),
+        "crash": letter.crash_warning(summary.get("qqq_close")),  # A2 급락장 경고(개인판·단체방판, 2026-10-22)
         "money_header": letter.MONEY_HEADER,
         "money": letter.money_lines(summary.get("my_money")) if personal else [],
         "glance_header": letter.GLANCE_HEADER_V2 if personal else letter.GLANCE_HEADER,
