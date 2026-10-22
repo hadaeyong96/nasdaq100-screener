@@ -80,17 +80,24 @@ def main() -> None:
     summary = daily.run(cfg, "live", do_replay=False, dry_run=True)
     if summary.get("skipped"):
         raise SystemExit("기준일이 이미 처리돼 요약이 비었습니다")
-    vcfg = copy.deepcopy(cfg)
-    vcfg["virtual_books"]["accel"]["start_date"] = None  # 미리보기 전용(위 설명)
-    vcfg["virtual_books"]["accel"]["start_fx"] = cfg["virtual_books"]["accel"]["start_fx"]
-    with tempfile.TemporaryDirectory() as td:
-        vb = vbooks.run(vcfg, db_path=Path(td) / "vb_preview.db", dry_run=True, briefing=daily._briefing_recs(summary))
-    print("가상 장부 경고:", "; ".join(vb.get("warnings", [])) or "없음")
-    print("가상 장부 오류:", "; ".join(vb.get("errors", [])) or "없음")
-    daily._attach_regime_line(summary, vb, cfg)
-    daily._attach_market_glance(summary, cfg)
-    daily._attach_dec_tax(summary, cfg)
-    daily._attach_letter_v2(summary, vb, cfg)  # 아침 편지: 점검·내 돈·연구 소식(판정 다음 날·월요일)
+    if not (cfg.get("letter") or {}).get("show_books", False):
+        # 2026-10-22 새 출발: 가상 장부 없이 「QQQM 모으기」(읽기 전용)·점검(기준일·데이터 지연)·연구 소식 — engine.daily.main과 같은 순서
+        daily._attach_market_glance(summary, cfg)
+        holdings = daily._read_holdings(cfg)
+        daily._attach_dec_tax(summary, cfg, holdings=holdings)
+        daily._attach_letter_v3(summary, cfg, holdings)
+    else:
+        vcfg = copy.deepcopy(cfg)
+        vcfg["virtual_books"]["accel"]["start_date"] = None  # 미리보기 전용(위 설명)
+        vcfg["virtual_books"]["accel"]["start_fx"] = cfg["virtual_books"]["accel"]["start_fx"]
+        with tempfile.TemporaryDirectory() as td:
+            vb = vbooks.run(vcfg, db_path=Path(td) / "vb_preview.db", dry_run=True, briefing=daily._briefing_recs(summary))
+        print("가상 장부 경고:", "; ".join(vb.get("warnings", [])) or "없음")
+        print("가상 장부 오류:", "; ".join(vb.get("errors", [])) or "없음")
+        daily._attach_regime_line(summary, vb, cfg)
+        daily._attach_market_glance(summary, cfg)
+        daily._attach_dec_tax(summary, cfg)
+        daily._attach_letter_v2(summary, vb, cfg)  # 아침 편지: 점검·내 돈·연구 소식(판정 다음 날·월요일)
     if a.scorecard:
         summary["scorecard"] = {"month": a.scorecard, "lines": ["(미리보기 — 성적표 접기 자리)"]}
     daily.render_editions(summary, cfg)
@@ -104,7 +111,11 @@ def main() -> None:
         from notify import letter
 
         for d in a.news_dates.split(","):
-            fake = {**summary, "letter_today_kst": pd.Timestamp(d), "research_news": letter.research_news(cfg, pd.Timestamp(d), [])[0]}
+            if (cfg.get("letter") or {}).get("show_books"):
+                news = letter.research_news(cfg, pd.Timestamp(d), [])[0]
+            else:
+                news = letter.research_lines(cfg, pd.Timestamp(d))
+            fake = {**summary, "letter_today_kst": pd.Timestamp(d), "research_news": news}
             daily.render_editions(fake, cfg)
             for label, key in (("개인 채팅판", "report_path"), ("투자클럽 단체방판", "group_report_path")):
                 print(f"\n===== {d}(연구 소식 날짜) {label} =====")
