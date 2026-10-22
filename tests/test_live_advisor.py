@@ -21,6 +21,7 @@ from engine.daily import (
 )
 from tests._offline import block_engine_network
 from tests.test_state import make_df
+from tests.legacy import legacy_cfg
 
 _CFG = {"entry": {"limit_markup": 1.01}}
 
@@ -614,3 +615,10 @@ def test_run_live_rebuilds_when_late_fill_added_on_already_processed_day(monkeyp
 
     third = engine_daily.run(cfg, "live", do_replay=False, dry_run=False, sheets_client=_real_header_sheet_client(fills))
     assert third.get("skipped")  # 체결 기록이 그대로면 같은 기준일 재실행은 예전처럼 건너뛴다
+
+
+
+@pytest.fixture
+def cfg(cfg):
+    """새 출발 전 기능(계획·체결 시트 읽기·계획 자동 기록)을 다시 켠 설정 — tests/legacy.py."""
+    return legacy_cfg(cfg)

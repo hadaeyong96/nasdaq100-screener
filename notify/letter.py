@@ -328,7 +328,8 @@ GLANCE_HEADER_V2 = "[2 시장 한눈에]"
 BOOKS_HEADER_V2 = "[3 가상 장부] 가상 1억 · {start} 시작 · QQQ 대비 누적 · 매수 추천 아님"
 RESEARCH_HEADER = "[4 연구 소식]"
 RESEARCH_HEADER_GROUP = "[연구 소식]"
-MONEY_EMPTY = "체결 탭에 QQQM 평균단가를 넣으면 여기에 표시됩니다"
+MONEY_EMPTY = "QQQM 모으기 탭에 보유 주식 수·평균단가를 넣으면 표시됩니다"  # 2026-10-22 새 출발: 사용자 시트 「QQQM 모으기」 기준
+RESEARCH_HEADER_NO_BOOKS = "[3 연구 소식]"  # 가상 장부 칸이 없을 때(letter.show_books false) 번호
 GROUPS = (("base", "기준선"), ("lev", "레버리지(1~5)"), ("picks", "종목 고르기(6~10)"))
 SHADOW_LINE = "비교: {cell} (10번 판정용, QQQ 대비)"
 
@@ -349,6 +350,10 @@ def check_info(books: list[dict], base_date, expected_date, lag_days: int, skipp
                notes: list[str] | None = None) -> dict:
     """점검 줄 재료 (표시 전용). books: letter_books 결과, skipped: {보여 주는 이름: 사유}(건너뛴 장부),
     notes: 끝에 붙일 말(예: "동전주 선정 못함(목록 못 받음)")."""
+    if books is None:  # 2026-10-22 새 출발: 장부 없이 기준일·데이터 지연만
+        return {"base": pd.Timestamp(base_date) if base_date is not None else None,
+                "expected": pd.Timestamp(expected_date) if expected_date is not None else None,
+                "lag": int(lag_days or 0), "recorded": None, "waiting": [], "skipped": {}, "notes": list(notes or [])}
     reasons = dict(skipped or {})
     books = [b for b in books if b.get("family") != "shadow"]  # 판정 비교용 그림자는 장부 수에 넣지 않는다
     recorded = [b["label"] for b in books if b["status"] == "ok"]
@@ -365,10 +370,11 @@ def check_line(info: dict) -> str:
     """"점검: 기준일 10/16(금) · 장부 8개 기록, 1개 시작 대기(가치평가 전략) · 데이터 지연 없음".
     기준일이 직전 거래일보다 늦으면 "데이터 지연 k거래일(기대 10/19(월))", 건너뛴 장부는 " · 건너뜀(이름·사유)"를 붙인다."""
     parts = [f"기준일 {_mdw(info['base'])}" if info.get("base") is not None else "기준일 알수없음"]
-    rec = f"장부 {len(info['recorded'])}개 기록"
-    if info["waiting"]:
-        rec += f", {len(info['waiting'])}개 시작 대기({', '.join(info['waiting'])})"
-    parts.append(rec)
+    if info["recorded"] is not None:  # 장부가 없으면(새 출발) 기준일·데이터 지연만
+        rec = f"장부 {len(info['recorded'])}개 기록"
+        if info["waiting"]:
+            rec += f", {len(info['waiting'])}개 시작 대기({', '.join(info['waiting'])})"
+        parts.append(rec)
     if info["lag"] > 0:
         exp = f"(기대 {_mdw(info['expected'])})" if info.get("expected") is not None else ""
         parts.append(f"데이터 지연 {info['lag']}거래일{exp}")
@@ -500,3 +506,57 @@ def research_news(cfg: dict, today_kst, shown=()) -> tuple[list[str], list[str]]
     if prog:
         lines.append("연구 중: " + " · ".join(prog))
     return lines, [it["name"] for it in show if it["name"] not in seen]
+
+
+# ── 새 출발 (2026-10-22) — 「QQQM 모으기」 내 돈·연구 소식(진행 중 실험 한 줄) ─────────────────────────
+
+
+def holdings_money(h: dict | None, close_usd: float | None, fx: float | None, year: int) -> dict | None:
+    """「QQQM 모으기」 값(data.holdings.parse_holdings) → 내 돈 숫자. 보유 수·평균단가가 비었으면 None.
+
+    평가 = 보유 수 × 종가 × 오늘 환율, 원금 = 보유 수 × 평균단가 × 평균 환율(비면 오늘 환율),
+    공제 남은 금액 = max(0, 250만 원 − 올해 실현 이익)."""
+    from core import tax_harvest as th
+
+    if not h or not h.get("qty") or h["qty"] <= 0 or not h.get("avg_price") or not close_usd or not fx:
+        return None
+    cost = h["qty"] * h["avg_price"] * (h.get("avg_fx") or fx)
+    value = h["qty"] * close_usd * fx
+    realized = float(h.get("realized_krw") or 0.0)
+    return {"qty": h["qty"], "close_usd": close_usd, "value_krw": value, "cost_krw": cost, "pnl_krw": value - cost,
+            "pnl_pct": (value / cost - 1) * 100 if cost > 0 else None, "realized_krw": realized,
+            "remaining_krw": max(0.0, th.DEDUCTION_KRW - realized)}
+
+
+def holdings_position(h: dict | None, fx: float | None, year: int):
+    """「QQQM 모으기」 → core.tax_harvest.Position(12월 공제 소진 계산용). 보유 수·평균단가가 없으면 빈 Position."""
+    from core import tax_harvest as th
+
+    if not h or not h.get("qty") or h["qty"] <= 0 or not h.get("avg_price") or not (h.get("avg_fx") or fx):
+        return th.Position()
+    return th.Position(qty=float(h["qty"]), cost_krw=h["qty"] * h["avg_price"] * (h.get("avg_fx") or fx),
+                       realized_by_year={int(year): float(h.get("realized_krw") or 0.0)}, rows=1)
+
+
+RESEARCH_STAGES = ("사전 등록", "탐색 중", "판정")
+
+
+def research_lines(cfg: dict, today_kst) -> list[str]:
+    """[연구 소식] 진행 중 실험 한 줄(+ 판정 나면 결과 한 줄) — 매주 월요일과 판정 다음 날(한국 날짜)만, 개인판·단체방판 같음.
+
+    config research_news.current: {name, stage(사전 등록|탐색 중|판정), verdict(탈락|통과, 판정 뒤), result, date(판정일)}.
+    research_news.finished는 끝난 실험 기록으로만 두고 표시하지 않는다."""
+    cur = (cfg.get("research_news") or {}).get("current") or {}
+    if not cur.get("name") or today_kst is None:
+        return []
+    today = pd.Timestamp(today_kst).normalize()
+    judged = bool(cur.get("verdict"))
+    day_after = judged and cur.get("date") is not None and (today - pd.Timestamp(cur["date"]).normalize()).days == 1
+    if today.dayofweek != 0 and not day_after:
+        return []
+    stage = "판정" if judged else str(cur.get("stage") or RESEARCH_STAGES[0])
+    flow = " → ".join(f"[{x}]" if x == stage else x for x in RESEARCH_STAGES)
+    lines = [f"「{cur['name']}」 {flow}"]
+    if judged:
+        lines.append(f"결과: {cur.get('result', '')} → {cur['verdict']}")
+    return lines

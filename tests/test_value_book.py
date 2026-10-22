@@ -19,6 +19,7 @@ from data.market_calendar import trading_days_between
 from engine import value_book as ev
 from notify import letter
 from store import virtual_books as vbstore
+from tests.legacy import legacy_cfg
 
 P = vbk.ValueParams(name="가치평가 따라하기")
 FX = 1400.0
@@ -133,7 +134,7 @@ def test_calendar_dec_exec_2026_is_dec_29():
 
 def _cfg():
     with open("config.yaml", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return legacy_cfg(yaml.safe_load(f))
 
 
 DAYS = trading_days_between(date(2026, 10, 14), date(2026, 10, 23))

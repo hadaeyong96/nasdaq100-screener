@@ -157,7 +157,7 @@ def build_lines(plan: HarvestPlan, deadline_day: pd.Timestamp) -> list[str]:
     if plan.status == "no_record":
         return [f"QQQM 일부를 팔았다 다시 사서 올해 250만 원 공제를 쓰는 방법: {how}",
                 f"마감: {dl}까지 체결", check,
-                "체결 탭에 평균 매입가 한 줄을 적으면 수량을 계산해 드려요"]
+                "QQQM 모으기 탭에 보유 주식 수·평균단가를 넣으면 수량을 계산해 드려요"]  # 2026-10-22 새 출발: 체결 탭 → 보유현황
     lines = [f"남은 한도 {_won(plan.remaining_krw)} (올해 실현 이익 {_won(plan.realized_this_year_krw)})"]
     if plan.status == "loss":
         lines.append("올해는 팔 필요 없음(손실 상태)")

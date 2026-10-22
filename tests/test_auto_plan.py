@@ -9,6 +9,7 @@ import pytest
 
 from core import auto_plan as ap
 from data import sheets
+from tests.legacy import legacy_cfg
 
 _HEADER = ["티커", "계획금액(원)", "등록일", "기준가($)", "환율", "1차(주)", "2차(주)", "3차(주)", "합계(주)", "보유(주)", "남은(주)", "메모"]
 _INPUT_HEADERS = {"티커", "계획금액(원)", "등록일", "기준가($)", "메모"}
@@ -523,3 +524,10 @@ def test_user_edited_auto_row_is_not_rewritten():
     assert sheets.write_plan_rows(ws, ap.select_first_buy_plan_rows(fills, [], _BUDGET)).written == []
     assert ws.updates == []
     assert ws.values[1][1] == "7,000,000" and ws.values[1][3] == "30"
+
+
+
+@pytest.fixture
+def cfg(cfg):
+    """새 출발 전 기능(계획·체결 시트 읽기·계획 자동 기록)을 다시 켠 설정 — tests/legacy.py."""
+    return legacy_cfg(cfg)

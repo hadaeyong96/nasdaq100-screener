@@ -148,7 +148,20 @@ mode: live
 # paper 모드는 쓰지 않는다.
 live:
   auto_plan:
-    enabled: true
+    enabled: false # 2026-10-22 새 출발: 프로그램은 사용자 시트에 아무것도 쓰지 않는다(계획 탭 삭제)
+  # 2026-10-22 새 출발: 사용자 시트는 「QQQM 모으기」만 읽기 전용. 계획·체결 탭을 읽지 않는다(체결 없음 = 종목 매매 기록 없음으로 계산)
+  sheet_plan_fills: false
+
+# ── 아침 편지 (2026-10-22 새 출발) ──────────────────────────────────────────
+letter:
+  show_books: false # true면 [3 가상 장부] 칸·전략 표 접기를 다시 보임(새 장부를 다시 쓸 때)
+
+# ── 사용자 시트 「전략공장」의 「QQQM 모으기」 탭 (2026-10-22, 읽기 전용 — data/holdings.py) ─────────────
+# 2행 머리글 이름으로 열을 찾고 값은 3행(지금 B3·C3·D3·K3). 위치가 바뀌어도 이름이 같으면 읽는다.
+holdings:
+  tab: "QQQM 모으기"
+  data_row: 3
+  headers: {qty: "보유 주식 수", avg_price: "평균단가($)", avg_fx: "평균 환율(원/$)", realized_krw: "올해 실현 이익(원)"}
 
 # ── 손절 예약 알림 (P3.5) ────────────────────────────────────────────────
 alerts:
@@ -168,6 +181,8 @@ report:
   # 짧은 판(2026-10-17): 개인판 = 할 일 → 시장 한눈에 → 실험 중인 전략 → 접기. 아래 둘은 숨긴 화면을 다시 켜는 스위치.
   show_screening: false # true면 오늘 스크리닝 전체(깔때기·추천 종목·제외·대기·매수매도 상세·보유·주문 방법·규칙·점수 설명)를 개인판에 다시 보임
   show_vbooks_fold: false # true면 예전 「가상 장부 현황」 접기를 다시 보임(지금은 실험 중인 전략 칸 안 표로 같은 내용)
+  show_stock_folds: false # 2026-10-22 새 출발: 이번 주 강한 종목·돈이 몰리는 종목 접기(종목 관련) 숨김. true면 다시 보임
+  monthly_scorecard: false # 2026-10-22 새 출발: 가상 장부 월간 성적표(시트 쓰기) 끔
 
 # ── 자금 흐름 관찰 (F2, docs/design/flow_watch.md) ──────────────────────────
 # 표시·주간 기록 전용(참고용, 매수 신호 아님). 여기 값은 신호·필터·수량 계산에 쓰지 않는다.
@@ -251,7 +266,7 @@ backtest:
 # 실제 돈은 QQQM만. 레버리지는 가상으로만 관찰한다 — 실제 주문 기능 없음.
 # 매일 live 실행 뒤에 따로 돌고, 오류가 나도 기존 브리핑은 그대로 나간다(오류는 따로 알림).
 virtual_books:
-  enabled: true
+  enabled: false # 2026-10-22 새 출발: 1~10번·그림자·동전주 알림·장부 시트 쓰기 모두 끔(코드·설정은 보관, DB는 archive/ 사본 + 드라이브 원본)
   start_date: "2026-10-14" # 다섯 장부 공통 시작일(그날 종가 체결) — 2026-10-15 사용자 결정으로 고정.
   # null이면 첫 실행 기준일을 data/virtual_books.db에 저장해 쓴다(DB가 사라지면 시작일이 바뀌므로 고정해 둔다).
   start_krw: 100000000 # 장부당 가상 1억 원 — 시작일 원/달러 종가로 달러 환산, 이후 달러 운용
@@ -369,7 +384,7 @@ virtual_books:
   # 사전 등록 docs/prereg/penny_volume_squeeze.md (태그 penny-squeeze-prereg, 2026-10-21) — 규칙 수정 금지, 수정 = 새 장부.
   # 앞으로 기록만(과거 시험 없음). 시작일 = 첫 실행 기준일(= 첫 선정일). 선정 명단은 DB(penny_picks)·시트에만.
   penny:
-    enabled: true
+    enabled: false # 2026-10-22 새 출발: 시작 전 중단(시작 기록 없음)
     name: "동전주 거래량 수렴 따라하기"
     shadow_name: "무작위 동전주 20"
     start_date: null # 첫 실행 기준일에 정해져 DB에 저장된다. 시작 뒤 시트 "config 고정값(penny)"대로 고정
@@ -393,10 +408,16 @@ virtual_books:
     cash_ticker: BIL
     seed: 20261021
 
-# 아침 편지 [4 연구 소식] (2026-10-21) — 개인판·단체방판 모두. 날짜는 한국 날짜.
-# 판정일 다음 첫 편지에 한 번(보인 판정은 가상 장부 DB meta "research_news_shown"에 기록), 매주 월요일에는
-# 최근 7일 안에 판정 난 것 + 연구 중 목록. 그 밖의 날은 숨김 (notify/letter.research_news).
+# 아침 편지 「연구 소식」 (2026-10-22 새 출발) — 개인판·단체방판 모두, 한국 날짜 기준 매주 월요일과 판정 다음 날만.
+# current: 진행 중 실험 한 줄(사전 등록 → 탐색 중 → 판정). 판정 나면 verdict(탈락|통과)·result·date(판정일)를 채운다.
+# finished: 끝난 실험 기록(표시하지 않음, notify/letter.research_lines).
 research_news:
+  current:
+    name: "변동성 맞춤 레버리지 전략"
+    stage: "사전 등록"
+    verdict: null
+    result: null
+    date: null
   finished:
     - name: "상승장 RSI 눌림 전략"
       desc: "200일선 위 상승장에서 주봉 MACD 상승 + RSI 눌림 반등 때 사기"
@@ -405,6 +426,3 @@ research_news:
       verdict: "탈락"
       reason: "종목 고르기 효과가 무작위로 고른 것과 구별되지 않음"
       date: 2026-10-21
-  in_progress:
-    - "동전주 거래량 수렴 전략(10번 가상 장부, 12개월 기록 시작)"
-    - "논문 신기술 단어 추적(관심도 표시만)"

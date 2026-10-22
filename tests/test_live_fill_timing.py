@@ -20,6 +20,7 @@ from data import sheets as sheets_module
 from data.fills import FillsResult
 from store import db
 from tests.test_state import make_df
+from tests.legacy import legacy_cfg
 
 _SIGNAL_DAY = "2026-09-23"
 _NEXT_DAY = "2026-09-24"
@@ -193,3 +194,10 @@ def test_sheet_header_error_does_not_wipe_holdings(live):
     assert any("헤더 오류" in e for e in broken["input_errors"])
     assert broken["rebuilt_from"] is None
     assert _position()[0]["units"]["1"] == 4
+
+
+
+@pytest.fixture
+def cfg(cfg):
+    """새 출발 전 기능(계획·체결 시트 읽기·계획 자동 기록)을 다시 켠 설정 — tests/legacy.py."""
+    return legacy_cfg(cfg)

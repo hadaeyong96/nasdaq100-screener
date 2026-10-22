@@ -1096,7 +1096,13 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="구글 시트 정리 (시트 재설계안 v3.1)")
     parser.add_argument("sheet_id", nargs="?", help="시트 ID (생략하면 .env의 GOOGLE_SHEETS_ID)")
     parser.add_argument("--apply", action="store_true", help="실제로 적용 (없으면 보기만)")
+    parser.add_argument("--legacy", action="store_true", help="(쓰지 않음) 예전 시트 배치를 다시 만들 때만 — 2026-10-22부터 비활성")
     args = parser.parse_args(argv)
+    if not args.legacy:
+        # 2026-10-22 새 출발: 사용자 시트는 사용자가 직접 관리하는 「QQQM 모으기」 탭 하나(프로그램은 읽기만).
+        # 이 스크립트는 탭을 만들거나 서식·수식을 바꾸므로 기본으로 아무것도 하지 않는다.
+        print("[sheet_setup] 비활성(2026-10-22): 프로그램은 사용자 시트에 아무것도 만들거나 쓰지 않습니다. 아무 작업도 하지 않았습니다.")
+        return 0
 
     from data import sheets
 

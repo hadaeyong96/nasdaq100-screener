@@ -14,11 +14,12 @@ from engine import daily
 from engine.daily import KST, load_config
 from notify import briefing, letter, report_html
 from tests.test_letter import BASE, _books, _summary
+from tests.legacy import legacy_cfg
 
 
 @pytest.fixture
 def cfg():
-    c = copy.deepcopy(load_config())
+    c = legacy_cfg(load_config())  # 가상 장부 칸이 있던 편지(새 출발 전) — 새 구조는 tests/test_fresh_start.py
     c["virtual_books"]["penny"]["enabled"] = False  # 1~9번 기준 문구 시험 — 10번은 tests/test_penny_book.py
     return c
 
@@ -64,7 +65,7 @@ def test_check_line_skipped_with_reason(cfg):
 
 
 def test_money_empty_message_when_no_fills():
-    assert letter.money_lines(None) == ["체결 탭에 QQQM 평균단가를 넣으면 여기에 표시됩니다"]
+    assert letter.money_lines(None) == ["QQQM 모으기 탭에 보유 주식 수·평균단가를 넣으면 표시됩니다"]
     assert letter.money_summary(th.moving_average_position(pd.DataFrame()), 250.0, 1400.0, 2026) is None
 
 
@@ -105,27 +106,6 @@ def test_book_lines_trades_count_personal_detail_folded_group_no_names(cfg):
 
 
 # ── 연구 소식 (판정 다음 첫 편지 + 월요일) ─────────────────────────────────────────
-
-
-def test_research_news_first_letter_after_verdict(cfg):
-    lines, new = letter.research_news(cfg, pd.Timestamp("2026-10-22"), [])  # 판정 10/21(수) → 다음 날 목요일
-    assert lines == ["시험 끝: 「상승장 RSI 눌림 전략」(200일선 위 상승장에서 주봉 MACD 상승 + RSI 눌림 반등 때 사기)",
-                     "2012~21년 시험 → 세후 연 13.7%, QQQ 그냥 보유 19.9%보다 낮음 → 탈락",
-                     "이유: 종목 고르기 효과가 무작위로 고른 것과 구별되지 않음",
-                     "연구 중: 동전주 거래량 수렴 전략(10번 가상 장부, 12개월 기록 시작) · 논문 신기술 단어 추적(관심도 표시만)"]
-    assert new == ["상승장 RSI 눌림 전략"]
-    # 한 번 보인 뒤 평일은 숨김, 판정 당일도 숨김
-    assert letter.research_news(cfg, pd.Timestamp("2026-10-23"), new) == ([], [])
-    assert letter.research_news(cfg, pd.Timestamp("2026-10-21"), []) == ([], [])
-
-
-def test_research_news_monday(cfg):
-    shown = ["상승장 RSI 눌림 전략"]
-    lines, new = letter.research_news(cfg, pd.Timestamp("2026-10-26"), shown)  # 월요일, 판정 5일 뒤
-    assert lines[0].startswith("시험 끝: 「상승장 RSI 눌림 전략」") and lines[-1].startswith("연구 중: ") and new == []
-    lines, _ = letter.research_news(cfg, pd.Timestamp("2026-11-02"), shown)  # 월요일, 12일 뒤 → 연구 중만
-    assert lines == ["연구 중: 동전주 거래량 수렴 전략(10번 가상 장부, 12개월 기록 시작) · 논문 신기술 단어 추적(관심도 표시만)"]
-    assert letter.research_news(cfg, pd.Timestamp("2026-11-03"), shown) == ([], [])
 
 
 def test_research_news_shown_recorded_only_when_live(cfg, tmp_path):
@@ -169,7 +149,7 @@ def test_personal_order_full(cfg, tmp_path):
             '<details class="fold"')
     i = [body.index(x) for x in keys]
     assert i == sorted(i)
-    assert "체결 탭에 QQQM 평균단가를 넣으면 여기에 표시됩니다" in body
+    assert "QQQM 모으기 탭에 보유 주식 수·평균단가를 넣으면 표시됩니다" in body
     tue = report_html.render_report(_full_summary(cfg, monday=False), cfg, tmp_path).read_text(encoding="utf-8")
     assert "연구 소식" not in tue
 

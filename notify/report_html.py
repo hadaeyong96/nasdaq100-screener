@@ -445,8 +445,9 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
     """
     from notify import letter
 
+    show_books = bool((cfg.get("letter") or {}).get("show_books", False))  # 2026-10-22 새 출발: 가상 장부 칸 끔
     vb = summary.get("vbooks") or {}
-    books = vb.get("books") or []
+    books = (vb.get("books") or []) if show_books else []
     personal = edition != letter.GROUP
     head, rows = letter.table_rows(books, cfg, edition) if books else ([], [])
     first = min((b["start"] for b in books if b.get("start") is not None and b["status"] == "ok"), default=None)
@@ -465,7 +466,8 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
         "strategy_lines": letter.book_lines(books, cfg, edition) if books else [],
         "trade_detail": letter.trade_detail_line(books) if (personal and books) else "",
         "research": list(summary.get("research_news") or []),  # 개인판·단체방판 모두 (2026-10-21)
-        "research_header": letter.RESEARCH_HEADER if personal else letter.RESEARCH_HEADER_GROUP,
+        "research_header": ((letter.RESEARCH_HEADER if show_books else letter.RESEARCH_HEADER_NO_BOOKS) if personal
+                            else letter.RESEARCH_HEADER_GROUP),
         "table_head": head, "table_rows": rows,
     }
 
@@ -698,8 +700,9 @@ def build_context(summary: dict, cfg: dict, edition: str = "personal") -> dict:
         "macro_as_of_str": max((r["as_of"] for r in summary.get("macro_rows", []) if r.get("as_of")), default=as_of_str),
         "macro_disclaimer": macro_explain.DISCLAIMER,
         "screening": _screening_ctx(summary, cfg),
-        "flow_watch": _flow_watch_ctx(summary) if personal else None,
-        "weekly_rs": _weekly_rs_ctx(summary, cfg) if personal else None,
+        # 종목 관련 접기(2026-10-22 새 출발: report.show_stock_folds false면 숨김)
+        "flow_watch": _flow_watch_ctx(summary) if personal and report_cfg.get("show_stock_folds", True) else None,
+        "weekly_rs": _weekly_rs_ctx(summary, cfg) if personal and report_cfg.get("show_stock_folds", True) else None,
         "scorecard": summary.get("scorecard") if personal else None,  # 전략공장 F2 — 성적표 날만 (factory/scorecard_run.py)
     }
 

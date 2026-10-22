@@ -14,13 +14,14 @@ from factory import scorecard as sc
 from factory import scorecard_run as scr
 from notify import letter, report_html
 from notify import virtual_books as vbtext
+from tests.legacy import legacy_cfg
 
 BASE = pd.Timestamp("2026-10-16")
 
 
 @pytest.fixture
 def cfg():
-    c = copy.deepcopy(load_config())
+    c = legacy_cfg(load_config())  # 가상 장부 칸이 있던 편지(새 출발 전) — 새 구조는 tests/test_fresh_start.py
     c["virtual_books"]["penny"]["enabled"] = False  # 1~9번 기준 문구 시험 — 10번은 tests/test_penny_book.py
     return c
 
