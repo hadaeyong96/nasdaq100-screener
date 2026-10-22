@@ -116,6 +116,7 @@ def test_dec_tax_uses_holdings(cfg):
 
 
 def test_research_lines_monday_and_day_after_verdict(cfg):
+    cfg["research_news"]["current"].update(stage="사전 등록", verdict=None, result=None, date=None)  # 판정 전 모양부터
     assert letter.research_lines(cfg, pd.Timestamp("2026-10-26")) == [
         "「변동성 맞춤 레버리지 전략」 [사전 등록] → 탐색 중 → 판정"]  # 월요일
     assert letter.research_lines(cfg, pd.Timestamp("2026-10-27")) == []  # 화요일
@@ -228,3 +229,9 @@ def test_sheet_setup_disabled_by_default(monkeypatch, capsys):
     monkeypatch.setattr(sheets, "get_client", lambda: (_ for _ in ()).throw(AssertionError("시트 접속")))
     assert sheet_setup.main(["--apply"]) == 0
     assert "비활성" in capsys.readouterr().out
+
+
+def test_research_current_verdict_in_config(cfg):
+    lines = letter.research_lines(cfg, pd.Timestamp("2026-10-23"))  # 판정(10/22) 다음 날
+    assert lines[0] == "「변동성 맞춤 레버리지 전략」 사전 등록 → 탐색 중 → [판정]" and lines[1].endswith("→ 탈락")
+    assert letter.research_lines(cfg, pd.Timestamp("2026-10-24")) == []

@@ -414,10 +414,10 @@ virtual_books:
 research_news:
   current:
     name: "변동성 맞춤 레버리지 전략"
-    stage: "사전 등록"
-    verdict: null
-    result: null
-    date: null
+    stage: "판정"
+    verdict: "탈락" # 2026-10-22 판정(research/vol-target, 태그 vol-target-prereg) — V1·V2 모두 FAIL
+    result: "QQQ 2000~21만 1배보다 높음(세후 8.8% vs 6.9%), S&P500 1977~98은 낮고 해외 5곳 중 1곳"
+    date: 2026-10-22
   finished:
     - name: "상승장 RSI 눌림 전략"
       desc: "200일선 위 상승장에서 주봉 MACD 상승 + RSI 눌림 반등 때 사기"
