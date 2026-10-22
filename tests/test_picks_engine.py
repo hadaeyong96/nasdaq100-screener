@@ -20,6 +20,7 @@ from engine import picks_books
 from engine import virtual_books as vbe
 from store import virtual_books as vbstore
 from tests.test_picks_book import STUB
+from tests.legacy import legacy_cfg
 
 NOW_ET = datetime(2030, 1, 10, 18, 0, tzinfo=ZoneInfo("America/New_York"))
 IDX = pd.bdate_range("2024-01-02", periods=280)
@@ -102,7 +103,7 @@ def cfg(monkeypatch):
     monkeypatch.setitem(picks_books.RULES, "stub", STUB)
     monkeypatch.setenv("VB_TEST_SHEET_ID", "sheet")
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    c = copy.deepcopy(load_config())
+    c = legacy_cfg(load_config())
     vb = c["virtual_books"]
     vb.update({"start_date": None, "start_fx": None, "sheet_id_env": "VB_TEST_SHEET_ID"})
     vb["picks"].update({"start_date": None, "start_fx": None,

@@ -73,7 +73,7 @@ from data import fx  # noqa: E402
 from data import macro as macrodata  # noqa: E402
 from data import sectors as _sectors  # noqa: E402
 from data.earnings import get_earnings_dates  # noqa: E402
-from data.fills import fill_key, load_fills, load_plan, summarize_cash_rows  # noqa: E402
+from data.fills import FillsResult, fill_key, load_fills, load_plan, summarize_cash_rows  # noqa: E402
 from data.market_calendar import latest_closed_trading_day, trading_days_between  # noqa: E402
 from data.prices import US_EASTERN, fetch_universe_prices  # noqa: E402
 from data import sheets  # noqa: E402
@@ -1871,7 +1871,12 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
     # 시도하고, 인증 정보가 없으면(로컬 개발) fills.xlsx로 조용히 폴백한다. paper는
     # 지금처럼 fills.xlsx만 쓴다(계획 개념 자체가 paper에는 없다).
     plan_sheets_client = None  # 계획을 구글 시트에서 읽었을 때만 — 계획 자동 기록에 쓴다
-    if mode == "live":
+    if mode == "live" and not (cfg.get("live") or {}).get("sheet_plan_fills", True):
+        # 2026-10-22 새 출발: 사용자 시트는 「QQQM 모으기」만 읽는다 — 계획·체결 탭을 읽지 않고 종목 매매 기록 없음으로 계산
+        print("[daily] 계획·체결 탭은 읽지 않습니다(사용자 시트는 QQQM 모으기만, live.sheet_plan_fills: false).")
+        fills_result = FillsResult()
+        plan_df, plan_errors = pd.DataFrame(columns=["ticker", "budget_krw", "ref_price", "memo"]), []
+    elif mode == "live":
         try:
             sheets_result = sheets.read_sheets(client=sheets_client, cfg=cfg)
             fills_result = sheets_result.fills
@@ -2287,16 +2292,22 @@ def main() -> None:
         vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send, briefing=_briefing_recs(summary))
         _attach_regime_line(summary, vb_result, cfg)
         _attach_market_glance(summary, cfg)
-        _attach_dec_tax(summary, cfg)
-        _attach_letter_v2(summary, vb_result, cfg)
-        # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 (읽기 전용, 실패해도 브리핑 본문은 그대로)
-        try:
-            from factory import scorecard_run
+        if (cfg.get("letter") or {}).get("show_books", False):  # 예전(가상 장부 있던 때) 편지
+            _attach_dec_tax(summary, cfg)
+            _attach_letter_v2(summary, vb_result, cfg)
+        else:  # 2026-10-22 새 출발: 「QQQM 모으기」(읽기 전용)으로 내 돈·12월 공제, 점검은 기준일·데이터 지연만
+            holdings = _read_holdings(cfg)
+            _attach_dec_tax(summary, cfg, holdings=holdings)
+            _attach_letter_v3(summary, cfg, holdings)
+        # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
+        if (cfg.get("report") or {}).get("monthly_scorecard", True):
+            try:
+                from factory import scorecard_run
 
-            scorecard_run.attach_scorecard(summary, cfg, datetime.now(KST).date(), lambda: _fetch_qqq_close_series(cfg),
-                                           lambda s: report_html.render_report(s, cfg, OUTPUT_DIR))
-        except Exception as exc:  # noqa: BLE001
-            print(f"[daily] 월간 성적표 연결 오류(브리핑은 그대로): {type(exc).__name__}: {exc}")
+                scorecard_run.attach_scorecard(summary, cfg, datetime.now(KST).date(), lambda: _fetch_qqq_close_series(cfg),
+                                               lambda s: report_html.render_report(s, cfg, OUTPUT_DIR))
+            except Exception as exc:  # noqa: BLE001
+                print(f"[daily] 월간 성적표 연결 오류(브리핑은 그대로): {type(exc).__name__}: {exc}")
 
     if mode == "live" and not args.dry_run and not summary.get("stale"):
         render_editions(summary, cfg)
@@ -2374,8 +2385,60 @@ def _default_fills(cfg: dict):
     return pd.concat([r.fills.df, r.fills.cash_rows], ignore_index=True)
 
 
-def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, days_fn=None) -> None:
+def _read_holdings(cfg: dict, read_fn=None) -> dict | None:
+    """사용자 시트 「QQQM 모으기」(읽기 전용, data.holdings). 인증 정보가 없거나 읽기에 실패하면 None(그 칸만 빠진다)."""
+    from data import holdings as hd
+    from data import sheets
+
+    try:
+        h = (read_fn or (lambda: hd.read_holdings(cfg)))()
+    except sheets.SheetsConfigError:
+        print("[daily] 구글 시트 인증 정보가 없어 QQQM 모으기 탭을 읽지 않습니다(내 돈 칸은 안내 문구).")
+        return None
+    except Exception as exc:  # noqa: BLE001 — QQQM 모으기 탭 실패가 브리핑을 막으면 안 된다
+        print(f"[daily] QQQM 모으기 탭을 읽지 못했습니다(브리핑은 그대로): {type(exc).__name__}")
+        return None
+    for w in h.get("warnings", []):
+        print(f"[daily] QQQM 모으기: {w}")
+    return h
+
+
+def _attach_letter_v3(summary: dict, cfg: dict, holdings: dict | None, *, qqqm_fn=None, now_fn=None) -> None:
+    """아침 편지 새 출발(2026-10-22) 재료: 점검(기준일·데이터 지연), 내 돈(「QQQM 모으기」), 연구 소식(진행 중 실험), 오늘 한국 날짜.
+    가격은 읽기만. 실패하면 그 칸만 빠진다."""
+    from notify import letter
+
+    now_kst = (now_fn or (lambda: datetime.now(KST)))()
+    today = pd.Timestamp(now_kst.date())
+    summary["letter_today_kst"] = today
+    try:
+        base = summary.get("as_of")
+        expected = latest_closed_trading_day(now_kst.astimezone(US_EASTERN))
+        base_d = pd.Timestamp(base).date() if base is not None else None
+        lag = len(trading_days_between(base_d + timedelta(days=1), expected)) if base_d is not None and base_d < expected else 0
+        summary["letter_check"] = letter.check_info(None, base, expected, lag)
+    except Exception as exc:  # noqa: BLE001
+        summary.pop("letter_check", None)
+        print(f"[daily] 점검 줄을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+    summary["research_news"] = letter.research_lines(cfg, today)
+    try:
+        money = None
+        if holdings and holdings.get("qty") and holdings.get("avg_price"):
+            close = (qqqm_fn or (lambda: _fetch_close_series("QQQM", cfg)))()
+            if summary.get("as_of") is not None:
+                close = close[close.index <= pd.Timestamp(summary["as_of"])]
+            close = close.dropna()
+            money = letter.holdings_money(holdings, float(close.iloc[-1]) if len(close) else None, summary.get("fx_rate"),
+                                          now_kst.year)
+        summary["my_money"] = money
+    except Exception as exc:  # noqa: BLE001
+        summary["my_money"] = None
+        print(f"[daily] 내 돈 칸을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+
+
+def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, days_fn=None, holdings=None) -> None:
     """12월 공제 안내(core/tax_harvest.py): 기준일이 표시일(12월 첫 NYSE 거래일, 12/15 이후 첫 거래일)이면
+    (holdings: 「QQQM 모으기」 값 — 주면 체결 탭 대신 이 값으로, 2026-10-22 새 출발)
     summary["dec_tax"] = {todo, lines}. 시트·가격은 읽기만. 어떤 오류든 잡아 안내만 빼고 브리핑은 그대로(예외 격리).
 
     fills_fn() → 체결 행 DataFrame, qqqm_fn() → QQQM 종가 Series, days_fn(year) → 그해 NYSE 거래일 (테스트 주입).
@@ -2393,13 +2456,15 @@ def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, da
         days = (days_fn or (lambda y: trading_days_between(datetime(y, 1, 1).date(), datetime(y, 12, 31).date())))(year)
         if as_of not in th.show_days(days, year):
             return
-        fills = (fills_fn or (lambda: _default_fills(cfg)))()
         close = (qqqm_fn or (lambda: _fetch_close_series("QQQM", cfg)))()
         close = close[close.index <= as_of].dropna()
         fx = summary.get("fx_rate")
         if not len(close) or not fx:
             raise RuntimeError("QQQM 종가 또는 원/달러를 구하지 못함")
-        pos = th.moving_average_position(fills)
+        if fills_fn is None and holdings is not None:  # 2026-10-22 새 출발: 「QQQM 모으기」 값으로
+            pos = letter.holdings_position(holdings, fx, year)
+        else:
+            pos = th.moving_average_position((fills_fn or (lambda: _default_fills(cfg)))())
         plan = th.harvest_plan(pos, year, float(close.iloc[-1]), float(fx))
         summary["dec_tax"] = {"todo": letter.DEC_TAX_TODO, "lines": th.build_lines(plan, th.deadline(days, year)),
                               "status": plan.status}

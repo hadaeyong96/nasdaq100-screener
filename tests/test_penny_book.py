@@ -16,6 +16,7 @@ from engine.daily import load_config
 from notify import letter
 from notify import virtual_books as vbtext
 from store import virtual_books as vbstore
+from tests.legacy import legacy_cfg
 
 P = pc.PennyParams(name="동전주 거래량 수렴 따라하기")
 REAL_FETCH_LISTS = pu.fetch_lists  # conftest가 테스트마다 네트워크 함수를 막기 전(모듈 읽을 때) 진짜 함수
@@ -24,7 +25,7 @@ DAYS = pd.bdate_range("2026-03-02", "2026-10-30")
 
 @pytest.fixture
 def cfg():
-    return copy.deepcopy(load_config())
+    return legacy_cfg(load_config())  # 10번은 새 출발(2026-10-22)로 꺼 둠 — 코드 동작은 그대로 시험
 
 
 def _frame(close, vol, days=DAYS):

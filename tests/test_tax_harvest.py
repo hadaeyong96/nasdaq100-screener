@@ -54,7 +54,7 @@ def test_no_record_gives_method_only():
     plan = th.harvest_plan(th.moving_average_position(_fills([])), 2026, 250.0, 1400.0)
     assert plan.status == "no_record"
     lines = th.build_lines(plan, pd.Timestamp("2026-12-29"))
-    assert any("체결 탭에 평균 매입가 한 줄을 적으면 수량을 계산해 드려요" in x for x in lines)
+    assert any("QQQM 모으기 탭에 보유 주식 수·평균단가를 넣으면 수량을 계산해 드려요" in x for x in lines)
     assert not any("주," in x for x in lines)  # 수량 없음
     text = "\n".join(lines)
     assert "팔고 같은 날 같은 수량 다시 사기, 달러로 매매(환전 안 함)" in text and "12/29까지 체결" in text

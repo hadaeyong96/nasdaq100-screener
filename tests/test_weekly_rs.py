@@ -15,13 +15,14 @@ import pytest
 from core import weekly_rs as wrs
 from engine import daily
 from notify import briefing, report_html, telegram
+from tests.legacy import legacy_cfg
 
 IDX = pd.bdate_range("2026-09-01", periods=30)
 AS_OF = IDX[-1]
 
 
 def _cfg():
-    return copy.deepcopy(daily.load_config())
+    return legacy_cfg(daily.load_config())
 
 
 def _close(rets_last5: float, n: int = 30, base: float = 100.0) -> pd.DataFrame:

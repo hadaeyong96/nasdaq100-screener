@@ -643,7 +643,7 @@ def test_vbooks_fold_table_comes_back_with_switch(tmp_path, cfg):
     s["vbooks"]["books"] = letter.letter_books({"virtual_books": {"benchmark_book": "QQQ 그냥 보유", "books": [
         {"name": "QQQ 그냥 보유", "kind": "hold"}, {"name": "TQQQ 200일선 전환", "kind": "sma_switch"}]}},
         "2026-10-16", s["vbooks"]["rows"], {}, [], None)
-    shown = {**cfg, "report": {**cfg["report"], "show_vbooks_fold": True}}
+    shown = {**cfg, "report": {**cfg["report"], "show_vbooks_fold": True}, "letter": {"show_books": True}}
     html = report_html.render_report(s, shown, tmp_path).read_text(encoding="utf-8")
     vb = html[html.index('id="fold-vbooks"'):html.index('id="fold-guide"')]
     assert "TQQQ 200일선 전환" in vb and "76,000" in vb and "+1.10%p" in vb and "SGOV" in vb

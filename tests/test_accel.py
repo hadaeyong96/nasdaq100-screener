@@ -15,6 +15,7 @@ import pytest
 from core import accel
 from engine import daily
 from notify import briefing, report_html, telegram
+from tests.legacy import legacy_cfg
 
 IDX = pd.bdate_range("2026-06-01", periods=90)
 D = IDX[-1]
@@ -95,7 +96,7 @@ def _summary():
     q = _s(_path(100, 110, 121))
     prices = {t: pd.DataFrame({"close": _path(10, 11, v)}, index=IDX) for t, v in
               [("MU", 15.0), ("WDC", 14.0), ("PEP", 12.0), ("KDP", 11.0), ("NVDA", 13.0)]}
-    cfg = copy.deepcopy(daily.load_config())
+    cfg = legacy_cfg(daily.load_config())
     view = daily.build_weekly_rs_view(prices, D, cfg, {"MU": "마이크론"}, qqq_fetch=lambda: q)
     s = daily._empty_run_summary("live", D.date(), [])
     s["as_of"] = D

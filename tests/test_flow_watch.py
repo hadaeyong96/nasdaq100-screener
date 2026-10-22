@@ -17,13 +17,14 @@ from engine import daily
 from notify import report_html
 from scripts import f2_review
 from store import db
+from tests.legacy import legacy_cfg
 
 ROOT = Path(__file__).resolve().parents[1]
 S = fw.settings(None)
 
 
 def _cfg():
-    return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+    return legacy_cfg(yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8")))
 
 
 def _frame(close, volume, end="2026-10-02"):
