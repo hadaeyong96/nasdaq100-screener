@@ -6,7 +6,8 @@
 단체방판(edition="group")은 ■ 내 돈·종목명·개인 금액 없음(뉴스는 같다).
 
 순서: 머리줄 → (문제 있을 때만) "▶ 자료 문제: …" → ■ 오늘의 핵심 → 뉴스 주제 칸(config/news_topics.yaml 순서)
-→ ■ 미국 증시 마감(첫 줄 = 오늘의 한 줄) → ■ 오늘 할 일 → ■ 내 돈(개인판) → ■ 가상 실험 (실제 돈 아님) → 기준 줄 → ※ 유의 줄.
+→ ■ 미국 증시 마감(첫 줄 = 오늘의 한 줄) → ■ 오늘 할 일 → ■ 내 돈(개인판) → ■ 웅덩이 후보(2026-10-24) → ■ 가상 실험 (실제 돈 아님)
+→ 기준 줄 → ※ 유의 줄(웅덩이 후보가 있으면 한 줄 더).
 """
 
 from __future__ import annotations
@@ -344,8 +345,19 @@ def lab_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
     gap = pv.get("filter_gap_pp")  # 필터 없는 판과의 차이(%p) — 장부가 이 값을 줄 때만(월요일)
     if gap is not None and today is not None and pd.Timestamp(today).dayofweek == 0:
         lines.append(phrase(ph, "lab.filter_compare", today, e=f"{abs(gap):.1f}", 방향="앞섭니다" if gap >= 0 else "뒤처집니다"))
+    rb = summary.get("puddle_rebound") or {}
+    lines += list(rb.get(edition) or [])  # 웅덩이 반등 확인 장부(2026-10-24) — v3.1 줄 아래
+    vs = rb.get("vs_v31_pp")
+    if rb.get(edition) and vs is not None and today is not None and pd.Timestamp(today).dayofweek == 0:
+        lines.append(phrase(ph, "rebound.vs_v31", today, e=f"{abs(vs):.1f}", 방향="앞섭니다" if vs >= 0 else "뒤처집니다"))
     lines += research_lines(cfg, ph, today)
     return lines
+
+
+def candidate_lines(summary: dict, edition: str) -> list[str]:
+    """■ 웅덩이 후보 — engine.puddle_rebound.candidate_lines가 만든 줄(개인판 단계별, 단체방판 개수만). 장부가 없으면 빈 목록."""
+    rb = summary.get("puddle_rebound") or {}
+    return list(rb.get("cand_personal" if edition == PERSONAL else "cand_group") or [])
 
 
 def news_sections(summary: dict, ph: dict) -> list[dict]:
@@ -383,14 +395,22 @@ def problems(summary: dict, ph: dict, edition: str) -> list[str]:
     if (summary.get("news") or {}).get("status") == "partial":
         out.append(phrase(ph, "problem.news_partial", day))
     pv = summary.get("puddle_v31") or {}
-    fail = pv.get("check_personal" if edition == PERSONAL else "check_group")
-    if fail:
-        detail = fail[fail.find("("):] if "(" in fail else ""
+    rb = summary.get("puddle_rebound") or {}
+    key = "check_personal" if edition == PERSONAL else "check_group"
+    fails = [f for f in (pv.get(key), rb.get(key)) if f]
+    if fails:
+        if edition == PERSONAL:
+            names = sorted({t.strip() for f in fails for t in f[f.find("(") + 1:f.rfind(")")].split(",") if "(" in f})
+            detail = f"({', '.join(names)})" if names else ""
+        else:
+            detail = max((f[f.find("("):] for f in fails if "(" in f), default="")
         out.append(phrase(ph, "problem.earnings_check", day, 상세=detail))
     if pv.get("error"):
         out.append(phrase(ph, "problem.puddle_error", day))
+    if rb.get("error"):
+        out.append(phrase(ph, "problem.rebound_error", day))
     for note in info.get("notes") or []:
-        if note.startswith("실적 확인 실패") or note == "웅덩이 v3.1 장부 오류":
+        if note.startswith("실적 확인 실패") or note in ("웅덩이 v3.1 장부 오류", "웅덩이 반등 확인 장부 오류"):
             continue
         out.append(note.rstrip(".") + ".")
     if summary.get("fred_missing"):
@@ -420,6 +440,10 @@ def build(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | Non
     sections.append({"header": hd.get("todo", "■ 오늘 할 일"), "lines": todo_lines(summary, cfg, ph, edition)})
     if edition == PERSONAL:
         sections.append({"header": hd.get("money", "■ 내 돈"), "lines": money_lines(summary, cfg, ph)})
+    cand = candidate_lines(summary, edition)
+    if cand:
+        sections.append({"header": hd.get("candidates", "■ 웅덩이 후보 (가상 실험 신호, 실제 매수 권유 아님)"), "lines": cand,
+                         "candidates": True})
     lab = lab_lines(summary, cfg, ph, edition)
     if lab:
         sections.append({"header": hd.get("lab", "■ 가상 실험 (실제 돈 아님)"), "lines": lab, "lab": True})
@@ -429,7 +453,8 @@ def build(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | Non
     return {"title": title(summary, cfg, ph),
             "problem": (BULLET + phrase(ph, "problem.prefix", day) + " ".join(probs)) if probs else None,
             "sections": sections, "footer": phrase(ph, "footer.base", day, 날짜=base),
-            "caution": phrase(ph, "footer.caution", day), "more": phrase(ph, "footer.more", day)}
+            "caution": phrase(ph, "footer.caution", day), "more": phrase(ph, "footer.more", day),
+            "cautions": [phrase(ph, "footer.caution", day)] + ([phrase(ph, "candidates.caution", day)] if cand else [])}
 
 
 def line_text(line) -> str:
@@ -445,7 +470,7 @@ def to_text(doc: dict, limit: int = MESSAGE_LIMIT) -> str:
         body = ["\n".join(head)]
         for s in sections:
             body.append("\n".join([s["header"]] + [line_text(x) for x in s["lines"]]))
-        tail = ([BULLET + doc["more"]] if more else []) + [doc["footer"], doc["caution"]]
+        tail = ([BULLET + doc["more"]] if more else []) + [doc["footer"]] + doc.get("cautions", [doc["caution"]])
         body.append("\n".join(tail))
         return "\n\n".join(body)
 
@@ -453,6 +478,7 @@ def to_text(doc: dict, limit: int = MESSAGE_LIMIT) -> str:
     text = render(secs)
     drop_order = [i for i in reversed(range(len(secs))) if secs[i].get("news_topic")]
     drop_order += [i for i in range(len(secs)) if secs[i].get("lab")]
+    drop_order += [i for i in range(len(secs)) if secs[i].get("candidates")]
     drop_order += [i for i in reversed(range(len(secs))) if i not in drop_order]
     dropped: set[int] = set()
     for i in drop_order:

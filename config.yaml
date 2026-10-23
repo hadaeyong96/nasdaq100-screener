@@ -169,6 +169,14 @@ puddle_v31:
   start_fx: "" # 첫 정규 실행 뒤 고정 (원/달러)
   sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 v3.1 (가상)」 탭에만 쓴다
 
+# ── 웅덩이 반등 확인 가상 1억 장부 (2026-10-24, docs/prereg/puddle_rebound_forward.md, 태그 puddle-rebound-prereg) ──
+# 규칙은 사전 등록 문서가 기준(수정 = 새 장부). 실제 돈 없음. 저장·시트 쓰기는 GitHub Actions에서만.
+puddle_rebound:
+  enabled: true
+  start_date: "" # 첫 정규 실행 뒤 고정 (YYYY-MM-DD)
+  start_fx: "" # 첫 정규 실행 뒤 고정 (원/달러)
+  sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 반등 확인 (가상)」 탭에만 쓴다
+
 # ── 사용자 시트 「전략공장」의 「QQQM 모으기」 탭 (2026-10-22, 읽기 전용 — data/holdings.py) ─────────────
 # 2행 머리글 이름으로 열을 찾고 값은 3행(지금 B3·C3·D3·K3). 위치가 바뀌어도 이름이 같으면 읽는다.
 # ISA 줄(2026-10-23): A열 이름이 isa_row_name인 행(지금 4행)의 보유 주식 수·평균단가(원). 현재가는 isa_ticker 종가(원화).

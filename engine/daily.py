@@ -2300,6 +2300,7 @@ def main() -> None:
             _attach_dec_tax(summary, cfg, holdings=holdings)
             _attach_letter_v3(summary, cfg, holdings)
             _attach_puddle_v31(summary, cfg)
+            _attach_puddle_rebound(summary, cfg)
             _attach_news(summary, cfg)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
         if (cfg.get("report") or {}).get("monthly_scorecard", True):
@@ -2503,6 +2504,23 @@ def _attach_puddle_v31(summary: dict, cfg: dict, run_fn=None) -> None:
         note = "웅덩이 v3.1 장부 오류"
     if note and summary.get("letter_check") is not None:
         summary["letter_check"].setdefault("notes", []).append(note)
+
+
+def _attach_puddle_rebound(summary: dict, cfg: dict, run_fn=None) -> None:
+    """웅덩이 반등 확인 가상 장부(2026-10-24, engine/puddle_rebound) — ■ 웅덩이 후보·■ 가상 실험 줄과 점검 메모. 오류는 장부만 건너뛴다.
+    v3.1 장부 다음에 돈다(비교 B = v3.1 일별 기록을 읽는다)."""
+    from engine import puddle_rebound
+
+    if summary.get("as_of") is None:
+        return
+    res = (run_fn or puddle_rebound.run_safely)(cfg, summary["as_of"])
+    if not res:
+        return
+    summary["puddle_rebound"] = dict(res.get("letter") or {})
+    if res.get("status") == "error":
+        summary["puddle_rebound"]["error"] = True
+        if summary.get("letter_check") is not None:
+            summary["letter_check"].setdefault("notes", []).append("웅덩이 반등 확인 장부 오류")
 
 
 def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, days_fn=None, holdings=None) -> None:
