@@ -11,6 +11,21 @@ import numpy as np
 import pandas as pd
 
 
+def macd_lines(close, fast: int = 12, slow: int = 26, signal: int = 9):
+    """종가(Series 또는 열 = 티커인 DataFrame) → (MACD 선, 시그널 선). EMA는 ewm(span, adjust=False)."""
+    macd = close.ewm(span=fast, adjust=False).mean() - close.ewm(span=slow, adjust=False).mean()
+    return macd, macd.ewm(span=signal, adjust=False).mean()
+
+
+def rsi_wilder(close, period: int = 14):
+    """종가(Series 또는 DataFrame) → RSI(Wilder 평활, ewm(alpha=1/period, adjust=False)). 하락이 없으면 100."""
+    delta = close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
+    rsi = 100 - 100 / (1 + gain / loss)
+    return rsi.where(loss != 0, 100.0)  # loss가 0이면 100으로 처리
+
+
 def compute_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     """정리본 9장의 모든 지표 열을 추가한다.
 
@@ -36,10 +51,7 @@ def compute_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
     # ── MACD (12, 26, 9) ────────────────────────────────────────────
     macd_cfg = ind_cfg["macd"]
-    ema_fast = close.ewm(span=macd_cfg["fast"], adjust=False).mean()
-    ema_slow = close.ewm(span=macd_cfg["slow"], adjust=False).mean()
-    macd = ema_fast - ema_slow
-    signal = macd.ewm(span=macd_cfg["signal"], adjust=False).mean()
+    macd, signal = macd_lines(close, macd_cfg["fast"], macd_cfg["slow"], macd_cfg["signal"])
 
     out["macd"] = macd
     out["signal"] = signal
@@ -49,14 +61,7 @@ def compute_indicators(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     out["macd_norm"] = macd / close * 100
 
     # ── RSI (Wilder, 14) ────────────────────────────────────────────
-    rsi_period = ind_cfg["rsi"]["period"]
-    delta = close.diff()
-    gain = delta.clip(lower=0).ewm(alpha=1 / rsi_period, adjust=False).mean()
-    loss = (-delta.clip(upper=0)).ewm(alpha=1 / rsi_period, adjust=False).mean()
-    rs = gain / loss
-    rsi = 100 - 100 / (1 + rs)
-    rsi = rsi.where(loss != 0, 100.0)  # loss가 0이면 100으로 처리
-    out["rsi"] = rsi
+    out["rsi"] = rsi_wilder(close, ind_cfg["rsi"]["period"])
 
     # ── 일목균형표 (전환선 9, 기준선 26, 선행스팬 B 52) ────────────────
     ichi_cfg = ind_cfg["ichimoku"]

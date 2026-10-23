@@ -1,0 +1,361 @@
+"""웅덩이 반등 확인 전략 — 가상 1억 장부 하루 실행 (docs/prereg/puddle_rebound_forward.md, 태그 puddle-rebound-prereg).
+
+실제 주문 없음. 장부(본 장부·QQQ 보유·무작위 200경로)를 data/virtual_books.db(드라이브 동기화)에 상태로 저장해 이어 쓴다.
+비교 B(웅덩이 v3.1)는 v3.1 장부가 저장한 puddle_v31_daily를 같은 날짜로 읽기만 한다(v3.1 규칙·기록은 건드리지 않는다).
+가격·상위 10·실적 접수 조회·달력은 engine/puddle_v31의 World·FilingChecker·build_day를 그대로 쓴다.
+흐름 (engine/daily.py live 실행, 편지 만들기 전): 지표 → 놓친 날 따라잡기 → DB 저장·시트 「웅덩이 반등 확인 (가상)」 탭(Actions에서만)
+→ 편지 줄(■ 웅덩이 후보·■ 가상 실험)·점검 메모.
+
+단독 미리보기:  python -m engine.puddle_rebound --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import traceback
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core import puddle_rebound as pr  # noqa: E402
+from core import puddle_v31 as pv  # noqa: E402
+from engine import puddle_v31 as e31  # noqa: E402
+from store import virtual_books as vbstore  # noqa: E402
+
+META_STATE = "puddle_rebound_state"
+META_JUDGMENT = "puddle_rebound_judgment"
+MAIN, QQQ = "rebound", "qqq"
+CFG_KEY = "puddle_rebound"
+
+
+# ── 저장 ─────────────────────────────────────────────────────────────────────
+
+
+def _ensure_schema(conn) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS puddle_rebound_daily (date TEXT PRIMARY KEY, row_json TEXT);
+        CREATE TABLE IF NOT EXISTS puddle_rebound_trades (ledger TEXT, exit_date TEXT, tk TEXT, row_json TEXT);
+    """)
+    conn.commit()
+
+
+def load_state(conn) -> dict | None:
+    raw = vbstore.get_meta(conn, META_STATE)
+    return json.loads(raw) if raw else None
+
+
+def save(conn, state: dict, daily_rows: list[dict], trades: list[tuple[str, dict]]) -> None:
+    _ensure_schema(conn)
+    vbstore.set_meta(conn, META_STATE, json.dumps(state, ensure_ascii=False))
+    for r in daily_rows:
+        conn.execute("INSERT OR REPLACE INTO puddle_rebound_daily VALUES (?, ?)", (r["date"], json.dumps(r, ensure_ascii=False)))
+    for ledger, t in trades:
+        conn.execute("INSERT INTO puddle_rebound_trades VALUES (?, ?, ?, ?)", (ledger, t["exit_date"], t["tk"], json.dumps(t, ensure_ascii=False)))
+    conn.commit()
+
+
+def daily_history(conn) -> list[dict]:
+    _ensure_schema(conn)
+    return [json.loads(r[0]) for r in conn.execute("SELECT row_json FROM puddle_rebound_daily ORDER BY date")]
+
+
+def v31_values(conn) -> dict[str, float]:
+    """비교 B: 웅덩이 v3.1 일별 세후 가치 {날짜: 원}(읽기만). 표가 없으면 빈 dict."""
+    try:
+        rows = conn.execute("SELECT date, row_json FROM puddle_v31_daily").fetchall()
+    except Exception:  # noqa: BLE001 — 표 없음(v3.1 첫 저장 전)
+        return {}
+    return {d: float(json.loads(j)["v31"]) for d, j in rows}
+
+
+# ── 세계(가격·지표) ──────────────────────────────────────────────────────────
+
+
+class World(e31.World):
+    """v3.1 World + RSI(14)·전날 RSI·최근 3거래일 골든크로스(종목별)."""
+
+    def __init__(self, cfg, universe, held, history_fn, p: pr.Params):
+        super().__init__(cfg, universe, held, history_fn, p)
+        self.ind.update(pr.rebound_indicators(self.close, p))
+
+
+# ── 하루 진행 ─────────────────────────────────────────────────────────────────
+
+
+def init_state(world: World, start, fx: float, year_days_fn, p: pr.Params) -> dict:
+    state = {"start_date": str(pd.Timestamp(start).date()), "start_fx": fx, "last_date": None, "top10": None,
+             "ledgers": {}, "randoms": [], "rng": None}
+    day = e31.build_day(state, world, start, fx, year_days_fn)
+    state["ledgers"] = {MAIN: pr.new_ledger(MAIN, day, p), QQQ: pr.new_qqq_ledger(QQQ, day, p)}
+    state["randoms"] = [pr.new_ledger(f"r{k}", day, p, random=True) for k in range(p.n_random)]
+    state["rng"] = np.random.default_rng(p.seed).bit_generator.state
+    return state
+
+
+def _v31_rebased(v31: dict, start: str, date: str) -> float | None:
+    """B = v3.1 세후(date) × 1억 ÷ v3.1 세후(이 장부 시작일). 둘 중 하나라도 없으면 None."""
+    a, b = v31.get(start), v31.get(date)
+    if not a or b is None:
+        return None
+    return b * pv.Params().start_krw / a
+
+
+def advance_day(state, day: pv.Day, world: World, checker: e31.FilingChecker, p: pr.Params, v31: dict) -> dict:
+    """하루 진행 → 그날 기록 한 줄(dict)."""
+    win_start = world.cal[max(0, world.pos(day.date) - (p.filing_window - 1))]
+
+    def filing(tk):
+        return checker.check(tk, win_start, day.date)
+
+    L = state["ledgers"]
+    ev = pr.step(L[MAIN], day, p, filing=filing)
+    pr.step(L[QQQ], day, p)
+    rng = np.random.default_rng()
+    rng.bit_generator.state = state["rng"]
+    for R in state["randoms"]:
+        pr.step(R, day, p, filing=filing, random_n=ev["entries"], rng=rng)
+    state["rng"] = rng.bit_generator.state
+    state["last_date"] = str(day.date.date())
+    dist = pv.percentiles([R["last_value"] for R in state["randoms"]])
+    nav = pv.nav_usd(L[MAIN], day)
+    date = str(day.date.date())
+    return {"date": date, "value": L[MAIN]["last_value"], "qqq": L[QQQ]["last_value"],
+            "v31": _v31_rebased(v31, state["start_date"], date), "random": dist, "weights": pv.weights(L[MAIN], day),
+            "qqq_weight": L[MAIN]["q_units"] * day.qqq / nav if nav else 1.0,
+            "fills": ev["fills"], "sells": ev["sells"], "skipped": ev["skipped"], "failed": sorted(set(ev["failed"])),
+            "buys": ev["buys"], "waiting": ev["waiting"], "opened": ev["opened"], "unqualified": ev["unqualified"],
+            "realized_year": L[MAIN]["realized"].get(str(day.date.year), 0.0),
+            "mdd": {MAIN: L[MAIN]["mdd"], QQQ: L[QQQ]["mdd"]}, "top10": list(day.top10)}
+
+
+# ── 표시 ─────────────────────────────────────────────────────────────────────
+
+
+def _rsi(v) -> str:
+    return f"{v:.1f}" if v is not None else "?"
+
+
+def candidate_lines(r: dict, personal: bool, phrases: dict | None = None) -> list[str]:
+    """■ 웅덩이 후보 — 그날 이 장부의 단계별 한 줄(개인판), 단체방판은 개수만(종목명 없음)."""
+    from notify import letter_plain as lp
+
+    ph = phrases if phrases is not None else lp.load_phrases()
+    day = r.get("date")
+    buys, waiting, opened = r.get("buys") or [], r.get("waiting") or [], r.get("opened") or []
+    skipped, unq = r.get("skipped") or [], r.get("unqualified") or []
+    if not personal:
+        if not (buys or waiting or opened):
+            return [lp.phrase(ph, "candidates.none", day)]
+        return [lp.phrase(ph, "candidates.group", day, a=len(buys), b=len(waiting), c=len(opened))]
+    lines = [lp.phrase(ph, "candidates.buy", day, 종목=b["tk"] + ("(2차)" if b["tranche"] == 2 else ""), rsi=_rsi(b["rsi"]))
+             for b in buys]
+    lines += [lp.phrase(ph, "candidates.waiting", day, 종목=w["tk"] + ("(2차)" if w["tranche"] == 2 else ""), n=w["day"],
+                        rsi=_rsi(w["rsi"])) for w in waiting if w["tk"] not in opened]
+    lines += [lp.phrase(ph, "candidates.opened", day, 종목=t) for t in opened]
+    if skipped:
+        lines.append(lp.phrase(ph, "candidates.skipped", day, 종목=", ".join(sorted({s["tk"] for s in skipped}))))
+    if unq:
+        lines.append(lp.phrase(ph, "candidates.unqualified", day, 종목=", ".join(unq)))
+    return lines or [lp.phrase(ph, "candidates.none", day)]
+
+
+def lab_lines(rows: list[dict], personal: bool, phrases: dict | None = None) -> list[str]:
+    """■ 가상 실험 칸(v3.1 줄 아래) — 「웅덩이 반등 확인 실험이 QQQ보다 …」 + 보유·그날 매매(v3.1과 같은 문구 규칙)."""
+    from notify import letter_plain as lp
+
+    ph = phrases if phrases is not None else lp.load_phrases()
+    last = rows[-1]
+    key, d = lp.vs_qqq_parts((last["value"] - last["qqq"]) / 1_000_000)
+    v31_lines = e31._plain_lines([{**r, "v31": r["value"], "skipped": r.get("skipped", [])} for r in rows], personal, ph)
+    return [lp.phrase(ph, f"rebound.{key}", last.get("date"), d=d)] + v31_lines[1:]
+
+
+def letter_lines(rows: list[dict]) -> dict:
+    """진행한 날들 → {personal, group(■ 가상 실험 줄), cand_personal, cand_group(■ 웅덩이 후보), vs_v31_pp, check_*}."""
+    if not rows:
+        return {"personal": [], "group": [], "cand_personal": [], "cand_group": [], "vs_v31_pp": None,
+                "check_personal": None, "check_group": None}
+    last = rows[-1]
+    failed = sorted({t for r in rows for t in r["failed"]})
+    return {"personal": lab_lines(rows, True), "group": lab_lines(rows, False),
+            "cand_personal": candidate_lines(last, True), "cand_group": candidate_lines(last, False),
+            "vs_v31_pp": (last["value"] - last["v31"]) / 1_000_000 if last.get("v31") is not None else None,
+            "check_personal": f"실적 확인 실패({', '.join(failed)})" if failed else None,
+            "check_group": f"실적 확인 실패({len(failed)}종목)" if failed else None}
+
+
+def sheet_row(r: dict) -> list:
+    hold = ", ".join(f"{t} {x * 100:.1f}%" for t, x in sorted(r["weights"].items(), key=lambda kv: -kv[1])) or "없음"
+    tr = e31._trade_text([r], True)
+    waiting = ", ".join(f"{w['tk']}{'(2차)' if w['tranche'] == 2 else ''} {w['day']}일째" for w in r.get("waiting") or [])
+    v31 = r.get("v31")
+    return [r["date"], round(r["value"]), round(r["qqq"]), round(v31) if v31 is not None else "",
+            round((r["value"] - r["qqq"]) / 1_000_000, 2), round((r["value"] - v31) / 1_000_000, 2) if v31 is not None else "",
+            round((r["value"] - r["random"]["50"]) / 1_000_000, 2), f"{r['qqq_weight'] * 100:.1f}%", hold,
+            tr.replace("오늘 가상 매매: ", "") if tr else "", waiting, round(r["realized_year"])]
+
+
+# ── 실행 ─────────────────────────────────────────────────────────────────────
+
+
+def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=None, universe_fn=None, fx_fn=None,
+        year_days_fn=None, filings_fn=None, sheets_client=None, sheet_write: bool | None = None, p: pr.Params = pr.Params()) -> dict:
+    """하루 실행. dry_run=True면 DB·시트에 쓰지 않는다(로컬은 늘 미리보기). sheet_write 기본값은 GitHub Actions에서만 True.
+    출력: {status, start_date, rows, letter, warnings, errors, diag}"""
+    pc = cfg.get(CFG_KEY) or {}
+    as_of = pd.Timestamp(as_of).normalize()
+    history_fn = history_fn or e31._default_history
+    year_days_fn = year_days_fn or e31._default_year_days
+    fx_fn = fx_fn or e31._default_fx
+    in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    if sheet_write is None:
+        sheet_write = in_actions
+    db_path = Path(db_path or vbstore.VBOOKS_DB_PATH)
+    conn = vbstore.connect(db_path)
+    result = {"status": "ok", "rows": [], "warnings": [], "errors": [], "letter": letter_lines([]), "diag": None}
+    try:
+        state = load_state(conn)
+        if state is None and in_actions and not pc.get("start_date") and not (os.environ.get("GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS") or "").strip():
+            raise RuntimeError("드라이브 state 파일도 config 시작일도 없어 매 실행이 새 장부가 됩니다 — 웅덩이 반등 확인을 건너뜁니다")
+        held = {tk for L in (e31._all_ledgers(state) if state else []) for tk in L["pos"]}
+        universe = (universe_fn or e31._default_universe)()
+        world = World(cfg, universe, held, history_fn, p)
+        if as_of not in world.cal:
+            as_of = world.cal[world.cal <= as_of][-1]
+        if world.missing:
+            result["warnings"].append(f"가격 없는 구성 종목 {len(world.missing)}개: {', '.join(world.missing[:10])}")
+        checker = e31.FilingChecker(filings_fn)
+        fresh = state is None
+        if fresh:
+            start = pd.Timestamp(pc.get("start_date") or as_of).normalize()
+            fx0 = float(pc["start_fx"]) if pc.get("start_fx") else fx_fn([start.date()]).get(str(start.date()))
+            if fx0 is None:
+                raise RuntimeError(f"시작일 {start.date()} 환율이 없습니다")
+            state = init_state(world, start, float(fx0), year_days_fn, p)
+            todo = [start]
+        else:
+            todo = list(world.cal[(world.cal > pd.Timestamp(state["last_date"])) & (world.cal <= as_of)])
+        result["start_date"] = state["start_date"]
+        if not todo:
+            result["status"] = "already"
+            hist = daily_history(conn)
+            result["letter"] = letter_lines(hist[-1:]) if hist else letter_lines([])
+            return result
+        v31 = v31_values(conn)
+        fxm = fx_fn([d.date() for d in todo])
+        rows, trades = [], []
+        prev_fx = state["start_fx"] if fresh else None
+        for d in todo:
+            fx = fxm.get(str(d.date())) or prev_fx or state.get("last_fx")
+            if fx is None:
+                raise RuntimeError(f"{d.date()} 환율이 없습니다")
+            prev_fx = fx
+            state["last_fx"] = fx
+            day = e31.build_day(state, world, d, float(fx), year_days_fn)
+            r = advance_day(state, day, world, checker, p, v31)
+            rows.append(r)
+            trades += [(MAIN, t) for t in r["sells"]]
+            if pd.Timestamp(d) >= e31.judgment_date(state["start_date"]) and not state.get("judged"):
+                state["judged"] = {"date": r["date"], **pr.judge(r["value"], r["qqq"], r["v31"], r["random"]["80"],
+                                                                  r["mdd"][MAIN], r["mdd"][QQQ])}
+        result["rows"] = rows
+        result["letter"] = letter_lines(rows)
+        result["diag"] = diagnose(world, checker, as_of, state, rows[-1])
+        if dry_run or not in_actions:
+            result["status"] = "preview"
+            return result
+        save(conn, state, rows, trades)
+        if state.get("judged"):
+            vbstore.set_meta(conn, META_JUDGMENT, json.dumps(state["judged"], ensure_ascii=False))
+        if sheet_write:
+            sheet_id = (os.environ.get(pc.get("sheet_id_env", "GOOGLE_SHEETS_ID")) or "").strip()
+            if not sheet_id:
+                result["warnings"].append("GOOGLE_SHEETS_ID가 없어 웅덩이 반등 확인 탭 기록을 건너뜁니다")
+            else:
+                try:
+                    from data import puddle_rebound_sheet as psheet
+
+                    if sheets_client is None:
+                        from data import sheets
+
+                        sheets_client = sheets.get_client()
+                    psheet.write_rows(sheets_client, sheet_id, [sheet_row(r) for r in rows])
+                except Exception as exc:  # noqa: BLE001 — 장부는 저장됨, 시트만 실패
+                    result["errors"].append(f"웅덩이 반등 확인 시트 기록 실패: {type(exc).__name__}")
+        return result
+    finally:
+        conn.close()
+
+
+def diagnose(world: World, checker: e31.FilingChecker, d, state, row: dict) -> list[dict]:
+    """오늘 상위 10 진단(미리보기·보고용): 자격·웅덩이 단계·RSI·MACD·최근 실적 접수일."""
+    d = pd.Timestamp(d)
+    top = state["top10"]["list"] if state.get("top10") else world.top10(d)
+    closes, ind = world.tickers_ind(d, top)
+    buys = {b["tk"] for b in row.get("buys") or []}
+    waiting = {w["tk"]: w for w in row.get("waiting") or []}
+    opened = set(row.get("opened") or [])
+    skipped = {s["tk"] for s in row.get("skipped") or []}
+    out = []
+    for t in top:
+        x, i = closes.get(t), ind.get(t) or {}
+        qual = pv._qualified(i, x)
+        if t in buys:
+            stage = "반등 확인 — 가상 매수 신호"
+        elif t in opened:
+            stage = "웅덩이 진입(오늘 열림)"
+        elif t in waiting:
+            stage = f"반등 확인 대기 {waiting[t]['day']}일째"
+        elif t in skipped:
+            stage = "실적 발표 직후라 제외"
+        elif not qual:
+            stage = "자격 미달"
+        else:
+            stage = "웅덩이 아님(60일선 위)" if x >= i.get("sma60", np.nan) else "60일선 아래(열림 조건 아님)"
+        out.append({"ticker": t, "stage": stage, "close": x, "qualified": qual, "sma60": i.get("sma60"), "sma200": i.get("sma200"),
+                    "rsi": i.get("rsi"), "rsi_prev": i.get("rsi_prev"), "gc3": i.get("gc3"), "last_filing": checker.last_filing(t, d)})
+    return out
+
+
+def run_safely(cfg: dict, as_of, **kwargs) -> dict | None:
+    """run을 감싼다 — 예외를 밖으로 내보내지 않는다(브리핑 보호)."""
+    if not (cfg.get(CFG_KEY) or {}).get("enabled", False):
+        return None
+    try:
+        res = run(cfg, as_of, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        print(f"[puddle_rebound] 장부 오류(브리핑은 그대로): {type(exc).__name__}: {exc}")
+        return {"status": "error", "error": f"{type(exc).__name__}", "letter": letter_lines([]), "rows": [], "warnings": [], "errors": [str(exc)]}
+    for w in res.get("warnings", []):
+        print(f"[puddle_rebound] 경고: {w}")
+    return res
+
+
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(description="웅덩이 반등 확인 가상 장부 미리보기")
+    ap.add_argument("--dry-run", action="store_true", help="DB·시트에 쓰지 않음(로컬은 늘 미리보기)")
+    ap.add_argument("--as-of", default=None)
+    a = ap.parse_args(argv)
+    from data.market_calendar import latest_closed_trading_day
+    from engine.daily import US_EASTERN, load_config
+
+    cfg = load_config()
+    as_of = a.as_of or latest_closed_trading_day(datetime.now(US_EASTERN))
+    res = run(cfg, as_of, dry_run=True)
+    print(json.dumps({k: res[k] for k in ("status", "start_date", "letter", "warnings")}, ensure_ascii=False, indent=1, default=str))
+    for r in res.get("diag") or []:
+        print(r)
+
+
+if __name__ == "__main__":
+    main()

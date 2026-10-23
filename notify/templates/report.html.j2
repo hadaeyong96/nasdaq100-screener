@@ -383,7 +383,7 @@ details.exp[open]>summary{color:var(--info)}
   {% endfor %}
 {% endfor %}
   <div class="ln mini foot">{{ letter.plain.footer }}</div>
-  <div class="ln mini">{{ letter.plain.caution }}</div>
+  {% for c in (letter.plain.cautions or [letter.plain.caution]) %}<div class="ln mini">{{ c }}</div>{% endfor %}
 </section>
 {% elif letter %}
 {# 아침 편지 v2.1 (2026-10-21): 개인판 점검·할 일·내 돈·시장·가상 장부·연구 소식(판정 다음 날·월요일), 단체방판은 할 일·시장·가상 장부·연구 소식. 표시 전용 #}
