@@ -2403,8 +2403,8 @@ def _read_holdings(cfg: dict, read_fn=None) -> dict | None:
     return h
 
 
-def _attach_letter_v3(summary: dict, cfg: dict, holdings: dict | None, *, qqqm_fn=None, now_fn=None) -> None:
-    """아침 편지 새 출발(2026-10-22) 재료: 점검(기준일·데이터 지연), 내 돈(「QQQM 모으기」), 연구 소식(진행 중 실험), 오늘 한국 날짜.
+def _attach_letter_v3(summary: dict, cfg: dict, holdings: dict | None, *, qqqm_fn=None, now_fn=None, isa_fn=None) -> None:
+    """아침 편지 새 출발(2026-10-22) 재료: 점검(기준일·데이터 지연), 내 돈(「QQQM 모으기」 QQQM·ISA 줄), 연구 소식(진행 중 실험), 오늘 한국 날짜.
     가격은 읽기만. 실패하면 그 칸만 빠진다."""
     from notify import letter
 
@@ -2427,19 +2427,34 @@ def _attach_letter_v3(summary: dict, cfg: dict, holdings: dict | None, *, qqqm_f
     except Exception as exc:  # noqa: BLE001
         summary["savings_day"] = False
         print(f"[daily] 저축일 확인 실패(할 일은 그대로): {type(exc).__name__}")
+    wallet = {"qqqm_state": "empty", "isa": None, "isa_state": "empty"}
     try:
         money = None
         if holdings and holdings.get("qty") and holdings.get("avg_price"):
+            wallet["qqqm_state"] = "no_price"
             close = (qqqm_fn or (lambda: _fetch_close_series("QQQM", cfg)))()
             if summary.get("as_of") is not None:
                 close = close[close.index <= pd.Timestamp(summary["as_of"])]
             close = close.dropna()
             money = letter.holdings_money(holdings, float(close.iloc[-1]) if len(close) else None, summary.get("fx_rate"),
                                           now_kst.year)
+            wallet["qqqm_state"] = "ok" if money else "no_price"
         summary["my_money"] = money
     except Exception as exc:  # noqa: BLE001
         summary["my_money"] = None
         print(f"[daily] 내 돈 칸을 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")
+    isa = (holdings or {}).get("isa") or {}
+    if isa.get("qty") and isa.get("avg_price"):  # ISA 줄(2026-10-23): 133690.KS 종가(원). 실패하면 "가격 못 받음"
+        wallet["isa_state"] = "no_price"
+        try:
+            from data import holdings as hd
+
+            _, close_krw = (isa_fn or (lambda: hd.fetch_isa_close(cfg, now_kst)))()
+            wallet["isa"] = letter.isa_money(isa, close_krw, letter.isa_tax_free_limit(cfg)[1])
+            wallet["isa_state"] = "ok" if wallet["isa"] else "no_price"
+        except Exception as exc:  # noqa: BLE001
+            print(f"[daily] ISA 가격을 받지 못했습니다(그 줄은 가격 못 받음): {type(exc).__name__}")
+    summary["wallet"] = wallet
 
 
 def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, days_fn=None, holdings=None) -> None:

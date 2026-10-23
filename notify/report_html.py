@@ -440,7 +440,7 @@ def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
 def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
     """아침 편지 v2.1(2026-10-21) 맨 위 칸들 — 표시 전용(notify.letter).
 
-    개인판: 점검 → 할 일 → [1 내 돈 · QQQM] → [2 시장 한눈에] → [3 가상 장부] → [4 연구 소식](판정 다음 날·월요일).
+    개인판: 점검 → 할 일 → [1 내 돈 · QQQM · ISA] → [2 시장 한눈에] → [3 가상 장부] → [4 연구 소식](판정 다음 날·월요일).
     단체방판: 할 일 → [시장 한눈에] → [가상 장부](QQQ 대비 %p·거래 건수만) → [연구 소식]. 점검·내 돈 없음.
     """
     from notify import letter
@@ -458,7 +458,7 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
         "todo": letter.todo_line(summary, cfg, edition),
         "crash": letter.crash_warning(summary.get("qqq_close")),  # A2 급락장 경고(개인판·단체방판, 2026-10-22)
         "money_header": letter.MONEY_HEADER,
-        "money": letter.money_lines(summary.get("my_money")) if personal else [],
+        "money": letter.wallet_lines(summary, cfg) if personal else [],  # QQQM·ISA·합계(2026-10-23)
         "glance_header": letter.GLANCE_HEADER_V2 if personal else letter.GLANCE_HEADER,
         "glance": letter.glance_lines(summary.get("qqq_close"), summary.get("macro_rows", [])),
         "books_header": (letter.BOOKS_HEADER_V2.format(start=letter._md(first) if first is not None else "-") if personal

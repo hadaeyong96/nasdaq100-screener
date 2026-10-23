@@ -145,11 +145,11 @@ def test_personal_order_full(cfg, tmp_path):
     s = _full_summary(cfg)
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
     body = html[html.index("<header>"):]
-    keys = ("<header>", "점검: 기준일", "오늘 할 일:", "[1 내 돈 · QQQM]", "[2 시장 한눈에]", "[3 가상 장부]", "[4 연구 소식]",
+    keys = ("<header>", "점검: 기준일", "오늘 할 일:", "[1 내 돈 · QQQM · ISA]", "[2 시장 한눈에]", "[3 가상 장부]", "[4 연구 소식]",
             '<details class="fold"')
     i = [body.index(x) for x in keys]
     assert i == sorted(i)
-    assert "QQQM 모으기 탭에 보유 주식 수·평균단가를 넣으면 표시됩니다" in body
+    assert "QQQM: 노란 칸을 채우면 표시됩니다" in body and "ISA: 노란 칸을 채우면 표시됩니다" in body
     tue = report_html.render_report(_full_summary(cfg, monday=False), cfg, tmp_path).read_text(encoding="utf-8")
     assert "연구 소식" not in tue
 
