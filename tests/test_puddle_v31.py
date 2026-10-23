@@ -296,6 +296,13 @@ def test_letter_lines_personal_and_group_without_tickers():
         assert all(t not in line for line in g), t
     quiet = eng.letter_lines([_row(v31=0.99e8, weights={}, fills=[], sells=[], skipped=[])])
     assert quiet["personal"] == ["웅덩이 실험이 QQQ보다 2.0%p 뒤처집니다.", "지금은 QQQ만 들고 있습니다."]
+    assert out["filter_gap_pp"] == pytest.approx(-0.5)  # v31 1.02억 − v3 1.025억
+    from notify import letter_plain as lp
+
+    mon = {"letter_today_kst": pd.Timestamp("2026-11-09"), "puddle_v31": out}
+    assert "필터 없는 판보다 0.5%p 뒤처집니다." in lp.lab_lines(mon, {"research_news": {}}, lp.load_phrases(), lp.PERSONAL)
+    tue = {"letter_today_kst": pd.Timestamp("2026-11-10"), "puddle_v31": out}
+    assert not any("필터 없는" in x for x in lp.lab_lines(tue, {"research_news": {}}, lp.load_phrases(), lp.PERSONAL))
     one = eng.letter_lines([_row(weights={"AMD": 0.05}, fills=[], sells=[], skipped=[])])
     assert one["personal"][1] == "AMD 5% 담고 있습니다." and one["group"][1] == "1종목 5% 담고 있습니다."
     sells = eng.letter_lines([_row(fills=[{"tk": "AMD", "tranche": 2}], skipped=[],
