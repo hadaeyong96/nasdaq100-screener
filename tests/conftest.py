@@ -49,6 +49,15 @@ def _no_real_telegram(monkeypatch, tmp_path):
     monkeypatch.setattr(pu, "fetch_lists", _no_net)
     monkeypatch.setattr(pu, "download_batch", _no_net)
     monkeypatch.setattr(pu, "history", _no_net)
+    # 웅덩이 v3.1 가상 장부(2026-10-23): 구성 종목·가격·EDGAR는 네트워크라 막는다 — 주입하지 않은 테스트에선 장부만 오류로 건너뛴다
+    from engine import puddle_v31 as pv31
+
+    def _no_net_pv(*a, **k):
+        raise RuntimeError("테스트 중 네트워크 없음(웅덩이 v3.1)")
+
+    monkeypatch.setattr(pv31, "_default_universe", _no_net_pv)
+    monkeypatch.setattr(pv31, "_default_history", _no_net_pv)
+    monkeypatch.setattr(pv31.FilingChecker, "_edgar", _no_net_pv)
 
 
 @pytest.fixture(scope="session")

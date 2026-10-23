@@ -41,7 +41,7 @@ def test_defaults_everything_off(cfg):
     from engine import virtual_books as vbooks
 
     assert vbooks.run_safely(cfg) is None  # 장부·장부 시트 쓰기·동전주 알림 모두 안 돈다
-    assert "in_progress" not in cfg["research_news"]  # 예전 연구 중 목록은 뺐다
+    assert cfg["research_news"]["in_progress"] == ["상승장 대형주 웅덩이 v3.1(가상 기록, 12개월)"]  # 2026-10-23 웅덩이 v3.1 가상 기록
     assert [x["name"] for x in cfg["research_news"]["finished"]] == ["상승장 RSI 눌림 전략"]  # 끝난 기록만 남김
 
 
@@ -121,6 +121,7 @@ def test_dec_tax_uses_holdings(cfg):
 
 
 def test_research_lines_monday_and_day_after_verdict(cfg):
+    cfg["research_news"].pop("in_progress", None)  # 진행 중 줄은 tests/test_puddle_v31.py에서 본다
     cfg["research_news"]["current"].update(stage="사전 등록", verdict=None, result=None, date=None)  # 판정 전 모양부터
     assert letter.research_lines(cfg, pd.Timestamp("2026-10-26")) == [
         "「변동성 맞춤 레버리지 전략」 [사전 등록] → 탐색 중 → 판정"]  # 월요일

@@ -202,3 +202,23 @@ def extract_duration_fact_entries(
         if min_days <= days <= max_days:
             out.append(e)
     return out
+
+
+SUBMISSIONS_URL_TMPL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
+
+
+def fetch_recent_filings(cik: int, user_agent: str | None = None) -> list[dict]:
+    """EDGAR 접수 목록(최근분) → [{form, filingDate, items}] (네트워크, 캐시 없음 — 웅덩이 v3.1 실적 필터, 2026-10-23).
+
+    예외: EdgarConfigError(User-Agent 없음), EdgarFetchError(요청 실패·형식 오류)
+    """
+    ua = user_agent if user_agent is not None else get_user_agent()
+    url = SUBMISSIONS_URL_TMPL.format(cik=int(cik))
+    resp = _get(url, ua)
+    try:
+        recent = resp.json()["filings"]["recent"]
+        forms, dates = recent["form"], recent["filingDate"]
+        items = recent.get("items") or [""] * len(forms)
+    except (ValueError, KeyError, TypeError):
+        raise EdgarFetchError(f"{url} 응답 형식이 예상과 다름") from None
+    return [{"form": f, "filingDate": d, "items": i} for f, d, i in zip(forms, dates, items)]

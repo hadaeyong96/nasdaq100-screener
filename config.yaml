@@ -160,6 +160,15 @@ letter:
 # 매달 이 날(1~31, 주말·휴장이면 다음 NYSE 거래일) 「오늘 할 일」을 "저축일 — 들어온 돈 오늘 바로 매수(…)"로. 빈칸이면 지금처럼.
 savings_day: 17
 
+# ── 상승장 대형주 웅덩이 v3.1 가상 1억 장부 (2026-10-23, docs/prereg/puddle_v31_forward.md, 태그 puddle-v31-prereg) ─────
+# 규칙 값은 사전 등록대로 core/puddle_v31.Params에 고정(수정 = 새 장부). 여기는 운영 값만.
+# 시작일·시작 환율: main 병합 뒤 첫 정규 실행(GitHub Actions)이 DB에 고정 → 그 뒤 여기에 적는다(값이 있으면 이것이 우선).
+puddle_v31:
+  enabled: true
+  start_date: "" # 첫 정규 실행 뒤 고정 (YYYY-MM-DD)
+  start_fx: "" # 첫 정규 실행 뒤 고정 (원/달러)
+  sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 v3.1 (가상)」 탭에만 쓴다
+
 # ── 사용자 시트 「전략공장」의 「QQQM 모으기」 탭 (2026-10-22, 읽기 전용 — data/holdings.py) ─────────────
 # 2행 머리글 이름으로 열을 찾고 값은 3행(지금 B3·C3·D3·K3). 위치가 바뀌어도 이름이 같으면 읽는다.
 # ISA 줄(2026-10-23): A열 이름이 isa_row_name인 행(지금 4행)의 보유 주식 수·평균단가(원). 현재가는 isa_ticker 종가(원화).
@@ -430,6 +439,8 @@ research_news:
     verdict: "탈락" # 2026-10-22 판정(research/vol-target, 태그 vol-target-prereg) — V1·V2 모두 FAIL
     result: "QQQ 2000~21만 1배보다 높음(세후 8.8% vs 6.9%), S&P500 1977~98은 낮고 해외 5곳 중 1곳"
     date: 2026-10-22
+  in_progress: # 진행 중 가상 기록(월요일 연구 소식에 「연구 중: …」 한 줄)
+    - "상승장 대형주 웅덩이 v3.1(가상 기록, 12개월)"
   finished:
     - name: "상승장 RSI 눌림 전략"
       desc: "200일선 위 상승장에서 주봉 MACD 상승 + RSI 눌림 반등 때 사기"

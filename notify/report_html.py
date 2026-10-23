@@ -467,6 +467,8 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
         "strategy_lines": letter.book_lines(books, cfg, edition) if books else [],
         "trade_detail": letter.trade_detail_line(books) if (personal and books) else "",
         "research": list(summary.get("research_news") or []),  # 개인판·단체방판 모두 (2026-10-21)
+        # 웅덩이 v3.1 가상 장부 줄(2026-10-23) — 연구 소식 아래, 단체방판은 종목명 없는 줄
+        "puddle": list(((summary.get("puddle_v31") or {}).get("personal" if personal else "group")) or []),
         "research_header": ((letter.RESEARCH_HEADER if show_books else letter.RESEARCH_HEADER_NO_BOOKS) if personal
                             else letter.RESEARCH_HEADER_GROUP),
         "table_head": head, "table_rows": rows,
