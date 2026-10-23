@@ -109,7 +109,7 @@ a.tk::after{content:" ↗";font-size:11px;color:var(--mute);font-weight:400}
 .stage{display:inline-flex;gap:3px}
 .stage span{width:22px;height:18px;border-radius:4px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;background:var(--soft);color:var(--mute)}
 .stage span.on{background:var(--buy);color:#fff}
-.empty{padding:18px;color:var(--mute);text-align:center}
+.empty{padding:18px;color:var(--mute);text-align:left}
 .cnt{font-weight:800;font-size:15px}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .two table{min-width:0}
@@ -214,7 +214,7 @@ details.exp[open]>summary{color:var(--info)}
   .sheet td:nth-child(2){grid-column:1/-1;margin-top:-6px;padding-bottom:6px}
   .sheet td.note{grid-column:1/-1;color:var(--sub);font-size:13px}
   .sheet td.note:empty{display:none}
-  .sheet td.empty{grid-column:1/-1;text-align:center}
+  .sheet td.empty{grid-column:1/-1;text-align:left}
   .sheet td.empty::before{content:none}
   .sheet tr:has(td.empty){display:block}
   .sheet td.calc{color:var(--info);font-weight:700}
@@ -288,7 +288,7 @@ details.exp[open]>summary{color:var(--info)}
 .scr .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .scr table{min-width:560px;width:100%;border-collapse:collapse;font-size:13px}
 .scr table.fit{min-width:0}
-.scr th,.scr td{padding:6px 8px;border:none;border-bottom:1px solid var(--grid);text-align:center;vertical-align:top;white-space:nowrap}
+.scr th,.scr td{padding:6px 8px;border:none;border-bottom:1px solid var(--grid);text-align:left;vertical-align:top;white-space:nowrap}
 .scr th{position:static;cursor:default;background:transparent;color:var(--sub);font-size:12px;font-weight:600}
 .scr th::after{content:none}
 .scr td.l,.scr th.l{text-align:left}
@@ -317,7 +317,11 @@ details.exp[open]>summary{color:var(--info)}
 .whybox .ws h4{margin:0 0 4px;font-size:13px;font-weight:800}
 .whybox .src{color:var(--mute);font-size:12px;margin-top:4px}
 /* 짧은 판 (2026-10-17) */
-.letter{margin:10px 0 12px}
+.letter{margin:10px 0 12px;text-align:left}
+.letter.plain .ln{line-height:1.6}
+.letter.plain h2{margin:14px 0 4px}
+.letter.plain a{color:var(--ink);text-decoration:underline}
+.letter.plain .foot{margin-top:14px}
 .letter h2{font-size:14px;font-weight:800;margin:0 0 4px}
 .letter .todo{font-size:15px;font-weight:800}
 .letter .crash{font-size:13px;font-weight:700;color:var(--sell);background:var(--sell-bg);border-radius:6px;padding:4px 10px;margin:2px 0 8px}
@@ -366,10 +370,22 @@ details.exp[open]>summary{color:var(--info)}
 {% endif %}
 
 <header>
-  <h1>{{ header_line }}</h1>
+  <h1>{{ letter.plain.title if (letter and letter.plain and not show_screening) else header_line }}</h1>
 </header>
 
-{% if letter %}
+{% if letter and letter.plain %}
+{# 아침 편지 v3 (2026-10-24, notify/letter_plain.py + config/letter_phrases.yaml) — 텔레그램 첨부 설명과 같은 문장, 왼쪽 정렬 #}
+<section class="letter plain" aria-label="아침 편지">
+{% if letter.plain.problem %}<div class="ln crash">{{ letter.plain.problem }}</div>{% endif %}
+{% for s in letter.plain.sections %}
+  <h2>{{ s.header }}</h2>
+  {% for line in s.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}
+  {% endfor %}
+{% endfor %}
+  <div class="ln mini foot">{{ letter.plain.footer }}</div>
+  <div class="ln mini">{{ letter.plain.caution }}</div>
+</section>
+{% elif letter %}
 {# 아침 편지 v2.1 (2026-10-21): 개인판 점검·할 일·내 돈·시장·가상 장부·연구 소식(판정 다음 날·월요일), 단체방판은 할 일·시장·가상 장부·연구 소식. 표시 전용 #}
 {% if letter.check %}
 <section class="letter" aria-label="점검">
@@ -969,7 +985,7 @@ details.exp[open]>summary{color:var(--info)}
 
 
 <details class="fold" id="fold-fred">
-<summary>▶ 시장 지표 그래프 (지금의 시장 온도 전체)</summary>
+<summary>▶ 그래프로 보기</summary>
 <div class="fold-body">
 {% if macro_rows %}
 <section class="macro" aria-label="시장 온도">
@@ -1006,7 +1022,7 @@ details.exp[open]>summary{color:var(--info)}
 
 {% if macro_rows %}
 <section class="mexp" id="macro-explain" aria-label="시장 온도 지표 설명">
-  <details class="exp"><summary>시장 온도 지표 설명 (처음 보는 분용)</summary>
+  <details class="exp"><summary>지표마다 뜻 풀이</summary>
   <p>시장 온도 칸의 그래프나 제목을 누르면 그 지표 설명만 펼쳐져요. 각 설명 끝의 링크를 누르면 그래프로 돌아가요.</p>
   {% for m in macro_rows %}
   <details class="exp" id="explain-{{ m.slug }}"><summary>{{ m.explain.title }} — 오늘 {{ m.value_str }}{% if m.unit and m.unit != '/100' %}{{ m.unit }}{% endif %} {{ m.badge.text }}</summary>
@@ -1029,7 +1045,7 @@ details.exp[open]>summary{color:var(--info)}
 
 {% if scorecard %}
 <details class="fold" id="fold-scorecard">
-<summary>▶ 월간 성적표</summary>
+<summary>▶ 이번 달 가상 성적표</summary>
 <div class="fold-body">
 <section class="vb" aria-label="가상 장부 월간 성적표">
   <p class="mini">{{ scorecard.month }} 성적 · 관찰 전용 가상 장부(실제 주문 아님) · 전략 · 누적 QQQ 대비 · QQQ를 이긴 달</p>
@@ -1059,13 +1075,13 @@ details.exp[open]>summary{color:var(--info)}
 {% if dec_tax and not is_group %}
 <!-- 12월 공제 안내 자리 (다음 작업에서 연결) -->
 <details class="fold" id="fold-dec-tax">
-<summary>▶ 올해 세금 없는 매도 한도</summary>
+<summary>▶ 올해 세금 없이 팔 수 있는 이익</summary>
 <div class="fold-body">{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}</div>
 </details>
 {% endif %}
 
 <details class="fold" id="fold-guide">
-<summary>▶ 지표 설명 (읽는 법·용어)</summary>
+<summary>▶ 용어 풀이</summary>
 <div class="fold-body">
 <!-- 읽는 법 (초보자 안내) -->
 <section class="gd" id="guide">
@@ -1170,7 +1186,7 @@ details.exp[open]>summary{color:var(--info)}
 </details>
 
 <details class="fold" id="fold-info">
-<summary>▶ 보고서 정보</summary>
+<summary>▶ 이 편지에 대해</summary>
 <div class="fold-body">
 <section class="info" aria-label="보고서 정보">
   <div class="subtitle">{{ titles.subtitle }}</div>
@@ -1185,8 +1201,13 @@ details.exp[open]>summary{color:var(--info)}
 </details>
 
 <footer>
+{% if letter and letter.plain %}
+자료는 yfinance 하루 종가(주식 분할 반영), 환율은 yfinance 원/달러예요.<br>
+규칙대로 계산한 결과라 투자 권유가 아니에요. 주문은 직접 확인한 뒤 하세요.
+{% else %}
 데이터: yfinance 일봉(분할 반영) · 구성 종목 출처 Nasdaq 공식 · 일목 이동 {{ ichimoku_shift }} · 원/달러 환율 yfinance KRW=X · 운용 모드: {{ mode_label }}<br>
 전략 규칙에 따른 계산 결과이며 투자 권유가 아닙니다. 최종 판단과 주문은 직접 확인 후 하세요.
+{% endif %}
 </footer>
 </div>
 

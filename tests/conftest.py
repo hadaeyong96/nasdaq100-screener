@@ -58,6 +58,16 @@ def _no_real_telegram(monkeypatch, tmp_path):
     monkeypatch.setattr(pv31, "_default_universe", _no_net_pv)
     monkeypatch.setattr(pv31, "_default_history", _no_net_pv)
     monkeypatch.setattr(pv31.FilingChecker, "_edgar", _no_net_pv)
+    # 아침 편지 v3(2026-10-24): 뉴스 RSS·S&P500·SOXX 종가는 네트워크라 막는다 — 주입하지 않은 테스트에선 뉴스 실패·지수 줄 없음
+    from data import news as dnews
+    from engine import daily as _daily
+
+    def _no_net_news(*a, **k):
+        raise ConnectionError("테스트 중 네트워크 없음(뉴스)")
+
+    monkeypatch.setattr(dnews, "_get", _no_net_news)
+    monkeypatch.setattr(dnews, "PAUSE", 0)
+    monkeypatch.setattr(_daily, "_fetch_index_closes", lambda cfg: {})
 
 
 @pytest.fixture(scope="session")

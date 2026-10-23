@@ -452,7 +452,10 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
     head, rows = letter.table_rows(books, cfg, edition) if books else ([], [])
     first = min((b["start"] for b in books if b.get("start") is not None and b["status"] == "ok"), default=None)
     info = summary.get("letter_check")
+    from notify import letter_plain
+
     return {
+        "plain": None if show_books else letter_plain.build(summary, cfg, edition),  # 2026-10-23 쉬운 문장판
         "personal": personal,
         "check": letter.check_line(info) if (personal and info) else "",
         "todo": letter.todo_line(summary, cfg, edition),

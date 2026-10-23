@@ -39,7 +39,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from notify.briefing import CHECK_PREFIX, REBUILT_PREFIX, REGIME_LINE_PREFIX, build_report_caption, report_titles, title_line
+from notify.briefing import CHECK_PREFIX, REBUILT_PREFIX, REGIME_LINE_PREFIX, build_report_caption, letter_message, report_titles, title_line
 from store import db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -344,10 +344,14 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
 
         report_path = summary.get("report_path")
         if report_path and Path(report_path).exists():
+            ok = True
+            msg = letter_message(summary, cfg)  # 아침 편지 v3(2026-10-24): 본문 문자 메시지 먼저, 보고서 파일은 바로 뒤
+            if msg:
+                ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(msg))
             ok = _send_document(
                 token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
                 caption=_limit_caption(build_report_caption(summary, cfg)),
-            )
+            ) and ok
         else:
             _log("[telegram] 보고서 파일이 없어 본문 글을 대신 보냅니다.")
             ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
@@ -489,10 +493,18 @@ def send_group_briefing(
         migrate_id: int | None = None
         error: str | None = None
         if report_path and Path(report_path).exists():
-            ok, migrate_id, error = _send_document_checked(
-                token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
-                caption=_limit_caption(build_report_caption(summary, cfg, edition="group")),
-            )
+            msg = letter_message(summary, cfg, edition="group")  # 아침 편지 v3: 본문 문자 메시지 먼저, 파일은 바로 뒤
+            for chunk in split_message(msg) if msg else []:
+                c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
+                ok, migrate_id, error = ok and c_ok, migrate_id or c_migrate, error or c_err
+                if not c_ok:
+                    break
+            if migrate_id is None:  # 슈퍼그룹 전환이면 파일도 실패한다 — 호출부가 새 id로 다시 보낸다
+                d_ok, d_migrate, d_err = _send_document_checked(
+                    token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
+                    caption=_limit_caption(build_report_caption(summary, cfg, edition="group")),
+                )
+                ok, migrate_id, error = ok and d_ok, migrate_id or d_migrate, error or d_err
         else:
             _log("[telegram] 보고서 파일이 없어 단체방에 본문 글을 대신 보냅니다.")
             for chunk in split_message(text):

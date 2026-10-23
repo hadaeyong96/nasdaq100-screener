@@ -261,6 +261,7 @@ def _pp(v_krw: float) -> str:
 
 
 def _hold_text(w: dict, personal: bool) -> str:
+    """보유 한 줄(시트·예전 표시용)."""
     if not w:
         return "없음"
     if personal:
@@ -269,39 +270,62 @@ def _hold_text(w: dict, personal: bool) -> str:
 
 
 def _trade_text(rows: list[dict], personal: bool) -> str | None:
+    """시트 「오늘 매매」 칸(짧은 표기)."""
     fills = [f for r in rows for f in r["fills"]]
     sells = [s for r in rows for s in r["sells"]]
     if not fills and not sells:
         return None
-    if personal:
-        parts = [f"{f['tk']} {f['tranche']}차 매수" for f in fills] + [f"{s['tk']} 매도({s['reason']})" for s in sells]
-    else:
-        parts = ([f"매수 {len(fills)}건"] if fills else []) + ([f"매도 {len(sells)}건"] if sells else [])
+    parts = [f"{f['tk']} {f['tranche']}차 매수" for f in fills] + [f"{s['tk']} 매도({s['reason']})" for s in sells]
     return "오늘 가상 매매: " + " · ".join(parts)
 
 
-def _skip_text(rows: list[dict], personal: bool) -> str | None:
-    sk = [s for r in rows for s in r["skipped"]]
-    if not sk:
-        return None
+def _plain_lines(rows: list[dict], personal: bool, phrases: dict | None = None) -> list[str]:
+    """편지 ■ 가상 실험 줄 — config/letter_phrases.yaml lab 문구(경어체, 2026-10-24 아침 편지 v3). 단체방판은 종목명 없이."""
+    from notify import letter_plain as lp
+
+    ph = phrases if phrases is not None else lp.load_phrases()
+    day = rows[-1].get("date")
+    last = rows[-1]
+    key, d = lp.vs_qqq_parts((last["v31"] - last["qqq"]) / 1_000_000)
+    lines = [lp.phrase(ph, f"lab.{key}", day, d=d)]
+    w = last["weights"]
+    if not w:
+        lines.append(lp.phrase(ph, "lab.none", day))
+    elif personal:
+        items = sorted(w.items(), key=lambda kv: -kv[1])
+        head = ", ".join(f"{t} {x * 100:.0f}%" for t, x in items[:-1])
+        tk = (head + ", " if head else "") + items[-1][0]
+        lines.append(lp.phrase(ph, "lab.hold", day, 종목=tk, w=f"{items[-1][1] * 100:.0f}"))
+    else:
+        lines.append(lp.phrase(ph, "lab.hold_group", day, n=len(w), w=f"{sum(w.values()) * 100:.0f}"))
+    fills = [f for r in rows for f in r["fills"]]
+    sells = [s for r in rows for s in r["sells"]]
+    skipped = [s for r in rows for s in r["skipped"]]
     if personal:
-        return "실적 필터로 건너뜀: " + ", ".join(f"{s['tk']} {s['tranche']}차" for s in sk)
-    return f"실적 필터로 건너뛴 신호 {len(sk)}건"
+        for f in fills:
+            lines.append(lp.phrase(ph, "lab.buy1" if f["tranche"] == 1 else "lab.buy2", day, 종목=f["tk"]))
+        for s in sells:
+            lines.append(lp.phrase(ph, f"lab.sell_{_REASON_KEY.get(s['reason'], 'gone')}", day, 종목=s["tk"]))
+        for s in skipped:
+            lines.append(lp.phrase(ph, "lab.skip_earnings", day, 종목=s["tk"]))
+    else:
+        if fills:
+            lines.append(lp.phrase(ph, "lab.group_buy", day, n=len({f["tk"] for f in fills})))
+        if sells:
+            lines.append(lp.phrase(ph, "lab.group_sell", day, n=len(sells)))
+        if skipped:
+            lines.append(lp.phrase(ph, "lab.skip_earnings_group", day, n=len({s["tk"] for s in skipped})))
+    return lines
+
+
+_REASON_KEY = {v: k for k, v in pv.REASONS.items()}  # 매도 이유 글 → 문구 키(high·rank·max_hold·gone)
 
 
 def letter_lines(rows: list[dict]) -> dict:
     """이번 실행에서 진행한 날들의 기록 → 편지 줄 {personal: [...], group: [...], check_personal, check_group}."""
     if not rows:
         return {"personal": [], "group": [], "check_personal": None, "check_group": None}
-    last = rows[-1]
-    head = f"웅덩이 v3.1(가상): QQQ 대비 {_pp(last['v31'] - last['qqq'])} · v3 대비 {_pp(last['v31'] - last['v3'])}"
-    out = {}
-    for ed, personal in (("personal", True), ("group", False)):
-        lines = [f"{head} · 보유 {_hold_text(last['weights'], personal)}"]
-        for t in (_trade_text(rows, personal), _skip_text(rows, personal)):
-            if t:
-                lines.append(t)
-        out[ed] = lines
+    out = {"personal": _plain_lines(rows, True), "group": _plain_lines(rows, False)}
     failed = sorted({t for r in rows for t in r["failed"]})
     out["check_personal"] = f"실적 확인 실패({', '.join(failed)})" if failed else None
     out["check_group"] = f"실적 확인 실패({len(failed)}종목)" if failed else None

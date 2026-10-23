@@ -414,23 +414,45 @@ def _live_send_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "data" / "state.db")
 
 
-def test_send_briefing_sends_only_report_file_with_caption(tmp_path, monkeypatch, cfg):
+def test_send_briefing_sends_letter_text_then_report_file(tmp_path, monkeypatch, cfg):
+    """아침 편지 v3(2026-10-24): 편지 본문을 문자 메시지로 먼저, 보고서 HTML은 바로 뒤 파일로(첨부 설명은 머리줄만)."""
     _live_send_setup(tmp_path, monkeypatch)
     calls = []
-    monkeypatch.setattr(telegram, "_send_text", lambda *a, **k: pytest.fail("본문 글을 따로 보내면 안 된다"))
+    monkeypatch.setattr(telegram, "_send_text", lambda token, chat_id, text: calls.append(("text", text)) or True)
     monkeypatch.setattr(
-        telegram, "_send_document", lambda token, chat_id, path, filename=None, caption=None: calls.append((filename, caption)) or True
+        telegram, "_send_document",
+        lambda token, chat_id, path, filename=None, caption=None: calls.append(("file", filename, caption)) or True
     )
     report_path = tmp_path / "report_live_2026-09-30.html"
     report_path.write_text("<html></html>", encoding="utf-8")
-    summary = {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-30"), "report_path": report_path}
+    summary = {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-30"), "report_path": report_path,
+               "letter_today_kst": pd.Timestamp("2026-10-01")}
 
-    telegram.send_briefing("오빠의 아침 편지 · 9/30(수)\n\n🎯 오늘의 신호\n- 오늘 매매 신호 없음\n", summary, cfg)
+    telegram.send_briefing("본문(보고서 없을 때만)", summary, cfg)
 
-    # 브리핑 다이어트(2026-10-14): 첨부 설명 = 제목 + (국면 줄) + "매수 n · 매도 n" + 티커
-    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html", "오빠의 아침 편지 · 9/30(수)\n오늘 할 일: 없음 — QQQM 적립만 그대로")]
+    assert [c[0] for c in calls] == ["text", "file"]
+    text = calls[0][1]
+    assert text.startswith("[오빠의 아침 편지] 10/1(목)\n\n■ 오늘 할 일\n▶ 투자 포지션 변경 없습니다.")
+    assert "■ 내 돈\n▶ 시트 노란 칸을 채우면 표시됩니다." in text
+    assert text.endswith("미국 9/30 종가 기준입니다.\n※ 뉴스는 제목 모음입니다. 매매 신호가 아닙니다.")
+    assert calls[1] == ("file", f"{cfg['report']['short_title']}_2026-09-30.html", "[오빠의 아침 편지] 10/1(목)")
     conn = db.connect(db.db_path_for_mode("live"))
-    assert db.has_notified(conn, "2026-09-30") is True  # 보고서 한 통 성공이면 발송 기록
+    assert db.has_notified(conn, "2026-09-30") is True  # 글·파일 모두 성공이면 발송 기록
+    conn.close()
+
+
+def test_send_briefing_text_failure_still_sends_file_but_no_record(tmp_path, monkeypatch, cfg):
+    _live_send_setup(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(telegram, "_send_text", lambda *a, **k: calls.append("text") or False)
+    monkeypatch.setattr(telegram, "_send_document", lambda *a, **k: calls.append("file") or True)
+    report_path = tmp_path / "report_live_2026-09-30.html"
+    report_path.write_text("<html></html>", encoding="utf-8")
+    summary = {"mode": "live", "mode_label": "실전", "as_of": pd.Timestamp("2026-09-30"), "report_path": report_path}
+    telegram.send_briefing("본문", summary, cfg)
+    assert calls == ["text", "file"]
+    conn = db.connect(db.db_path_for_mode("live"))
+    assert db.has_notified(conn, "2026-09-30") is False
     conn.close()
 
 
@@ -480,8 +502,8 @@ def test_build_report_caption_compact_format():
 LEGACY = {"report": {"show_screening": True}}  # 예전 첨부 설명(스크리닝 켬) — 짧은 판은 아래 test_short_caption_*
 
 
-def test_short_caption_is_title_and_todo_with_check_lines_personal_only():
-    """짧은 판(2026-10-17, 기본): 제목 + 오늘 할 일. 정정본·확인할 것 줄은 개인판만. 단체방판엔 티커·개인 항목 없음."""
+def test_short_caption_is_title_and_letter_message_has_problem_line_personal_only():
+    """아침 편지 v3(2026-10-24): 첨부 설명은 머리줄만, 본문 메시지 맨 위 "▶ 자료 문제: …". 단체방판엔 티커·개인 항목 없음."""
     from notify import briefing
 
     summary = {
@@ -490,13 +512,14 @@ def test_short_caption_is_title_and_todo_with_check_lines_personal_only():
         "sell_rows": [{"티커": "ROP"}], "rebuilt_from": "2026-10-10", "fred_missing": ["DGS10"],
         "scorecard": {"month": "2026-10", "lines": []},
     }
-    p = briefing.build_report_caption(summary, {}).split("\n")
-    assert p == ["오빠의 아침 편지 · 10/13(화)", "오늘 할 일: 월간 성적표 보기(10월)",
-                 "정정본: 체결 기록 변경 반영 (2026-10-10부터 재계산)", "확인할 것: FRED 지표 수집 실패: DGS10"]
-    g = briefing.build_report_caption(summary, {}, edition="group").split("\n")
-    assert g == ["오빠의 아침 편지 · 10/13(화)", "오늘 할 일: 없음 — QQQM 적립만 그대로"]
-    assert "NVDA" not in "".join(p + g) and "ROP" not in "".join(p + g)
-
+    assert briefing.build_report_caption(summary, {}) == "[오빠의 아침 편지] 10/13(화)"
+    p = briefing.letter_message(summary, {}).split("\n")
+    assert p[:5] == ["[오빠의 아침 편지] 10/13(화)", "▶ 자료 문제: 시장 지표 1개를 받지 못했습니다.", "", "■ 오늘 할 일",
+                     "▶ 10월 가상 성적표가 나왔습니다. 첨부 파일에 있습니다."]
+    assert not any("다시 계산" in x for x in p)  # 「체결 기록이 바뀌어 …」 줄 삭제
+    g = briefing.letter_message(summary, {}, edition="group")
+    assert "NVDA" not in g and "ROP" not in g and "성적표" not in g and "■ 내 돈" not in g
+    assert briefing.letter_message(summary, {"letter": {"show_books": True}}) is None
 
 def test_build_report_caption_adds_rebuilt_and_warning_lines_only_when_present():
     """해당 있는 날에만: 🔁 정정본(국면 줄 아래), ⚠️ 시트 입력 오류·FRED 누락(맨 아래)."""

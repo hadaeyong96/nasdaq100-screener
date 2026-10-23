@@ -38,32 +38,50 @@ def setup(tmp_path, monkeypatch):
 
 
 def _capture(monkeypatch, fail_for=None):
-    sent = []
+    """가짜 전송: 파일은 sent에, 편지 본문 문자 메시지(아침 편지 v3, 2026-10-24 — 파일보다 먼저)는 sent.texts에 기록.
+    sent.order에는 ("text"|"file", chat) 순서."""
+    class Sent(list):
+        texts: list
+        order: list
+
+    sent = Sent()
+    sent.texts, sent.order = [], []
 
     def doc(token, chat_id, path, filename=None, caption=None):
         sent.append({"chat": chat_id, "path": path, "filename": filename, "caption": caption})
+        sent.order.append(("file", chat_id))
+        return chat_id != fail_for
+
+    def text(token, chat_id, body):
+        sent.texts.append({"chat": chat_id, "text": body})
+        sent.order.append(("text", chat_id))
         return chat_id != fail_for
 
     monkeypatch.setattr(telegram, "_send_document", doc)
     monkeypatch.setattr(telegram, "_send_document_checked",
                         lambda token, chat_id, path, filename=None, caption=None:
                         (doc(token, chat_id, path, filename, caption), None, None if chat_id != fail_for else "boom"))
-    monkeypatch.setattr(telegram, "_send_text", lambda *a, **k: pytest.fail("본문 글을 따로 보내면 안 된다"))
+    monkeypatch.setattr(telegram, "_send_text", text)
+    monkeypatch.setattr(telegram, "_send_text_checked",
+                        lambda token, chat_id, body: (text(token, chat_id, body), None, None if chat_id != fail_for else "boom"))
     return sent
 
 
 def test_group_gets_given_file_and_group_caption(setup, monkeypatch, cfg):
-    """짧은 판(2026-10-17): 첨부 설명은 제목 + 오늘 할 일. 단체방 설명에는 티커·개인 항목이 없다.
-    파일은 호출부가 넘긴 경로 그대로(engine.daily가 단체방판 보고서를 넘긴다)."""
+    """아침 편지 v3(2026-10-24): 두 방 모두 편지 본문 문자 메시지 → 보고서 파일 순서. 첨부 설명은 머리줄만.
+    단체방 글에는 티커·개인 항목이 없다. 파일은 호출부가 넘긴 경로 그대로(engine.daily가 단체방판 보고서를 넘긴다)."""
     _, report, summary = setup
     sent = _capture(monkeypatch)
     telegram.send_briefing("본문", summary, cfg)
     res = telegram.send_group_briefing("본문", report, summary, cfg)
-    assert res["ok"] and [s["chat"] for s in sent] == ["personal", "group"]
+    assert res["ok"] and sent.order == [("text", "personal"), ("file", "personal"), ("text", "group"), ("file", "group")]
     p, g = sent
     assert p["path"] == g["path"] == report and p["filename"] == g["filename"] == "오빠의 아침 편지_2026-10-14.html"
-    assert p["caption"] == "오빠의 아침 편지 · 10/14(수)\n오늘 할 일: 없음 — QQQM 적립만 그대로"
-    assert g["caption"] == p["caption"] and "NVDA" not in g["caption"]
+    assert p["caption"] == g["caption"] == "[오빠의 아침 편지] 10/14(수)"
+    pt, gt = sent.texts[0]["text"], sent.texts[1]["text"]
+    assert pt.startswith("[오빠의 아침 편지] 10/14(수)\n\n■ 오늘 할 일\n▶ 투자 포지션 변경 없습니다.")
+    assert "■ 내 돈" in pt and "■ 내 돈" not in gt and "NVDA" not in gt
+    assert gt.endswith("※ 뉴스는 제목 모음입니다. 매매 신호가 아닙니다.")
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-10-14") and db.has_notified(conn, "2026-10-14:group")
     conn.close()

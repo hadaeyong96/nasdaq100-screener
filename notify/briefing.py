@@ -135,6 +135,18 @@ def title_line(summary: dict, cfg: dict) -> str:
     return line + " · 모의" if summary.get("mode") == "paper" else line
 
 
+def letter_message(summary: dict, cfg: dict, edition: str = "personal") -> str | None:
+    """아침 편지 v3(2026-10-24) 본문 문자 메시지(한도 4,096자 — 넘으면 주제 칸부터 줄이고 "나머지는 첨부 파일에 있습니다.").
+    보고서 파일보다 먼저 보낸다. 쉬운 문장판(letter.show_books false, 개인판은 report.show_screening false)이 아니면 None."""
+    from notify import letter, letter_plain
+
+    if (cfg.get("letter") or {}).get("show_books", False):
+        return None
+    if edition != letter.GROUP and (cfg.get("report") or {}).get("show_screening", False):
+        return None
+    return letter_plain.to_text(letter_plain.build(summary, cfg, edition), limit=letter_plain.MESSAGE_LIMIT)
+
+
 def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") -> str:
     """보고서 첨부 설명.
 
@@ -149,10 +161,15 @@ def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") ->
     해당 있는 날에만 "정정본:"(국면 줄 아래)과 "확인할 것:"(시트 입력 오류·FRED 누락, 맨 아래) 줄을 덧붙인다
     (2026-10-14 사용자 확정) — 없는 날은 세 줄 그대로.
     """
-    from notify import letter
+    from notify import letter, letter_plain
 
+    plain = not (cfg.get("letter") or {}).get("show_books", False)  # 2026-10-23 쉬운 문장판(새 출발 편지)
     if edition == letter.GROUP:
+        if plain:  # 아침 편지 v3(2026-10-24): 본문은 문자 메시지로 먼저(letter_message), 첨부 설명은 머리줄만
+            return letter_plain.build(summary, cfg, letter.GROUP)["title"]
         return "\n".join([title_line(summary, cfg), letter.todo_line(summary, cfg, letter.GROUP)])
+    if plain and not (cfg.get("report") or {}).get("show_screening", False):
+        return letter_plain.build(summary, cfg, letter.PERSONAL)["title"]
     if not (cfg.get("report") or {}).get("show_screening", False):
         lines = [title_line(summary, cfg)]
         if summary.get("letter_check"):  # 아침 편지 v2.1: 머리말 → 점검 → 할 일 (개인판만)
