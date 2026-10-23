@@ -2299,6 +2299,7 @@ def main() -> None:
             holdings = _read_holdings(cfg)
             _attach_dec_tax(summary, cfg, holdings=holdings)
             _attach_letter_v3(summary, cfg, holdings)
+            _attach_puddle_v31(summary, cfg)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
         if (cfg.get("report") or {}).get("monthly_scorecard", True):
             try:
@@ -2455,6 +2456,23 @@ def _attach_letter_v3(summary: dict, cfg: dict, holdings: dict | None, *, qqqm_f
         except Exception as exc:  # noqa: BLE001
             print(f"[daily] ISA 가격을 받지 못했습니다(그 줄은 가격 못 받음): {type(exc).__name__}")
     summary["wallet"] = wallet
+
+
+def _attach_puddle_v31(summary: dict, cfg: dict, run_fn=None) -> None:
+    """웅덩이 v3.1 가상 장부(2026-10-23, engine/puddle_v31) — 편지 줄과 점검 메모(실적 확인 실패)만 붙인다. 오류는 장부만 건너뛴다."""
+    from engine import puddle_v31
+
+    if summary.get("as_of") is None:
+        return
+    res = (run_fn or puddle_v31.run_safely)(cfg, summary["as_of"])
+    if not res:
+        return
+    summary["puddle_v31"] = res.get("letter") or {}
+    note = summary["puddle_v31"].get("check_personal")
+    if res.get("status") == "error":
+        note = "웅덩이 v3.1 장부 오류"
+    if note and summary.get("letter_check") is not None:
+        summary["letter_check"].setdefault("notes", []).append(note)
 
 
 def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, days_fn=None, holdings=None) -> None:

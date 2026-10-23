@@ -612,19 +612,25 @@ def research_lines(cfg: dict, today_kst) -> list[str]:
 
     config research_news.current: {name, stage(사전 등록|탐색 중|판정), verdict(탈락|통과, 판정 뒤), result, date(판정일)}.
     research_news.finished는 끝난 실험 기록으로만 두고 표시하지 않는다."""
-    cur = (cfg.get("research_news") or {}).get("current") or {}
-    if not cur.get("name") or today_kst is None:
+    news = cfg.get("research_news") or {}
+    cur = news.get("current") or {}
+    prog = [str(x) for x in news.get("in_progress") or []]  # 진행 중 가상 기록(2026-10-23 웅덩이 v3.1)
+    if (not cur.get("name") and not prog) or today_kst is None:
         return []
     today = pd.Timestamp(today_kst).normalize()
     judged = bool(cur.get("verdict"))
     day_after = judged and cur.get("date") is not None and (today - pd.Timestamp(cur["date"]).normalize()).days == 1
     if today.dayofweek != 0 and not day_after:
         return []
-    stage = "판정" if judged else str(cur.get("stage") or RESEARCH_STAGES[0])
-    flow = " → ".join(f"[{x}]" if x == stage else x for x in RESEARCH_STAGES)
-    lines = [f"「{cur['name']}」 {flow}"]
-    if judged:
-        lines.append(f"결과: {cur.get('result', '')} → {cur['verdict']}")
+    lines = []
+    if cur.get("name"):
+        stage = "판정" if judged else str(cur.get("stage") or RESEARCH_STAGES[0])
+        flow = " → ".join(f"[{x}]" if x == stage else x for x in RESEARCH_STAGES)
+        lines.append(f"「{cur['name']}」 {flow}")
+        if judged:
+            lines.append(f"결과: {cur.get('result', '')} → {cur['verdict']}")
+    if prog:
+        lines.append("연구 중: " + " · ".join(prog))
     return lines
 
 

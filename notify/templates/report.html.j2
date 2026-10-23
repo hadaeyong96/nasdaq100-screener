@@ -408,10 +408,11 @@ details.exp[open]>summary{color:var(--info)}
   {% endif %}
 </section>
 {% endif %}
-{% if letter.research %}
+{% if letter.research or letter.puddle %}
 <section class="letter" aria-label="연구 소식">
   <h2>{{ letter.research_header }}</h2>
   {% for line in letter.research %}<div class="ln">{{ line }}</div>{% endfor %}
+  {% for line in letter.puddle %}<div class="ln">{{ line }}</div>{% endfor %}
 </section>
 {% endif %}
 {% endif %}
