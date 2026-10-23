@@ -286,15 +286,25 @@ def _row(**kw):
 
 def test_letter_lines_personal_and_group_without_tickers():
     out = eng.letter_lines([_row()])
-    p = out["personal"]
-    assert p[0] == "웅덩이 v3.1(가상): QQQ 대비 +1.0%p · v3 대비 −0.5%p · 보유 MSFT 10.0%, AAPL 5.1%"
-    assert p[1] == "오늘 가상 매매: AAPL 1차 매수 · NVDA 매도(월초 상위 10 밖)" and p[2] == "실적 필터로 건너뜀: AMZN 1차"
+    assert out["personal"] == ["웅덩이 v3.1: 가상 1억이 QQQ보다 1.0%p 앞서요.", "지금 MSFT 10%, AAPL 5%를 담고 있어요.",
+                               "오늘 AAPL을 처음 샀어요(1차).", "오늘 NVDA를 모두 팔았어요(월초 상위 10 밖).",
+                               "오늘은 AMZN이 내려왔지만 실적 발표 직후라 사지 않았어요."]
     g = out["group"]
-    assert g[0].endswith("보유 2종목·합계 15.1%") and g[1] == "오늘 가상 매매: 매수 1건 · 매도 1건"
+    assert g == ["웅덩이 v3.1: 가상 1억이 QQQ보다 1.0%p 앞서요.", "지금 2종목을 합계 15% 담고 있어요.", "오늘 가상으로 1종목을 샀어요.",
+                 "오늘 가상으로 1종목을 팔았어요.", "오늘 1종목이 내려왔지만 실적 발표 직후라 사지 않았어요."]
     for t in ("AAPL", "MSFT", "NVDA", "AMZN"):
         assert all(t not in line for line in g), t
-    quiet = eng.letter_lines([_row(weights={}, fills=[], sells=[], skipped=[])])
-    assert quiet["personal"] == ["웅덩이 v3.1(가상): QQQ 대비 +1.0%p · v3 대비 −0.5%p · 보유 없음"]
+    quiet = eng.letter_lines([_row(v31=0.99e8, weights={}, fills=[], sells=[], skipped=[])])
+    assert quiet["personal"] == ["웅덩이 v3.1: 가상 1억이 QQQ보다 2.0%p 뒤처져요.", "지금은 종목 없이 QQQ만 들고 있어요."]
+    one = eng.letter_lines([_row(weights={"AMD": 0.05}, fills=[], sells=[], skipped=[])])
+    assert one["personal"][1] == "지금 AMD를 5% 담고 있어요." and one["group"][1] == "지금 1종목을 5% 담고 있어요."
+
+
+def test_josa_for_tickers():
+    from notify import letter_plain as lp
+
+    assert [lp.josa(t, ("을", "를")) for t in ("AAPL", "AMD", "AMZN", "META", "QQQM")] == ["AAPL을", "AMD를", "AMZN을", "META를", "QQQM을"]
+    assert lp.josa("ISA", ("은", "는")) == "ISA는" and lp.josa("웅덩이", ("이", "가")) == "웅덩이가"
 
 
 def test_report_group_edition_has_no_tickers(cfg, tmp_path):
@@ -304,10 +314,11 @@ def test_report_group_edition_has_no_tickers(cfg, tmp_path):
     s = _summary(copy.deepcopy(cfg))
     s["puddle_v31"] = eng.letter_lines([_row()])
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "웅덩이 v3.1(가상): QQQ 대비 +1.0%p" in personal and "AAPL 1차 매수" in personal
+    assert "[가상 실험 — 실제 돈 아님]" in personal and "웅덩이 v3.1: 가상 1억이 QQQ보다 1.0%p 앞서요." in personal
+    assert "오늘 AAPL을 처음 샀어요(1차)." in personal
     group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
     body = group[group.index("<header>"):group.index("<script>")]
-    assert "웅덩이 v3.1(가상)" in body
+    assert "웅덩이 v3.1: 가상 1억이" in body
     for t in ("AAPL", "MSFT", "NVDA", "AMZN"):
         assert t not in body, t
 

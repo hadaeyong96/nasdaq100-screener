@@ -163,7 +163,7 @@ def test_personal_order_and_screening_switch(cfg, tmp_path):
     i = [body.index(x) for x in ("<header>", "오늘 할 일:", "[1 내 돈 · QQQM · ISA]", "[2 시장 한눈에]", "[3 가상 장부]",
                                  '<details class="fold"')]
     assert i == sorted(i)
-    assert _folds(body) == ["▶ 시장 지표 그래프 (지금의 시장 온도 전체)", "▶ 월간 성적표", "▶ 지표 설명 (읽는 법·용어)", "▶ 보고서 정보"]
+    assert _folds(body) == ["▶ 그래프로 보기", "▶ 이번 달 가상 성적표", "▶ 용어 풀이", "▶ 이 편지에 대해"]
     assert 'id="fold-candidates"' not in html and 'id="fold-detail"' not in html and "오늘 매수 추천" not in html
     assert "엔비디아" not in body  # 스크리닝 추천 종목 숨김
     on = {**cfg, "report": {**cfg["report"], "show_screening": True}}
@@ -184,12 +184,12 @@ def test_group_edition_excludes_personal_sections_and_tickers(cfg, tmp_path):
     assert path.name.endswith("_group.html")
     html = path.read_text(encoding="utf-8")
     body = html[html.index("<header>"):html.index("<script>")]
-    assert _folds(body) == ["▶ 시장 지표 그래프 (지금의 시장 온도 전체)", "▶ 지표 설명 (읽는 법·용어)", "▶ 보고서 정보"]
+    assert _folds(body) == ["▶ 그래프로 보기", "▶ 용어 풀이", "▶ 이 편지에 대해"]
     for x in ("오늘 할 일:", "[시장 한눈에]", "[가상 장부]", "오늘 가상 거래 1건"):
         assert x in body
     for x in ("점검:", "[1 내 돈", "[4 연구", "[2 시장", "[3 가상"):
         assert x not in body
-    for x in ("월간 성적표", "돈이 몰리는", "강한 종목", "올해 세금 없는 매도 한도", "오늘의 스크리닝", 'id="fold-detail"'):
+    for x in ("이번 달 가상 성적표", "돈이 몰리는", "강한 종목", "올해 세금 없이 팔 수 있는 이익", "오늘의 스크리닝", 'id="fold-detail"'):
         assert x not in body
     # 티커·종목명 목록 없음(전략 이름의 QQQ·QLD·TQQQ 제외)
     for t in ("MU", "AMD", "NVDA", "엔비디아", "마이크론", "SGOV"):
@@ -274,9 +274,9 @@ def test_dec_tax_fold_personal_only(cfg, tmp_path):
     s = _summary(cfg)
     s["dec_tax"] = {"todo": "올해 세금 없는 매도 한도 확인", "lines": ["남은 한도 2,500,000원", "마감: 12/29까지 체결"]}
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "▶ 올해 세금 없는 매도 한도" in personal and "오늘 할 일: 월간 성적표 보기(10월) · 올해 세금 없는 매도 한도 확인" in personal
+    assert "▶ 올해 세금 없이 팔 수 있는 이익" in personal and "오늘 할 일: 월간 성적표 보기(10월) · 올해 세금 없는 매도 한도 확인" in personal
     folds = _folds(personal[personal.index("<header>"):])
-    assert folds.index("▶ 월간 성적표") < folds.index("▶ 올해 세금 없는 매도 한도") < folds.index("▶ 지표 설명 (읽는 법·용어)")
+    assert folds.index("▶ 이번 달 가상 성적표") < folds.index("▶ 올해 세금 없이 팔 수 있는 이익") < folds.index("▶ 용어 풀이")
     group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
     body = group[group.index("<header>"):group.index("<script>")]
     assert "세금 없는 매도 한도" not in body and "남은 한도 2,500,000원" not in body

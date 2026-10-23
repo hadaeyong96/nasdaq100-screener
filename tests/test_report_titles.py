@@ -96,7 +96,7 @@ def test_private_report_title_h1_and_subtitle(tmp_path, cfg, titles):
     assert "마감" not in header and "📊" not in html.split("<body", 1)[1].split("</header>", 1)[0]
     # 지운 머리말 정보는 맨 아래 「보고서 정보」 접기(기본 닫힘) 안으로
     info = html.split('<details class="fold" id="fold-info">', 1)[1].split("</details>", 1)[0]
-    assert "▶ 보고서 정보" in info and f'<div class="subtitle">{titles["subtitle"]}</div>' in info
+    assert "▶ 이 편지에 대해" in info and f'<div class="subtitle">{titles["subtitle"]}</div>' in info
     assert "MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준" in info
     assert "기준일 <b>2026-09-30 종가</b>" in info and "주문 가능일" in info and "환율" in info and "생성" in info
     assert html.index('id="fold-guide"') < html.index('id="fold-info"') < html.index("<footer>")

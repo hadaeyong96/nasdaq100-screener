@@ -2506,7 +2506,8 @@ def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, da
             pos = th.moving_average_position((fills_fn or (lambda: _default_fills(cfg)))())
         plan = th.harvest_plan(pos, year, float(close.iloc[-1]), float(fx))
         summary["dec_tax"] = {"todo": letter.DEC_TAX_TODO, "lines": th.build_lines(plan, th.deadline(days, year)),
-                              "status": plan.status}
+                              "status": plan.status,  # 아래 둘은 쉬운 문장 편지 표시용(2026-10-23, 계산 그대로)
+                              "remaining_krw": plan.remaining_krw, "deadline": th.deadline(days, year)}
     except Exception as exc:  # noqa: BLE001 — 안내 실패가 브리핑을 막으면 안 된다
         summary.pop("dec_tax", None)
         print(f"[daily] 12월 공제 안내를 만들지 못했습니다(브리핑은 그대로): {type(exc).__name__}: {exc}")

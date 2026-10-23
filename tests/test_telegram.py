@@ -428,7 +428,10 @@ def test_send_briefing_sends_only_report_file_with_caption(tmp_path, monkeypatch
     telegram.send_briefing("오빠의 아침 편지 · 9/30(수)\n\n🎯 오늘의 신호\n- 오늘 매매 신호 없음\n", summary, cfg)
 
     # 브리핑 다이어트(2026-10-14): 첨부 설명 = 제목 + (국면 줄) + "매수 n · 매도 n" + 티커
-    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html", "오빠의 아침 편지 · 9/30(수)\n오늘 할 일: 없음 — QQQM 적립만 그대로")]
+    # 쉬운 문장판(2026-10-23): 첨부 설명 = 편지 전체 문장(제목 → [오늘 할 일] → [내 돈] → … → 기준 줄)
+    assert calls == [(f"{cfg['report']['short_title']}_2026-09-30.html",
+                      "오빠의 아침 편지 · 9/30(수)\n\n[오늘 할 일]\n없어요. 적립은 그대로 두면 돼요.\n\n"
+                      "[내 돈]\n시트 노란 칸에 보유 수와 평균단가를 넣으면 여기에 보여 드려요.\n\n기준: 9/30 미국 종가 · 자료 정상")]
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-09-30") is True  # 보고서 한 통 성공이면 발송 기록
     conn.close()
@@ -491,10 +494,14 @@ def test_short_caption_is_title_and_todo_with_check_lines_personal_only():
         "scorecard": {"month": "2026-10", "lines": []},
     }
     p = briefing.build_report_caption(summary, {}).split("\n")
-    assert p == ["오빠의 아침 편지 · 10/13(화)", "오늘 할 일: 월간 성적표 보기(10월)",
-                 "정정본: 체결 기록 변경 반영 (2026-10-10부터 재계산)", "확인할 것: FRED 지표 수집 실패: DGS10"]
+    # 쉬운 문장판(2026-10-23): 문제는 맨 위 "자료 문제:" 한 줄, 정정본은 맨 아래, 기준 줄이 마지막
+    assert p[:5] == ["오빠의 아침 편지 · 10/13(화)", "자료 문제: 시장 지표 1개를 못 받았어요.", "", "[오늘 할 일]",
+                     "10월 가상 성적표가 나왔어요."]
+    assert p[-2:] == ["체결 기록이 바뀌어 2026-10-10부터 다시 계산했어요.", "기준: 10/13 미국 종가 · 자료 문제 있음"]
     g = briefing.build_report_caption(summary, {}, edition="group").split("\n")
-    assert g == ["오빠의 아침 편지 · 10/13(화)", "오늘 할 일: 없음 — QQQM 적립만 그대로"]
+    assert g[:5] == ["오빠의 아침 편지 · 10/13(화)", "자료 문제: 시장 지표 1개를 못 받았어요.", "", "[오늘 할 일]",
+                     "없어요. 적립은 그대로 두면 돼요."]
+    assert "[내 돈]" not in g and "체결 기록" not in "".join(g)
     assert "NVDA" not in "".join(p + g) and "ROP" not in "".join(p + g)
 
 

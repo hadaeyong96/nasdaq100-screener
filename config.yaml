@@ -438,6 +438,7 @@ research_news:
     stage: "판정"
     verdict: "탈락" # 2026-10-22 판정(research/vol-target, 태그 vol-target-prereg) — V1·V2 모두 FAIL
     result: "QQQ 2000~21만 1배보다 높음(세후 8.8% vs 6.9%), S&P500 1977~98은 낮고 해외 5곳 중 1곳"
+    plain_result: "2000~21년 QQQ에서만 그냥 보유보다 나았고, 다른 시장에서는 못 이겼어요." # 쉬운 문장 편지용(2026-10-23)
     date: 2026-10-22
   in_progress: # 진행 중 가상 기록(월요일 연구 소식에 「연구 중: …」 한 줄)
     - "상승장 대형주 웅덩이 v3.1(가상 기록, 12개월)"

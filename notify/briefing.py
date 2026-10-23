@@ -149,10 +149,15 @@ def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") ->
     해당 있는 날에만 "정정본:"(국면 줄 아래)과 "확인할 것:"(시트 입력 오류·FRED 누락, 맨 아래) 줄을 덧붙인다
     (2026-10-14 사용자 확정) — 없는 날은 세 줄 그대로.
     """
-    from notify import letter
+    from notify import letter, letter_plain
 
+    plain = not (cfg.get("letter") or {}).get("show_books", False)  # 2026-10-23 쉬운 문장판(새 출발 편지)
     if edition == letter.GROUP:
+        if plain:
+            return letter_plain.to_text(letter_plain.build(summary, cfg, letter.GROUP))
         return "\n".join([title_line(summary, cfg), letter.todo_line(summary, cfg, letter.GROUP)])
+    if plain and not (cfg.get("report") or {}).get("show_screening", False):
+        return letter_plain.to_text(letter_plain.build(summary, cfg, letter.PERSONAL))
     if not (cfg.get("report") or {}).get("show_screening", False):
         lines = [title_line(summary, cfg)]
         if summary.get("letter_check"):  # 아침 편지 v2.1: 머리말 → 점검 → 할 일 (개인판만)
