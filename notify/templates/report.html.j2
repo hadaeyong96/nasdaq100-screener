@@ -109,7 +109,7 @@ a.tk::after{content:" ↗";font-size:11px;color:var(--mute);font-weight:400}
 .stage{display:inline-flex;gap:3px}
 .stage span{width:22px;height:18px;border-radius:4px;font-size:11px;display:inline-flex;align-items:center;justify-content:center;background:var(--soft);color:var(--mute)}
 .stage span.on{background:var(--buy);color:#fff}
-.empty{padding:18px;color:var(--mute);text-align:center}
+.empty{padding:18px;color:var(--mute);text-align:left}
 .cnt{font-weight:800;font-size:15px}
 .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:12px}
 .two table{min-width:0}
@@ -214,7 +214,7 @@ details.exp[open]>summary{color:var(--info)}
   .sheet td:nth-child(2){grid-column:1/-1;margin-top:-6px;padding-bottom:6px}
   .sheet td.note{grid-column:1/-1;color:var(--sub);font-size:13px}
   .sheet td.note:empty{display:none}
-  .sheet td.empty{grid-column:1/-1;text-align:center}
+  .sheet td.empty{grid-column:1/-1;text-align:left}
   .sheet td.empty::before{content:none}
   .sheet tr:has(td.empty){display:block}
   .sheet td.calc{color:var(--info);font-weight:700}
@@ -288,7 +288,7 @@ details.exp[open]>summary{color:var(--info)}
 .scr .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%}
 .scr table{min-width:560px;width:100%;border-collapse:collapse;font-size:13px}
 .scr table.fit{min-width:0}
-.scr th,.scr td{padding:6px 8px;border:none;border-bottom:1px solid var(--grid);text-align:center;vertical-align:top;white-space:nowrap}
+.scr th,.scr td{padding:6px 8px;border:none;border-bottom:1px solid var(--grid);text-align:left;vertical-align:top;white-space:nowrap}
 .scr th{position:static;cursor:default;background:transparent;color:var(--sub);font-size:12px;font-weight:600}
 .scr th::after{content:none}
 .scr td.l,.scr th.l{text-align:left}
@@ -317,7 +317,11 @@ details.exp[open]>summary{color:var(--info)}
 .whybox .ws h4{margin:0 0 4px;font-size:13px;font-weight:800}
 .whybox .src{color:var(--mute);font-size:12px;margin-top:4px}
 /* 짧은 판 (2026-10-17) */
-.letter{margin:10px 0 12px}
+.letter{margin:10px 0 12px;text-align:left}
+.letter.plain .ln{line-height:1.6}
+.letter.plain h2{margin:14px 0 4px}
+.letter.plain a{color:var(--ink);text-decoration:underline}
+.letter.plain .foot{margin-top:14px}
 .letter h2{font-size:14px;font-weight:800;margin:0 0 4px}
 .letter .todo{font-size:15px;font-weight:800}
 .letter .crash{font-size:13px;font-weight:700;color:var(--sell);background:var(--sell-bg);border-radius:6px;padding:4px 10px;margin:2px 0 8px}
@@ -366,25 +370,20 @@ details.exp[open]>summary{color:var(--info)}
 {% endif %}
 
 <header>
-  <h1>{{ header_line }}</h1>
+  <h1>{{ letter.plain.title if (letter and letter.plain and not show_screening) else header_line }}</h1>
 </header>
 
 {% if letter and letter.plain %}
-{# 쉬운 문장판 (2026-10-23, notify/letter_plain.py) — 텔레그램 첨부 설명과 같은 문장 #}
-{% if letter.plain.problem %}
-<section class="letter" aria-label="자료 문제">
-  <div class="ln crash">{{ letter.plain.problem }}</div>
-</section>
-{% endif %}
+{# 아침 편지 v3 (2026-10-24, notify/letter_plain.py + config/letter_phrases.yaml) — 텔레그램 첨부 설명과 같은 문장, 왼쪽 정렬 #}
+<section class="letter plain" aria-label="아침 편지">
+{% if letter.plain.problem %}<div class="ln crash">{{ letter.plain.problem }}</div>{% endif %}
 {% for s in letter.plain.sections %}
-<section class="letter" aria-label="{{ s.header }}">
   <h2>{{ s.header }}</h2>
-  {% for line in s.lines %}<div class="ln">{{ line }}</div>{% endfor %}
-</section>
+  {% for line in s.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}
+  {% endfor %}
 {% endfor %}
-<section class="letter" aria-label="기준">
-  {% for line in letter.plain.extra %}<div class="ln mini">{{ line }}</div>{% endfor %}
-  <div class="ln mini">{{ letter.plain.footer }}</div>
+  <div class="ln mini foot">{{ letter.plain.footer }}</div>
+  <div class="ln mini">{{ letter.plain.caution }}</div>
 </section>
 {% elif letter %}
 {# 아침 편지 v2.1 (2026-10-21): 개인판 점검·할 일·내 돈·시장·가상 장부·연구 소식(판정 다음 날·월요일), 단체방판은 할 일·시장·가상 장부·연구 소식. 표시 전용 #}

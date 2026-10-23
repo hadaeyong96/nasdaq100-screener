@@ -2300,6 +2300,7 @@ def main() -> None:
             _attach_dec_tax(summary, cfg, holdings=holdings)
             _attach_letter_v3(summary, cfg, holdings)
             _attach_puddle_v31(summary, cfg)
+            _attach_news(summary, cfg)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
         if (cfg.get("report") or {}).get("monthly_scorecard", True):
             try:
@@ -2370,12 +2371,41 @@ def render_editions(summary: dict, cfg: dict) -> None:
         print(f"[daily] 단체방판을 그리지 못했습니다(단체방에는 첨부 설명만): {type(exc).__name__}: {exc}")
 
 
-def _attach_market_glance(summary: dict, cfg: dict, qqq_fetch=None) -> None:
-    """[시장 한눈에] 1줄용 QQQ 확정 종가를 summary["qqq_close"]에 둔다(표시 전용). 실패하면 그 줄만 빠진다."""
+def _attach_market_glance(summary: dict, cfg: dict, qqq_fetch=None, index_fetch=None) -> None:
+    """[시장 한눈에] 1줄용 QQQ 확정 종가를 summary["qqq_close"]에 둔다(표시 전용). 실패하면 그 줄만 빠진다.
+    아침 편지 v3(2026-10-24): S&P500(^GSPC)·반도체(SOXX) 종가도 summary["index_close"]에(표시 전용, 못 받은 것만 빠진다)."""
     try:
         summary["qqq_close"] = (qqq_fetch or (lambda: _fetch_qqq_close_series(cfg)))()
     except Exception as exc:  # noqa: BLE001
         print(f"[daily] QQQ 종가를 받지 못해 시장 한눈에 첫 줄을 뺍니다: {type(exc).__name__}")
+    summary["index_close"] = (index_fetch or (lambda: _fetch_index_closes(cfg)))()
+
+
+INDEX_TICKERS = {"spx": "^GSPC", "soxx": "SOXX"}  # 아침 편지 v3 ■ 미국 증시 마감 지수 줄(표시 전용)
+
+
+def _fetch_index_closes(cfg: dict) -> dict:
+    """S&P500·SOXX 종가 {"spx": Series, "soxx": Series}. 못 받은 것은 빠지고 이름을 출력한다(조용히 넘기지 않음)."""
+    out = {}
+    for key, tk in INDEX_TICKERS.items():
+        try:
+            out[key] = _fetch_close_series(tk, cfg)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[daily] {tk} 종가를 받지 못해 지수 줄에서 뺍니다: {type(exc).__name__}")
+    return out
+
+
+def _attach_news(summary: dict, cfg: dict, news_fn=None) -> None:
+    """아침 편지 v3 뉴스(구글 뉴스 한국어 RSS, config/news_topics.yaml) → summary["news"]. 실패하면 status "fail"."""
+    from data import news
+
+    try:
+        summary["news"] = (news_fn or (lambda: news.letter_news(pd.Timestamp.now(tz="UTC"))))()
+    except Exception as exc:  # noqa: BLE001 — 뉴스 실패가 편지를 막으면 안 된다
+        print(f"[daily] 뉴스를 받지 못했습니다(편지는 그대로): {type(exc).__name__}")
+        summary["news"] = {"status": "fail", "top": [], "topics": {}, "failed": []}
+    if summary["news"].get("failed"):
+        print(f"[daily] 뉴스 검색어 실패 {len(summary['news']['failed'])}개: {', '.join(summary['news']['failed'])}")
 
 
 def _default_fills(cfg: dict):

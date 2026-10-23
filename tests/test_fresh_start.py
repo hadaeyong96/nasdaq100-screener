@@ -164,18 +164,19 @@ def test_personal_letter_new_order_no_books_no_stock_folds(cfg, tmp_path):
     s = _summary(cfg)
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
     body = html[html.index("<header>"):html.index("<script>")]
-    keys = ("<header>", "[오늘 할 일]", "없어요. 적립은 그대로 두면 돼요.", "[내 돈]", "[시장]",
-            "[가상 실험 — 실제 돈 아님]", "「변동성 맞춤 레버리지 전략」", "기준: ", '<details class="fold"')
+    keys = ("<header>", "■ 미국 증시 마감", "■ 오늘 할 일", "투자 포지션 변경 없습니다.", "■ 내 돈",
+            "■ 가상 실험 (실제 돈 아님)", "「변동성 맞춤 레버리지 전략」 시험 결과는 탈락입니다.", "종가 기준입니다.",
+            "※ 뉴스는 제목 모음입니다.", '<details class="fold"')
     i = [body.index(x) for x in keys]
     assert i == sorted(i)
-    check = re.search(r"기준: [^<]+", body).group(0)  # 점검 줄은 맨 아래 작은 줄(2026-10-23 쉬운 문장판)
-    assert "장부" not in check and check.endswith("자료 정상") and "자료 문제" not in body
-    assert "시트 노란 칸에 보유 수와 평균단가를 넣으면 여기에 보여 드려요." in body
+    check = re.search(r"미국 [^<]+ 종가 기준입니다\.", body).group(0)  # 기준 줄은 맨 아래(2026-10-24 아침 편지 v3)
+    assert "장부" not in check and "자료 문제" not in body
+    assert "시트 노란 칸을 채우면 표시됩니다." in body and "<h1>[오빠의 아침 편지] " in body
     for x in ("가상 장부", "[3 가상", "QQQ 대비 누적", "전략 표로 보기", "강한 종목", "돈이 몰리는", "월간 성적표", "상승장 RSI"):
         assert x not in body, x
     assert _folds(body) == ["▶ 그래프로 보기", "▶ 용어 풀이", "▶ 이 편지에 대해"]
     tue = report_html.render_report(_summary(cfg, monday=False), cfg, tmp_path).read_text(encoding="utf-8")
-    assert "연구 소식" not in tue and "[가상 실험" not in tue
+    assert "시험 결과는" not in tue and "■ 가상 실험" not in tue
 
 
 def test_group_letter_excludes_check_and_money(cfg, tmp_path):
@@ -186,13 +187,14 @@ def test_group_letter_excludes_check_and_money(cfg, tmp_path):
     body = html[html.index("<header>"):html.index("<script>")]
     for x in ("점검:", "내 돈", "2,800,000", "280만", "가상 장부", "QQQ 대비 누적", "강한 종목", "돈이 몰리는"):
         assert x not in body, x
-    i = [body.index(x) for x in ("[오늘 할 일]", "[시장]", "[가상 실험 — 실제 돈 아님]", "「변동성 맞춤 레버리지 전략」")]
+    i = [body.index(x) for x in ("■ 미국 증시 마감", "■ 오늘 할 일", "■ 가상 실험 (실제 돈 아님)", "「변동성 맞춤 레버리지 전략」")]
     assert i == sorted(i)
-    cap = briefing.build_report_caption(s, cfg).split("\n")
-    assert cap[2] == "[오늘 할 일]" and "[내 돈]" in cap and "QQQM 280만 원, 1.0% 올랐어요." in cap
-    assert cap[-1].startswith("기준: ") and "장부" not in cap[-1]
-    group_cap = briefing.build_report_caption(s, cfg, edition="group")
-    assert "점검" not in group_cap and "[내 돈]" not in group_cap and "280만" not in group_cap
+    msg = briefing.letter_message(s, cfg).split("\n")
+    assert "■ 오늘 할 일" in msg and "■ 내 돈" in msg and "▶ QQQM 280만 원, 1.0% 올랐습니다." in msg
+    assert msg[-2].endswith("종가 기준입니다.") and "장부" not in msg[-2]
+    assert briefing.build_report_caption(s, cfg) == msg[0]  # 첨부 설명은 머리줄만
+    group_msg = briefing.letter_message(s, cfg, edition="group")
+    assert "점검" not in group_msg and "■ 내 돈" not in group_msg and "280만" not in group_msg
 
 
 def test_attach_letter_v3_lag_money_research(cfg):
@@ -279,10 +281,10 @@ def test_crash_warning_both_editions_below_todo(cfg, tmp_path):
         for ed in ("personal", "group"):
             body = report_html.render_report(s, cfg, tmp_path, edition=ed).read_text(encoding="utf-8")
             body = body[body.index("<header>"):body.index("<script>")]
-            assert (lp.CRASH[0] in body) is shown, (kind, ed)
+            crash = "시장이 크게 빠졌습니다. 팔지 않습니다. 적립만 이어갑니다."
+            assert (crash in body) is shown, (kind, ed)
             if shown:
-                assert body.index("[오늘 할 일]") < body.index(lp.CRASH[0]) < body.index("[시장]")
-                assert all(x in body for x in lp.CRASH)
+                assert body.index("■ 미국 증시 마감") < body.index("■ 오늘 할 일") < body.index(crash)
 
 
 def test_savings_day_weekend_holiday_and_blank(cfg):
@@ -400,7 +402,7 @@ def test_wallet_personal_only(cfg, tmp_path):
     s2, _ = _wallet(cfg, _with_isa())
     s["my_money"], s["wallet"] = s2["my_money"], s2["wallet"]
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "[내 돈]" in personal and "ISA 340만 원, 13.3% 올랐어요." in personal and "ISA 비과세 한도는 360만 원" in personal
+    assert "■ 내 돈" in personal and "ISA 340만 원, 13.3% 올랐습니다." in personal and "ISA 비과세 한도 360만 원" in personal
     group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
     group = group[group.index("<header>"):group.index("<script>")]
     for x in ("내 돈", "ISA", "340만", "3,400,000", "비과세"):

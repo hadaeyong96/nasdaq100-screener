@@ -286,18 +286,21 @@ def _row(**kw):
 
 def test_letter_lines_personal_and_group_without_tickers():
     out = eng.letter_lines([_row()])
-    assert out["personal"] == ["웅덩이 v3.1: 가상 1억이 QQQ보다 1.0%p 앞서요.", "지금 MSFT 10%, AAPL 5%를 담고 있어요.",
-                               "오늘 AAPL을 처음 샀어요(1차).", "오늘 NVDA를 모두 팔았어요(월초 상위 10 밖).",
-                               "오늘은 AMZN이 내려왔지만 실적 발표 직후라 사지 않았어요."]
+    assert out["personal"] == ["웅덩이 실험이 QQQ보다 1.0%p 앞섭니다.", "MSFT 10%, AAPL 5% 담고 있습니다.",
+                               "AAPL을 처음 샀습니다.", "NVDA가 대형 10종목에서 밀려 팔았습니다.",
+                               "AMZN은 실적 발표 직후라 사지 않았습니다."]
     g = out["group"]
-    assert g == ["웅덩이 v3.1: 가상 1억이 QQQ보다 1.0%p 앞서요.", "지금 2종목을 합계 15% 담고 있어요.", "오늘 가상으로 1종목을 샀어요.",
-                 "오늘 가상으로 1종목을 팔았어요.", "오늘 1종목이 내려왔지만 실적 발표 직후라 사지 않았어요."]
+    assert g == ["웅덩이 실험이 QQQ보다 1.0%p 앞섭니다.", "2종목 15% 담고 있습니다.", "오늘 가상으로 1종목을 샀습니다.",
+                 "오늘 가상으로 1종목을 팔았습니다.", "1종목은 실적 발표 직후라 사지 않았습니다."]
     for t in ("AAPL", "MSFT", "NVDA", "AMZN"):
         assert all(t not in line for line in g), t
     quiet = eng.letter_lines([_row(v31=0.99e8, weights={}, fills=[], sells=[], skipped=[])])
-    assert quiet["personal"] == ["웅덩이 v3.1: 가상 1억이 QQQ보다 2.0%p 뒤처져요.", "지금은 종목 없이 QQQ만 들고 있어요."]
+    assert quiet["personal"] == ["웅덩이 실험이 QQQ보다 2.0%p 뒤처집니다.", "지금은 QQQ만 들고 있습니다."]
     one = eng.letter_lines([_row(weights={"AMD": 0.05}, fills=[], sells=[], skipped=[])])
-    assert one["personal"][1] == "지금 AMD를 5% 담고 있어요." and one["group"][1] == "지금 1종목을 5% 담고 있어요."
+    assert one["personal"][1] == "AMD 5% 담고 있습니다." and one["group"][1] == "1종목 5% 담고 있습니다."
+    sells = eng.letter_lines([_row(fills=[{"tk": "AMD", "tranche": 2}], skipped=[],
+                                   sells=[{"tk": "META", "reason": "직전 120거래일 최고가 돌파"}, {"tk": "AMZN", "reason": "보유 250거래일"}])])
+    assert sells["personal"][2:] == ["AMD를 조금 더 샀습니다.", "META 웅덩이가 메워져 팔았습니다.", "AMZN을 1년 가까이 들고 있어 정리했습니다."]
 
 
 def test_josa_for_tickers():
@@ -314,11 +317,11 @@ def test_report_group_edition_has_no_tickers(cfg, tmp_path):
     s = _summary(copy.deepcopy(cfg))
     s["puddle_v31"] = eng.letter_lines([_row()])
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "[가상 실험 — 실제 돈 아님]" in personal and "웅덩이 v3.1: 가상 1억이 QQQ보다 1.0%p 앞서요." in personal
-    assert "오늘 AAPL을 처음 샀어요(1차)." in personal
+    assert "■ 가상 실험 (실제 돈 아님)" in personal and "웅덩이 실험이 QQQ보다 1.0%p 앞섭니다." in personal
+    assert "AAPL을 처음 샀습니다." in personal
     group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
     body = group[group.index("<header>"):group.index("<script>")]
-    assert "웅덩이 v3.1: 가상 1억이" in body
+    assert "웅덩이 실험이 QQQ보다" in body
     for t in ("AAPL", "MSFT", "NVDA", "AMZN"):
         assert t not in body, t
 

@@ -279,42 +279,46 @@ def _trade_text(rows: list[dict], personal: bool) -> str | None:
     return "오늘 가상 매매: " + " · ".join(parts)
 
 
-def _plain_lines(rows: list[dict], personal: bool) -> list[str]:
-    """편지 [가상 실험] 줄 — 쉬운 문장(2026-10-23 feat/letter-plain). 단체방판은 종목명 없이."""
+def _plain_lines(rows: list[dict], personal: bool, phrases: dict | None = None) -> list[str]:
+    """편지 ■ 가상 실험 줄 — config/letter_phrases.yaml lab 문구(경어체, 2026-10-24 아침 편지 v3). 단체방판은 종목명 없이."""
     from notify import letter_plain as lp
 
+    ph = phrases if phrases is not None else lp.load_phrases()
+    day = rows[-1].get("date")
     last = rows[-1]
-    lines = [f"웅덩이 v3.1: 가상 1억이 {lp.vs_qqq((last['v31'] - last['qqq']) / 1_000_000)}."]
+    key, d = lp.vs_qqq_parts((last["v31"] - last["qqq"]) / 1_000_000)
+    lines = [lp.phrase(ph, f"lab.{key}", day, d=d)]
     w = last["weights"]
     if not w:
-        lines.append("지금은 종목 없이 QQQ만 들고 있어요.")
+        lines.append(lp.phrase(ph, "lab.none", day))
     elif personal:
         items = sorted(w.items(), key=lambda kv: -kv[1])
-        if len(items) == 1:
-            lines.append(f"지금 {lp.josa(items[0][0], ('을', '를'))} {items[0][1] * 100:.0f}% 담고 있어요.")
-        else:
-            lines.append("지금 " + ", ".join(f"{t} {x * 100:.0f}%" for t, x in items) + "를 담고 있어요.")
+        head = ", ".join(f"{t} {x * 100:.0f}%" for t, x in items[:-1])
+        tk = (head + ", " if head else "") + items[-1][0]
+        lines.append(lp.phrase(ph, "lab.hold", day, 종목=tk, w=f"{items[-1][1] * 100:.0f}"))
     else:
-        tot = sum(w.values()) * 100
-        lines.append(f"지금 1종목을 {tot:.0f}% 담고 있어요." if len(w) == 1 else f"지금 {len(w)}종목을 합계 {tot:.0f}% 담고 있어요.")
+        lines.append(lp.phrase(ph, "lab.hold_group", day, n=len(w), w=f"{sum(w.values()) * 100:.0f}"))
     fills = [f for r in rows for f in r["fills"]]
     sells = [s for r in rows for s in r["sells"]]
     skipped = [s for r in rows for s in r["skipped"]]
     if personal:
         for f in fills:
-            lines.append(f"오늘 {lp.josa(f['tk'], ('을', '를'))} {'처음' if f['tranche'] == 1 else '한 번 더'} 샀어요({f['tranche']}차).")
+            lines.append(lp.phrase(ph, "lab.buy1" if f["tranche"] == 1 else "lab.buy2", day, 종목=f["tk"]))
         for s in sells:
-            lines.append(f"오늘 {lp.josa(s['tk'], ('을', '를'))} 모두 팔았어요({s['reason']}).")
+            lines.append(lp.phrase(ph, f"lab.sell_{_REASON_KEY.get(s['reason'], 'gone')}", day, 종목=s["tk"]))
         for s in skipped:
-            lines.append(f"오늘은 {lp.josa(s['tk'], ('이', '가'))} 내려왔지만 실적 발표 직후라 사지 않았어요.")
+            lines.append(lp.phrase(ph, "lab.skip_earnings", day, 종목=s["tk"]))
     else:
         if fills:
-            lines.append(f"오늘 가상으로 {len({f['tk'] for f in fills})}종목을 샀어요.")
+            lines.append(lp.phrase(ph, "lab.group_buy", day, n=len({f["tk"] for f in fills})))
         if sells:
-            lines.append(f"오늘 가상으로 {len(sells)}종목을 팔았어요.")
+            lines.append(lp.phrase(ph, "lab.group_sell", day, n=len(sells)))
         if skipped:
-            lines.append(f"오늘 {len(skipped)}종목이 내려왔지만 실적 발표 직후라 사지 않았어요.")
+            lines.append(lp.phrase(ph, "lab.skip_earnings_group", day, n=len({s["tk"] for s in skipped})))
     return lines
+
+
+_REASON_KEY = {v: k for k, v in pv.REASONS.items()}  # 매도 이유 글 → 문구 키(high·rank·max_hold·gone)
 
 
 def letter_lines(rows: list[dict]) -> dict:
