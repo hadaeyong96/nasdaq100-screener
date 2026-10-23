@@ -21,11 +21,13 @@ def cfg():
     return copy.deepcopy(load_config())
 
 
-SHEET = [  # 사용자 시트 「전략공장」 「QQQM 모으기」 (2026-10-22 배치: 2행 머리글, 3행 값 — B3·C3·D3·K3)
-    ["QQQM 모으기 (실제 돈) — 노란 칸만 직접 고치세요"],
-    ["종목", "보유 주식 수", "평균단가($)", "평균 환율(원/$)", "현재가($)", "오늘 환율(원/$)", "손익률", "투자 원금(원)", "평가금액(원)",
-     "손익(원)", "올해 실현 이익(원)", "250만 원 공제 남은 금액(원)"],
+SHEET = [  # 사용자 시트 「전략공장」 「QQQM 모으기」 (2026-10-23 배치: 2행 머리글, 3행 QQQM — B3·C3·D3·K3, 4행 ISA — B4·C4)
+    ["QQQM · ISA 모으기 (실제 돈) — 노란 칸만 직접 고치세요"],
+    ["종목", "보유 주식 수", "평균단가($/원)", "평균 환율(원/$)", "현재가($/원)", "오늘 환율(원/$)", "손익률", "투자 원금(원)",
+     "평가금액(원)", "손익(원)", "올해 실현 이익(원)", "250만 원 공제 남은 금액(원)"],
     ["QQQM", "10", "250.5", "1,350", "298.64", "1321.94924", "", "", "", "", "500,000", "2000000"],
+    ["TIGER 미국나스닥100 (ISA·원화)", "", "", "—", "170375", "—", "", "", "", "", "—", "—"],
+    ["합계", "", "", "", "", "", "", "0", "0", "0"],
 ]
 
 # ── 설정 기본값 ──────────────────────────────────────────────────────────────
@@ -49,19 +51,22 @@ def test_defaults_everything_off(cfg):
 def test_parse_holdings_by_header_and_label(cfg):
     h = hd.parse_holdings(SHEET, cfg)
     assert (h["qty"], h["avg_price"], h["avg_fx"], h["realized_krw"], h["warnings"]) == (10.0, 250.5, 1350.0, 500_000.0, [])
+    assert h["isa"] == {"qty": None, "avg_price": None}  # ISA 노란 칸 빈칸
 
 
 def test_parse_holdings_columns_moved_and_blanks(cfg):
-    moved = [SHEET[0], ["종목", "올해 실현 이익(원)", "평균단가($)", "메모", "보유 주식 수", "평균 환율(원/$)"],
-             ["QQQM", "0", "250.5", "x", "7", ""]]
+    moved = [SHEET[0], ["종목", "올해 실현 이익(원)", "평균단가($)", "메모", "보유 주식 수", "평균 환율(원/$)"],  # 예전 머리글 이름도 읽음
+             ["QQQM", "0", "250.5", "x", "7", ""], ["TIGER 미국나스닥100 (ISA·원화)", "—", "15,000원", "", "20", "—"]]
     h = hd.parse_holdings(moved, cfg)
     assert (h["qty"], h["avg_price"], h["avg_fx"], h["realized_krw"]) == (7.0, 250.5, None, 0.0)  # 평균 환율 빈칸 → None
+    assert h["isa"] == {"qty": 20.0, "avg_price": 15000.0} and h["warnings"] == []
     empty = copy.deepcopy(SHEET)
     empty[2] = ["QQQM", "", "", ""]
     h = hd.parse_holdings(empty, cfg)
     assert h["qty"] is None and h["avg_price"] is None and h["realized_krw"] is None and h["warnings"] == []
     broken = hd.parse_holdings([["x"], ["종목"]], cfg)
-    assert len(broken["warnings"]) == 4  # 머리글 4개 없음
+    assert len(broken["warnings"]) == 5  # 머리글 4개·ISA 행 없음
+    assert broken["isa"] == {"qty": None, "avg_price": None}
     assert hd.settings(cfg)["tab"] == "QQQM 모으기"
 
 
@@ -157,13 +162,13 @@ def test_personal_letter_new_order_no_books_no_stock_folds(cfg, tmp_path):
     s = _summary(cfg)
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
     body = html[html.index("<header>"):html.index("<script>")]
-    keys = ("<header>", "점검: 기준일", "오늘 할 일: 없음 — QQQM 적립만 그대로", "[1 내 돈 · QQQM]", "[2 시장 한눈에]",
+    keys = ("<header>", "점검: 기준일", "오늘 할 일: 없음 — QQQM 적립만 그대로", "[1 내 돈 · QQQM · ISA]", "[2 시장 한눈에]",
             "[3 연구 소식]", "「변동성 맞춤 레버리지 전략」", '<details class="fold"')
     i = [body.index(x) for x in keys]
     assert i == sorted(i)
     check = re.search(r"점검: [^<]+", body).group(0)
     assert "장부" not in check and check.endswith("데이터 지연 없음")
-    assert "QQQM 모으기 탭에 보유 주식 수·평균단가를 넣으면 표시됩니다" in body
+    assert "QQQM: 노란 칸을 채우면 표시됩니다" in body and "ISA: 노란 칸을 채우면 표시됩니다" in body
     for x in ("가상 장부", "[3 가상", "QQQ 대비 누적", "전략 표로 보기", "강한 종목", "돈이 몰리는", "월간 성적표", "상승장 RSI"):
         assert x not in body, x
     assert _folds(body) == ["▶ 시장 지표 그래프 (지금의 시장 온도 전체)", "▶ 지표 설명 (읽는 법·용어)", "▶ 보고서 정보"]
@@ -311,3 +316,98 @@ def test_attach_v3_sets_savings_flag(cfg):
     assert s["savings_day"] is True
     daily._attach_letter_v3(s, cfg, None, now_fn=lambda: datetime(2026, 10, 27, 8, 7, tzinfo=KST))
     assert s["savings_day"] is False
+
+
+# ── 「내 돈」 ISA 줄·합계 (2026-10-23) ─────────────────────────────────────────────
+
+
+def _with_isa(qty="20", avg="150,000"):
+    sheet = copy.deepcopy(SHEET)
+    sheet[3][1], sheet[3][2] = qty, avg
+    return sheet
+
+
+def _wallet(cfg, sheet, *, isa_fn=None, qqqm=300.0):
+    s = {"as_of": pd.Timestamp("2026-10-22"), "fx_rate": 1400.0}
+    close = pd.Series([qqqm], index=[pd.Timestamp("2026-10-22")])
+    daily._attach_letter_v3(s, cfg, hd.parse_holdings(sheet, cfg), qqqm_fn=lambda: close,
+                            now_fn=lambda: datetime(2026, 10, 23, 8, 7, tzinfo=KST),
+                            isa_fn=isa_fn or (lambda: (pd.Timestamp("2026-10-22"), 170_000.0)))
+    return s, letter.wallet_lines(s, cfg)
+
+
+def test_isa_config_limits(cfg):
+    assert letter.isa_tax_free_limit(cfg) == ("서민형", 4_000_000.0)
+    assert letter.isa_tax_free_limit({**cfg, "isa_type": "일반형"}) == ("일반형", 2_000_000.0)
+
+
+def test_wallet_isa_only(cfg):
+    sheet = _with_isa()
+    sheet[2][1] = sheet[2][2] = ""  # QQQM 빈칸
+    s, lines = _wallet(cfg, sheet)
+    # ISA 20주 × 170,000 = 3,400,000 / 원금 20 × 150,000 = 3,000,000 / 손익 +400,000 → 비과세 남은 3,600,000
+    assert lines == ["QQQM: 노란 칸을 채우면 표시됩니다",
+                     "ISA 20주 · 평가 3,400,000원 · 손익 +400,000원(+13.3%) · 비과세 남은 금액 3,600,000원(서민형 400만 원)",
+                     "합계 평가 3,400,000원 · 손익 +400,000원(+13.3%)"]
+
+
+def test_wallet_qqqm_only(cfg):
+    s, lines = _wallet(cfg, SHEET, isa_fn=lambda: 1 / 0)  # ISA 빈칸이면 가격도 안 부른다
+    assert s["wallet"]["isa_state"] == "empty"
+    assert lines[0].startswith("QQQM 10주 · 평가 4,200,000원 · 손익 ") and lines[0].endswith("250만 원 공제 남은 금액 2,000,000원")
+    assert lines[1] == "ISA: 노란 칸을 채우면 표시됩니다"
+    cost = 10 * 250.5 * 1350
+    assert lines[2] == f"합계 평가 4,200,000원 · 손익 {4_200_000 - cost:+,.0f}원({(4_200_000 / cost - 1) * 100:+.1f}%)"
+
+
+def test_wallet_both(cfg):
+    s, lines = _wallet(cfg, _with_isa())
+    cost = 10 * 250.5 * 1350 + 3_000_000
+    assert len(lines) == 3 and lines[0].startswith("QQQM 10주") and lines[1].startswith("ISA 20주")
+    assert lines[2] == f"합계 평가 7,600,000원 · 손익 {7_600_000 - cost:+,.0f}원({(7_600_000 / cost - 1) * 100:+.1f}%)"
+    # 손익이 한도보다 크면 비과세 남은 금액은 0
+    big = letter.isa_money({"qty": 100.0, "avg_price": 100_000.0}, 150_000.0, 4_000_000.0)
+    assert big["tax_free_left_krw"] == 0.0
+
+
+def test_wallet_both_blank(cfg, tmp_path):
+    sheet = copy.deepcopy(SHEET)
+    sheet[2][1] = sheet[2][2] = ""
+    s, lines = _wallet(cfg, sheet, isa_fn=lambda: 1 / 0)
+    assert lines == ["QQQM: 노란 칸을 채우면 표시됩니다", "ISA: 노란 칸을 채우면 표시됩니다", "합계: 노란 칸을 채우면 표시됩니다"]
+    assert letter.wallet_lines({"my_money": None}, cfg) == lines  # 시트를 못 읽었을 때(wallet 없음)도 같은 안내
+
+
+def test_wallet_isa_price_failure(cfg):
+    def boom():
+        raise ConnectionError("x")
+
+    s, lines = _wallet(cfg, _with_isa(), isa_fn=boom)
+    assert s["wallet"]["isa_state"] == "no_price" and lines[1] == "ISA: 가격 못 받음"
+    assert lines[0].startswith("QQQM 10주") and lines[2].startswith("합계 평가 4,200,000원")
+    assert lines[2].endswith("(ISA 가격 못 받아 빼고)")
+    s, lines = _wallet(cfg, _with_isa(), qqqm=float("nan"))  # QQQM 종가도 없으면 둘 다 가격 못 받음
+    assert lines[0] == "QQQM: 가격 못 받음" and lines[2].endswith("(QQQM 가격 못 받아 빼고)")
+
+
+def test_wallet_personal_only(cfg, tmp_path):
+    s = _summary(cfg)
+    s2, _ = _wallet(cfg, _with_isa())
+    s["my_money"], s["wallet"] = s2["my_money"], s2["wallet"]
+    personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
+    assert "[1 내 돈 · QQQM · ISA]" in personal and "비과세 남은 금액 3,600,000원" in personal
+    group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
+    group = group[group.index("<header>"):group.index("<script>")]
+    for x in ("내 돈", "ISA", "3,400,000", "비과세"):
+        assert x not in group, x
+
+
+def test_fetch_isa_close_drops_unfinished_bar():
+    idx = pd.DatetimeIndex(["2026-10-21", "2026-10-22", "2026-10-23"]).tz_localize("Asia/Seoul")
+    raw = pd.DataFrame({"Close": [169_000.0, 170_375.0, 171_000.0]}, index=idx)
+    morning = datetime(2026, 10, 23, 8, 7, tzinfo=KST)
+    assert hd.fetch_isa_close(None, morning, history_fn=lambda: raw) == (pd.Timestamp("2026-10-22"), 170_375.0)
+    evening = datetime(2026, 10, 23, 16, 0, tzinfo=KST)
+    assert hd.fetch_isa_close(None, evening, history_fn=lambda: raw)[1] == 171_000.0
+    with pytest.raises(ValueError):
+        hd.fetch_isa_close(None, morning, history_fn=lambda: pd.DataFrame({"Close": []}))

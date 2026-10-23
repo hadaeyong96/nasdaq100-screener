@@ -325,7 +325,7 @@ def _nonzero(cell: str) -> bool:
 # ── 아침 편지 v2.1 (2026-10-21) — 점검·내 돈·가상 장부 3줄 묶음·연구 소식 ─────────────────────────
 
 WEEKDAY_KR = "월화수목금토일"
-MONEY_HEADER = "[1 내 돈 · QQQM]"
+MONEY_HEADER = "[1 내 돈 · QQQM · ISA]"  # 2026-10-23 ISA 줄 추가
 GLANCE_HEADER_V2 = "[2 시장 한눈에]"
 BOOKS_HEADER_V2 = "[3 가상 장부] 가상 1억 · {start} 시작 · QQQ 대비 누적 · 매수 추천 아님"
 RESEARCH_HEADER = "[4 연구 소식]"
@@ -538,6 +538,70 @@ def holdings_position(h: dict | None, fx: float | None, year: int):
         return th.Position()
     return th.Position(qty=float(h["qty"]), cost_krw=h["qty"] * h["avg_price"] * (h.get("avg_fx") or fx),
                        realized_by_year={int(year): float(h.get("realized_krw") or 0.0)}, rows=1)
+
+
+# ── 「내 돈」 ISA 줄·합계 (2026-10-23) ─────────────────────────────────────────────────────
+
+WALLET_EMPTY = "{name}: 노란 칸을 채우면 표시됩니다"
+WALLET_NO_PRICE = "{name}: 가격 못 받음"
+
+
+def isa_tax_free_limit(cfg: dict) -> tuple[str, float]:
+    """config isa_type·isa_tax_free_krw → (유형 이름, 비과세 한도 원). 표에 없는 유형이면 KeyError."""
+    kind = str(cfg.get("isa_type") or "일반형")
+    return kind, float((cfg.get("isa_tax_free_krw") or {})[kind])
+
+
+def isa_money(isa: dict | None, close_krw: float | None, limit_krw: float) -> dict | None:
+    """ISA 줄 값({qty, avg_price(원)}) + 종가(원) → 내 돈 숫자. 보유 수·평균단가·종가가 없으면 None.
+
+    비과세 남은 금액 = max(0, 한도 − ISA 손익)."""
+    if not isa or not isa.get("qty") or isa["qty"] <= 0 or not isa.get("avg_price") or not close_krw:
+        return None
+    cost = isa["qty"] * isa["avg_price"]
+    value = isa["qty"] * close_krw
+    return {"qty": isa["qty"], "close_krw": close_krw, "value_krw": value, "cost_krw": cost, "pnl_krw": value - cost,
+            "pnl_pct": (value / cost - 1) * 100 if cost > 0 else None, "tax_free_left_krw": max(0.0, limit_krw - (value - cost))}
+
+
+def _pct(m: dict) -> str:
+    return f"({m['pnl_pct']:+.1f}%)" if m.get("pnl_pct") is not None else ""
+
+
+def wallet_lines(summary: dict, cfg: dict) -> list[str]:
+    """[1 내 돈 · QQQM · ISA] 줄(개인판만): QQQM 줄 · ISA 줄 · 합계 줄.
+
+    summary["my_money"](QQQM, holdings_money), summary["wallet"] = {qqqm_state, isa, isa_state}
+    (state: ok | empty(노란 칸 빈칸) | no_price(가격 못 받음)). wallet이 없으면 QQQM은 my_money 유무로, ISA는 빈칸으로 본다.
+    합계는 ok인 줄만 더하고, 가격 못 받은 줄은 빼고 더했다고 적는다. ok인 줄이 없으면 합계도 안내 문구."""
+    w = summary.get("wallet") or {}
+    q = summary.get("my_money")
+    q_state = w.get("qqqm_state") or ("ok" if q else "empty")
+    isa, i_state = w.get("isa"), w.get("isa_state") or "empty"
+    lines, ok, missed = [], [], []
+    if q_state == "ok" and q:
+        lines.append(f"QQQM {q['qty']:g}주 · 평가 {q['value_krw']:,.0f}원 · 손익 {q['pnl_krw']:+,.0f}원{_pct(q)}"
+                     f" · 250만 원 공제 남은 금액 {q['remaining_krw']:,.0f}원")
+        ok.append(q)
+    else:
+        lines.append((WALLET_NO_PRICE if q_state == "no_price" else WALLET_EMPTY).format(name="QQQM"))
+        missed += ["QQQM"] if q_state == "no_price" else []
+    if i_state == "ok" and isa:
+        kind, limit = isa_tax_free_limit(cfg)
+        lines.append(f"ISA {isa['qty']:g}주 · 평가 {isa['value_krw']:,.0f}원 · 손익 {isa['pnl_krw']:+,.0f}원{_pct(isa)}"
+                     f" · 비과세 남은 금액 {isa['tax_free_left_krw']:,.0f}원({kind} {limit / 10_000:,.0f}만 원)")
+        ok.append(isa)
+    else:
+        lines.append((WALLET_NO_PRICE if i_state == "no_price" else WALLET_EMPTY).format(name="ISA"))
+        missed += ["ISA"] if i_state == "no_price" else []
+    if not ok:
+        lines.append(WALLET_EMPTY.format(name="합계"))
+        return lines
+    value, cost = sum(m["value_krw"] for m in ok), sum(m["cost_krw"] for m in ok)
+    pct = f"({(value / cost - 1) * 100:+.1f}%)" if cost > 0 else ""
+    note = f" ({'·'.join(missed)} 가격 못 받아 빼고)" if missed else ""
+    lines.append(f"합계 평가 {value:,.0f}원 · 손익 {value - cost:+,.0f}원{pct}{note}")
+    return lines
 
 
 RESEARCH_STAGES = ("사전 등록", "탐색 중", "판정")

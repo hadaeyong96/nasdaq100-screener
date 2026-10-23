@@ -160,7 +160,7 @@ def test_personal_order_and_screening_switch(cfg, tmp_path):
     s = _summary(cfg)
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
     body = html[html.index("<header>"):]
-    i = [body.index(x) for x in ("<header>", "오늘 할 일:", "[1 내 돈 · QQQM]", "[2 시장 한눈에]", "[3 가상 장부]",
+    i = [body.index(x) for x in ("<header>", "오늘 할 일:", "[1 내 돈 · QQQM · ISA]", "[2 시장 한눈에]", "[3 가상 장부]",
                                  '<details class="fold"')]
     assert i == sorted(i)
     assert _folds(body) == ["▶ 시장 지표 그래프 (지금의 시장 온도 전체)", "▶ 월간 성적표", "▶ 지표 설명 (읽는 법·용어)", "▶ 보고서 정보"]
