@@ -329,6 +329,8 @@ def letter_lines(rows: list[dict]) -> dict:
     failed = sorted({t for r in rows for t in r["failed"]})
     out["check_personal"] = f"실적 확인 실패({', '.join(failed)})" if failed else None
     out["check_group"] = f"실적 확인 실패({len(failed)}종목)" if failed else None
+    last = rows[-1]  # 표시 전용(2026-10-24): 월요일 「필터 없는 판(v3)보다 x%p」 — 이미 기록하는 v3 값을 읽기만
+    out["filter_gap_pp"] = (last["v31"] - last["v3"]) / 1_000_000 if last.get("v3") is not None else None
     return out
 
 
