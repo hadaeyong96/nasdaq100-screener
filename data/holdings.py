@@ -4,7 +4,7 @@
 (지금 배치: B3·C3·D3·K3). 이름·탭은 config holdings에서 읽는다. 빈칸은 None. 숫자에 쉼표·원·$가 섞여 있어도 읽는다.
 머리글 이름은 문자열 하나 또는 후보 목록(예전 이름 「평균단가($)」도 읽음, 2026-10-23).
 
-ISA 줄(2026-10-23): A열이 isa_row_name("TIGER 미국나스닥100 (ISA·원화)")인 행에서 보유 주식 수·평균단가(원)를 같은 머리글로 읽는다
+ISA 줄(2026-10-23): A열이 isa_row_name("TIGER 미국나스닥100")인 행에서 보유 주식 수·평균단가(원)를 같은 머리글로 읽는다
 (지금 B4·C4). 현재가는 fetch_isa_close(yfinance 133690.KS 종가, 원화).
 """
 
@@ -15,7 +15,7 @@ import re
 DEFAULTS = {"tab": "QQQM 모으기", "data_row": 3,
             "headers": {"qty": "보유 주식 수", "avg_price": ["평균단가($/원)", "평균단가($)"], "avg_fx": "평균 환율(원/$)",
                         "realized_krw": "올해 실현 이익(원)"},
-            "isa_row_name": "TIGER 미국나스닥100 (ISA·원화)", "isa_ticker": "133690.KS"}
+            "isa_row_name": "TIGER 미국나스닥100", "isa_ticker": "133690.KS"}
 ISA_KEYS = ("qty", "avg_price")  # ISA 줄에서 읽는 칸(평균단가는 원화)
 
 
