@@ -325,7 +325,12 @@ def letter_lines(rows: list[dict]) -> dict:
     """이번 실행에서 진행한 날들의 기록 → 편지 줄 {personal: [...], group: [...], check_personal, check_group}."""
     if not rows:
         return {"personal": [], "group": [], "check_personal": None, "check_group": None}
-    out = {"personal": _plain_lines(rows, True), "group": _plain_lines(rows, False)}
+    from notify import letter_plain as lp
+
+    ph = lp.load_phrases()
+    day = rows[-1].get("date")  # 장부 한 줄(2026-10-25): "웅덩이 v3.1: QQQ와 같습니다. QQQ만 들고 있습니다."
+    out = {"personal": [lp.ledger_line(ph, "v31", _plain_lines(rows, True, ph), day)],
+           "group": [lp.ledger_line(ph, "v31", _plain_lines(rows, False, ph), day)]}
     failed = sorted({t for r in rows for t in r["failed"]})
     out["check_personal"] = f"실적 확인 실패({', '.join(failed)})" if failed else None
     out["check_group"] = f"실적 확인 실패({len(failed)}종목)" if failed else None

@@ -49,11 +49,12 @@ def pick(entry, day) -> str:
 
 
 def josa(word: str, pair: tuple[str, str]) -> str:
-    """word + 조사. pair = (받침 있을 때, 없을 때) 예: ("을", "를"), ("이", "가"), ("은", "는").
+    """word + 조사. pair = (받침 있을 때, 없을 때) 예: ("을", "를"), ("이", "가"), ("은", "는"), ("과", "와").
     영문 티커는 마지막 글자 읽는 소리로(L 엘·M 엠·N 엔·R 알만 받침), 한글은 받침 유무, 숫자·기타는 받침 없음으로 본다."""
     if not word:
         return word
-    ch = word[-1]
+    base = re.sub(r"\s*\([^()]*\)$", "", word) or word  # 끝 괄호 설명은 읽지 않는다: "지수(VIX)" → 지수
+    ch = base[-1]
     if "가" <= ch <= "힣":
         has = (ord(ch) - 0xAC00) % 28 != 0
     else:
@@ -65,12 +66,12 @@ _PAIRS = {"을": ("을", "를"), "를": ("을", "를"), "이": ("이", "가"), "
 
 
 def fill(template: str, **vals) -> str:
-    """"{값}" 채우기. {종목}·{이름} 바로 뒤 조사(을/를·이/가·은/는)는 값의 읽는 소리에 맞춘다."""
+    """"{값}" 채우기. {종목}·{이름}·{항목} 바로 뒤 조사(을/를·이/가·은/는)는 값의 읽는 소리에 맞춘다."""
     def fix(m):
         key, j = m.group(1), m.group(2)
         return josa(str(vals[key]), _PAIRS[j]) if key in vals else m.group(0)
 
-    out = re.sub(r"\{(종목|이름)\}(을|를|이|가|은|는)(?![가-힣])", fix, template)
+    out = re.sub(r"\{(종목|이름|항목)\}(을|를|이|가|은|는)(?![가-힣])", fix, template)
     for k, v in vals.items():
         out = out.replace("{" + k + "}", str(v))
     return out
@@ -174,7 +175,7 @@ def headline(summary: dict, cfg: dict, ph: dict, edition: str) -> tuple[str | No
         return None, None
     near = m["gap"] is not None and abs(m["gap"]) < cross
     if m["regime"] == regimes.CRASH:
-        return phrase(ph, "headline.crash", day, x=f"{abs(m['drawdown']):.1f}"), "crash"
+        return phrase(ph, "headline.crash", day, dd=f"{abs(m['drawdown']):.1f}"), "crash"
     if m["regime"] == regimes.DOWN:
         if near:
             return phrase(ph, "headline.crossroads", day, z=f"{abs(m['gap']):.1f}"), "crossroads"
@@ -243,11 +244,29 @@ def market_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
             if v <= float(b["max"]):
                 lines.append(fill(pick(b["text"], day), v=f"{v:.0f}"))
                 break
-    warn = (ph.get("market") or {}).get("warn") or {}
-    for r in summary.get("macro_rows") or []:
-        if (r.get("badge") or {}).get("label") == "위험" and r.get("slug") in warn:
-            lines.append(pick(warn[r["slug"]], day))
+    w = warn_line(summary, ph, day)
+    if w:
+        lines.append(w)
     return lines
+
+
+def warn_line(summary: dict, ph: dict, day=None) -> str | None:
+    """주의 — 위험 단계 지표를 하루 한 줄로: "높은 10년 금리와 기준금리 인상은 조심해서 봅니다." 없으면 None.
+    순서는 market.warn.items 순서, 셋 이상이면 "A, B와 C"."""
+    warn = (ph.get("market") or {}).get("warn") or {}
+    items = warn.get("items") or {}
+    risky = {r.get("slug") for r in summary.get("macro_rows") or [] if (r.get("badge") or {}).get("label") == "위험"}
+    names = [pick(v, day) for k, v in items.items() if k in risky]
+    if not names:
+        return None
+    joined = names[0] if len(names) == 1 else ", ".join(names[:-2] + [josa(names[-2], ("과", "와"))]) + " " + names[-1]
+    return fill(pick(warn.get("line") or "{항목}은 조심해서 봅니다.", day), 항목=joined)
+
+
+def ledger_line(ph: dict, key: str, parts: list[str], day=None) -> str:
+    """■ 가상 실험 장부 한 줄: "{이름}: 문장 문장 …" (이름 = lab.names.<key>)."""
+    return fill(pick((ph.get("lab") or {}).get("line") or "{이름}: {내용}", day),
+                이름=phrase(ph, f"lab.names.{key}", day), 내용=" ".join(p for p in parts if p))
 
 
 # ── 섹션 ─────────────────────────────────────────────────────────────────────

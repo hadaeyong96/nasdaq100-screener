@@ -53,7 +53,7 @@ def test_phrase_rotation_differs_from_previous_day():
 
 def test_section_order_and_format():
     d = lp.build(_summary(my_money={"value_krw": 1e7, "pnl_pct": 5.0, "remaining_krw": 2.5e6},
-                          puddle_v31={"personal": ["웅덩이 실험이 QQQ와 같습니다."], "group": ["웅덩이 실험이 QQQ와 같습니다."]}),
+                          puddle_v31={"personal": ["웅덩이 v3.1: QQQ와 같습니다."], "group": ["웅덩이 v3.1: QQQ와 같습니다."]}),
                  CFG, lp.PERSONAL)
     heads = [s["header"] for s in d["sections"]]
     assert heads == ["■ 오늘의 핵심", "■ 국제정세", "■ 미국 증시 마감", "■ 오늘 할 일", "■ 내 돈", "■ 가상 실험 (실제 돈 아님)"]
