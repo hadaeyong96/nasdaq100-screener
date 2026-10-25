@@ -31,6 +31,14 @@ class Params(pv.Params):
 # ── 지표 ──────────────────────────────────────────────────────────────────────
 
 
+def macd_cross(s: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """한 종목 종가(NaN 뺀 것) → (MACD 선, 시그널 선, 골든크로스 날 1.0·아니면 0.0, 첫날 NaN). 장부·후보 차트가 같이 쓴다."""
+    m, sig = macd_lines(s)
+    cross = ((m.shift(1) <= sig.shift(1)) & (m > sig)).astype(float)
+    cross.iloc[:1] = np.nan
+    return m, sig, cross
+
+
 def rebound_indicators(close: pd.DataFrame, p: Params = Params()) -> dict[str, pd.DataFrame]:
     """종가(열 = 티커) → rsi·rsi_prev(전날 RSI)·gc3(그날 포함 최근 3거래일 안 골든크로스면 1.0, 아니면 0.0). 그날까지의 값만.
 
@@ -44,9 +52,7 @@ def rebound_indicators(close: pd.DataFrame, p: Params = Params()) -> dict[str, p
             continue
         r = rsi_wilder(s, p.rsi_period)
         r.iloc[: p.rsi_period] = np.nan  # 처음 14일은 평활이 덜 돼 쓰지 않는다
-        m, sig = macd_lines(s)
-        cross = ((m.shift(1) <= sig.shift(1)) & (m > sig)).astype(float)
-        cross.iloc[:1] = np.nan
+        _, _, cross = macd_cross(s)
         rsi[t] = r.reindex(close.index)
         gc[t] = cross.rolling(p.gc_window, min_periods=p.gc_window).max().reindex(close.index)
     rsi_df = pd.DataFrame(rsi, index=close.index)

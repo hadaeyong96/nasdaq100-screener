@@ -181,6 +181,7 @@ details.fold>summary{cursor:pointer;padding:10px 14px;font-weight:700;font-size:
 details.fold>summary::-webkit-details-marker{display:none}
 details.fold[open]>summary{border-bottom:1px solid var(--line)}
 details.fold>.fold-body{padding:10px 12px}
+.curve-chart{margin:0 0 12px}.curve-chart img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
 details.exp{border-top:1px solid var(--grid);margin:4px 0}
 details.exp>summary{cursor:pointer;padding:8px 2px;font-weight:700;font-size:14px;color:var(--ink)}
 details.exp>summary::marker{color:var(--mute)}
@@ -984,9 +985,24 @@ details.exp[open]>summary{color:var(--info)}
 
 
 
+{% if candidate_chart_srcs and not is_group %}
+<details class="fold" id="fold-candidate-charts">
+<summary>▶ 웅덩이 후보 차트</summary>
+<div class="fold-body">
+{% for c in candidate_chart_srcs %}
+<figure class="curve-chart cand-chart"><img src="{{ c.src }}" alt="{{ c.title }}" width="1200" height="900"></figure>
+{% endfor %}
+<div class="mini">웅덩이 반등 확인 장부(가상)의 대기·매수 종목입니다. 12개월 시험 중인 신호라 실제 매수 권유가 아닙니다.</div>
+</div>
+</details>
+{% endif %}
+
 <details class="fold" id="fold-fred">
 <summary>▶ 그래프로 보기</summary>
 <div class="fold-body">
+{% if curve_chart_src %}
+<figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>
+{% endif %}
 {% if macro_rows %}
 <section class="macro" aria-label="시장 온도">
   <div class="mhead"><b>시장 온도</b><span>CNN 공포·탐욕 지수 + FRED 장기 지표 · 기준일 {{ macro_as_of_str }} · <i class="dot dot-ok" aria-hidden="true"></i>안정 · <i class="dot dot-warn" aria-hidden="true"></i>주의 · <i class="dot dot-bad" aria-hidden="true"></i>위험, ★ = 오늘 위치 · <b>참고용이며 매매 규칙에는 쓰지 않습니다</b></span><a href="#macro-explain">지표 설명 ↓</a></div>
