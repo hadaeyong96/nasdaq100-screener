@@ -2301,6 +2301,8 @@ def main() -> None:
             _attach_letter_v3(summary, cfg, holdings)
             _attach_puddle_v31(summary, cfg)
             _attach_puddle_rebound(summary, cfg)
+            _attach_curve_chart(summary, cfg)
+            _attach_candidate_charts(summary)
             _attach_news(summary, cfg)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
         if (cfg.get("report") or {}).get("monthly_scorecard", True):
@@ -2517,10 +2519,48 @@ def _attach_puddle_rebound(summary: dict, cfg: dict, run_fn=None) -> None:
     if not res:
         return
     summary["puddle_rebound"] = dict(res.get("letter") or {})
+    summary["_rebound_candidates"] = res.get("candidates") or []  # 후보 차트 자료(개인판 HTML 전용, 2026-10-26)
     if res.get("status") == "error":
         summary["puddle_rebound"]["error"] = True
         if summary.get("letter_check") is not None:
             summary["letter_check"].setdefault("notes", []).append("웅덩이 반등 확인 장부 오류")
+
+
+def _attach_curve_chart(summary: dict, cfg: dict, out_dir: Path | None = None, db_path=None) -> None:
+    """수익곡선 그래프(2026-10-26, notify/curve_chart) — 가상 장부 DB 일별 기록을 읽어 개인판·단체방판 PNG를 그린다(그리기만).
+    summary["curve_chart"] = {personal, group, days} 또는 실패 시 {error} — 편지는 그대로 나가고 「자료 문제」에 한 줄."""
+    from notify import curve_chart
+    from store import virtual_books as vbstore
+
+    if summary.get("as_of") is None:
+        return
+    ch = cfg.get("chart") or {}
+    start = (cfg.get("puddle_v31") or {}).get("start_date") or None
+    try:
+        v31_rows, rb_rows = curve_chart.read_rows(Path(db_path or vbstore.VBOOKS_DB_PATH))
+        as_of = summary["as_of"]
+        out = curve_chart.build(v31_rows, rb_rows, Path(out_dir or OUTPUT_DIR) / "chart", start=start, as_of=as_of,
+                                min_days=int(ch.get("min_days", 5)), stem=f"curve_{pd.Timestamp(as_of).date()}")
+        summary["curve_chart"] = {"personal": str(out["personal"]["path"]), "group": str(out["group"]["path"]), "days": out["days"]}
+    except Exception as exc:  # noqa: BLE001 — 그래프만 빠진다
+        print(f"[daily] 수익곡선 그래프를 만들지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
+        summary["curve_chart"] = {"error": type(exc).__name__}
+
+
+def _attach_candidate_charts(summary: dict, out_dir: Path | None = None) -> None:
+    """웅덩이 후보 종목 차트(2026-10-26, notify/candidate_chart) — 반등 확인 대기·매수 종목 최대 4장, 개인판 HTML 「▶ 웅덩이 후보 차트」에만.
+    summary["candidate_charts"] = [{path, title, tk}]. 실패하면 그 칸만 빠진다."""
+    from notify import candidate_chart
+
+    items = summary.pop("_rebound_candidates", None) or []
+    summary["candidate_charts"] = []
+    if not items:
+        return
+    try:
+        stem = f"candidate_{pd.Timestamp(summary['as_of']).date()}"
+        summary["candidate_charts"] = candidate_chart.render_all(items, Path(out_dir or OUTPUT_DIR) / "chart", stem=stem)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] 웅덩이 후보 차트를 만들지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
 
 
 def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, days_fn=None, holdings=None) -> None:

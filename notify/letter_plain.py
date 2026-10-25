@@ -428,6 +428,8 @@ def problems(summary: dict, ph: dict, edition: str) -> list[str]:
         out.append(phrase(ph, "problem.puddle_error", day))
     if rb.get("error"):
         out.append(phrase(ph, "problem.rebound_error", day))
+    if (summary.get("curve_chart") or {}).get("error"):
+        out.append(phrase(ph, "problem.chart_error", day))
     for note in info.get("notes") or []:
         if note.startswith("실적 확인 실패") or note in ("웅덩이 v3.1 장부 오류", "웅덩이 반등 확인 장부 오류"):
             continue

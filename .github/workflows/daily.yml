@@ -33,6 +33,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # 수익곡선 그래프(notify/curve_chart.py)의 한글 글꼴 — 우분투 무료 패키지 나눔글꼴. 실패해도 진행(그래프만 글씨가 깨짐).
+      - name: Install Korean font
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-nanum
+          rm -rf ~/.cache/matplotlib
+
       # 러너는 실행마다 새 가상머신이라 로컬 DB가 안 남는다 -> 실행 전 드라이브에서
       # 내려받는다. 해당 GOOGLE_DRIVE_STATE_FILE_ID_* 시크릿이 없으면(설정 전)
       # scripts/drive_sync.py가 조용히 건너뛴다 - 그러면 매 실행이 빈 DB로 시작한다.

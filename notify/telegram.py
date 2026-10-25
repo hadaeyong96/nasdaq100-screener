@@ -50,6 +50,7 @@ load_dotenv(ENV_PATH, override=True)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_LEN = 4096
+PHOTO_CAPTION = "가상 실험 성적 그래프입니다."  # 월요일 수익곡선 그림 설명(notify/curve_chart)
 MAX_CAPTION_LEN = 1024  # 텔레그램 sendDocument caption 한도
 MAX_RETRIES = 3
 
@@ -162,6 +163,27 @@ def _send_document(
             )
 
     return _request_with_retry(_do, "sendDocument")
+
+
+def _photo_post(url: str, chat_id: str, path: Path, caption: str | None):
+    with open(path, "rb") as f:
+        return requests.post(url, data=_document_data(chat_id, caption), files={"photo": (path.name, f)}, timeout=60)
+
+
+def _send_photo(token: str, chat_id: str, path: Path, caption: str | None = None) -> bool:
+    url = TELEGRAM_API.format(token=token, method="sendPhoto")
+    return _request_with_retry(lambda: _photo_post(url, chat_id, path, caption), "sendPhoto")
+
+
+def chart_photo(summary: dict, cfg: dict, edition: str = "personal") -> Path | None:
+    """월요일(chart.weekday, 한국 날짜) 편지에 넣을 수익곡선 그림(notify/curve_chart) 경로. 그날이 아니거나 그림이 없으면 None."""
+    from notify import curve_chart
+
+    ch = summary.get("curve_chart") or {}
+    p = ch.get(edition)
+    if not p or not Path(p).exists() or not curve_chart.is_chart_day(summary.get("letter_today_kst"), cfg):
+        return None
+    return Path(p)
 
 
 def _extract_migrate_id(resp) -> int | None:
@@ -348,6 +370,9 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
             msg = letter_message(summary, cfg)  # 아침 편지 v3(2026-10-24): 본문 문자 메시지 먼저, 보고서 파일은 바로 뒤
             if msg:
                 ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(msg))
+            photo = chart_photo(summary, cfg)  # 2026-10-26: 월요일만 본문 → 그래프 그림 → 보고서 파일
+            if photo and not _send_photo(token, chat_id, photo, PHOTO_CAPTION):
+                _log("[telegram] 그래프 그림을 보내지 못했습니다(편지·파일은 그대로 보냅니다).")
             ok = _send_document(
                 token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
                 caption=_limit_caption(build_report_caption(summary, cfg)),
@@ -499,6 +524,12 @@ def send_group_briefing(
                 ok, migrate_id, error = ok and c_ok, migrate_id or c_migrate, error or c_err
                 if not c_ok:
                     break
+            photo = chart_photo(summary, cfg, edition="group")  # 2026-10-26: 월요일만, 종목명 없는 그림
+            if photo and migrate_id is None:
+                url = TELEGRAM_API.format(token=token, method="sendPhoto")
+                p_ok, _, p_err = _post_checked(lambda: _photo_post(url, group_chat_id, photo, PHOTO_CAPTION), "sendPhoto")
+                if not p_ok:
+                    _log(f"[telegram] 단체방 그래프 그림을 보내지 못했습니다(편지·파일은 그대로): {p_err}")
             if migrate_id is None:  # 슈퍼그룹 전환이면 파일도 실패한다 — 호출부가 새 id로 다시 보낸다
                 d_ok, d_migrate, d_err = _send_document_checked(
                     token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),

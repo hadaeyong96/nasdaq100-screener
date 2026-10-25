@@ -218,6 +218,52 @@ def sheet_row(r: dict) -> list:
             tr.replace("오늘 가상 매매: ", "") if tr else "", waiting, round(r["realized_year"])]
 
 
+# ── 후보 종목 차트 자료 (2026-10-26, 개인판 HTML 전용) ────────────────────────
+
+
+def chart_targets(rows: list[dict], most: int = 4) -> list[dict]:
+    """마지막 날 「반등 확인 대기」·「매수」 종목 → [{tk, tranche, stage, day, rsi}] 대기일 짧은 순 최대 most개.
+    매수 종목의 대기일 = 전날 대기 줄의 day + 1(전날 기록이 없으면 1)."""
+    if not rows:
+        return []
+    last, prev = rows[-1], (rows[-2] if len(rows) > 1 else {})
+    before = {(w["tk"], w["tranche"]): w["day"] for w in prev.get("waiting") or []}
+    out = [{"tk": w["tk"], "tranche": w["tranche"], "stage": "wait", "day": w["day"], "rsi": w.get("rsi")}
+           for w in last.get("waiting") or []]
+    out += [{"tk": b["tk"], "tranche": b["tranche"], "stage": "buy", "day": before.get((b["tk"], b["tranche"]), 0) + 1,
+             "rsi": b.get("rsi")} for b in last.get("buys") or []]
+    return sorted(out, key=lambda t: (t["day"], t["tk"]))[:most]
+
+
+def candidate_data(world: World, as_of, rows: list[dict], p: pr.Params, lookback: int = 120, most: int = 4) -> list[dict]:
+    """후보 차트용 자료(그리기만): 종목마다 최근 lookback거래일 종가·60·120·200일선·RSI(장부 World 지표 그대로)·
+    MACD·시그널·골든크로스(pr.macd_cross — 장부와 같은 함수)·RSI 40 재돌파 날(pr.rsi_cross_up)·웅덩이 칠할 구간·이 장부 매매."""
+    as_of = pd.Timestamp(as_of)
+    i = world.pos(as_of)
+    win = world.cal[max(0, i - lookback + 1): i + 1]
+    out = []
+    for t in chart_targets(rows, most):
+        tk = t["tk"]
+        if tk not in world.close:
+            continue
+        s = world.close[tk].dropna()
+        m, sig, cross = pr.macd_cross(s[s.index <= as_of])
+        rsi, rsi_prev = world.ind["rsi"][tk].reindex(win), world.ind["rsi_prev"][tk].reindex(win)
+        recross = [d for d in win if pr.rsi_cross_up(rsi_prev.get(d), rsi.get(d), p.rsi_level)]
+        trades = [{"date": pd.Timestamp(f.get("date") or r["date"]), "kind": "buy2" if f.get("tranche") == 2 else "buy1"}
+                  for r in rows for f in r.get("fills") or [] if f["tk"] == tk]
+        trades += [{"date": pd.Timestamp(x.get("exit_date") or r["date"]), "kind": "sell"}
+                   for r in rows for x in r.get("sells") or [] if x["tk"] == tk]
+        out.append({**t, "as_of": as_of, "level": p.rsi_level,
+                    "close": world.close[tk].reindex(win), "sma60": world.ind["sma60"][tk].reindex(win),
+                    "sma120": world.ind["sma120"][tk].reindex(win), "sma200": world.ind["sma200"][tk].reindex(win),
+                    "rsi_line": rsi, "macd": m.reindex(win), "signal": sig.reindex(win),
+                    "golden": [d for d in win if cross.get(d) == 1.0], "recross": recross,
+                    "puddle": (world.cal[max(0, i - t["day"] + 1)], as_of),
+                    "trades": [x for x in trades if win[0] <= x["date"] <= win[-1]]})
+    return out
+
+
 # ── 실행 ─────────────────────────────────────────────────────────────────────
 
 
@@ -268,6 +314,7 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
                 _write_sheet(result, pc, sheets_client, sheet_write, fixed)
             hist = _merge(daily_history(conn), fixed)
             result["letter"] = letter_lines(hist[-1:]) if hist else letter_lines([])
+            result["candidates"] = _safe_candidates(world, as_of, hist, p)
             return result
         fxm = fx_fn([d.date() for d in todo])
         rows, trades = [], []
@@ -288,6 +335,7 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
         result["rows"] = rows
         result["letter"] = letter_lines(rows)
         result["diag"] = diagnose(world, checker, as_of, state, rows[-1])
+        result["candidates"] = _safe_candidates(world, as_of, _merge(daily_history(conn), fixed + rows), p)
         if dry_run or not in_actions:
             result["status"] = "preview"
             return result
@@ -298,6 +346,15 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
         return result
     finally:
         conn.close()
+
+
+def _safe_candidates(world, as_of, rows, p) -> list[dict]:
+    """후보 차트 자료 — 실패해도 장부·편지는 그대로(빈 목록)."""
+    try:
+        return candidate_data(world, as_of, rows, p)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[puddle_rebound] 후보 차트 자료를 만들지 못했습니다: {type(exc).__name__}: {exc}")
+        return []
 
 
 def _merge(hist: list[dict], fixed: list[dict]) -> list[dict]:

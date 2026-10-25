@@ -478,6 +478,28 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
     }
 
 
+def curve_chart_src(summary: dict, edition: str) -> str | None:
+    """수익곡선 그림(notify/curve_chart, 2026-10-26) → HTML에 넣을 data URI. 판마다 자기 그림(단체방판 = 종목명 없음), 없으면 None."""
+    import base64
+
+    p = (summary.get("curve_chart") or {}).get("group" if edition == "group" else "personal")
+    if not p or not Path(p).exists():
+        return None
+    return "data:image/png;base64," + base64.b64encode(Path(p).read_bytes()).decode("ascii")
+
+
+def candidate_chart_srcs(summary: dict) -> list[dict]:
+    """웅덩이 후보 종목 차트(notify/candidate_chart) → [{title, src(data URI)}]. 개인판 HTML 전용."""
+    import base64
+
+    out = []
+    for c in summary.get("candidate_charts") or []:
+        p = Path(c["path"])
+        if p.exists():
+            out.append({"title": c["title"], "src": "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode("ascii")})
+    return out
+
+
 def build_context(summary: dict, cfg: dict, edition: str = "personal") -> dict:
     """summary dict(engine/daily.py) + cfg -> Jinja2 템플릿에 넘길 context.
 
@@ -627,6 +649,8 @@ def build_context(summary: dict, cfg: dict, edition: str = "personal") -> dict:
         "show_screening": personal and bool(report_cfg.get("show_screening", False)),
         "show_vbooks_fold": personal and bool(report_cfg.get("show_vbooks_fold", False)),
         "letter": _letter_ctx(summary, cfg, edition),
+        "curve_chart_src": curve_chart_src(summary, edition),
+        "candidate_chart_srcs": candidate_chart_srcs(summary) if personal else [],  # 개인판만(2026-10-26)  # 「▶ 그래프로 보기」 맨 위 수익곡선(2026-10-26)
         "dec_tax": summary.get("dec_tax") if personal else None,  # 12월 공제 안내 접기(개인판만, 표시일만)
         "stale": bool(summary.get("stale")),
         "regime_line": summary.get("regime_line") or "",  # 가상 장부 국면 한 줄 (engine.virtual_books)

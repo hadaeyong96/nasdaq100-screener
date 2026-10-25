@@ -128,6 +128,7 @@ problem:
   earnings_check: 실적 발표 확인을 못 한 종목이 있습니다{상세}.
   puddle_error: 웅덩이 v3.1 장부를 계산하지 못했습니다.
   rebound_error: 웅덩이 반등 확인 장부를 계산하지 못했습니다.
+  chart_error: 그래프를 만들지 못했습니다.
   fred_missing: 시장 지표 {n}개를 받지 못했습니다.
   input_errors: 시트 입력 오류가 {n}건 있습니다.
 
