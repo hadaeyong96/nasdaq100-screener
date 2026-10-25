@@ -302,7 +302,8 @@ def test_engine_catchup_buys_after_rebound_and_is_idempotent(tmp_path, monkeypat
 
 
 def test_engine_does_not_touch_v31_records(tmp_path, monkeypatch):
-    """v3.1 장부를 먼저 돌려 저장한 뒤 반등 확인 장부를 돌려도 v3.1 상태·일별 기록은 그대로(읽기만), B는 v3.1 값을 비율로 읽는다."""
+    """v3.1 장부를 먼저 돌려 저장한 뒤 반등 확인 장부를 돌려도 v3.1 상태·일별 기록은 그대로(읽기만).
+    시작일이 같으면 B는 같은 기준일의 v3.1 평가금액 그대로(2026-10-25 수정: 전에는 1억으로 다시 맞춰 100,000,000이 찍혔다)."""
     cal, data = _history_world()
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
     monkeypatch.setenv("GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS", "x")
@@ -326,7 +327,8 @@ def test_engine_does_not_touch_v31_records(tmp_path, monkeypatch):
     assert snapshot() == before
     v31 = {d: json.loads(j)["v31"] for d, j in before[1]}
     last = r["rows"][-1]
-    assert last["v31"] == pytest.approx(v31[end] * 1e8 / v31[start])
+    assert last["v31"] == pytest.approx(v31[end])
+    assert r["rows"][0]["v31"] == pytest.approx(v31[str(cal[-16].date())])
 
 
 def test_engine_filing_failure_blocks_buy_and_marks_check(tmp_path, monkeypatch):
@@ -374,7 +376,8 @@ def test_candidate_lines_stages_and_group_without_tickers():
     assert g == ["반등 확인 1종목 · 대기 1종목 · 진입 1종목"]
     assert eng.candidate_lines(_row(buys=[], waiting=[], opened=[], skipped=[], unqualified=[]), True) == ["오늘은 웅덩이 후보가 없습니다."]
     out = eng.letter_lines([_row()])
-    assert out["personal"][:3] == ["웅덩이 반등 확인 실험이 QQQ보다 0.4%p 앞섭니다.", "AMD 5% 담고 있습니다.", "AMD를 처음 샀습니다."]
+    assert out["personal"] == ["웅덩이 반등 확인: QQQ보다 0.4%p 앞섭니다. AMD 5% 담고 있습니다. AMD를 처음 샀습니다. "
+                               "META는 실적 발표 직후라 사지 않았습니다."]
     for t in ("AMD", "NVDA", "AAPL", "MSFT", "META", "TSLA", "INTC"):
         assert all(t not in x for x in out["group"] + out["cand_group"]), t
     assert out["vs_v31_pp"] == pytest.approx(0.3)
@@ -386,12 +389,12 @@ def test_letter_section_order_caution_and_monday_line():
     rb = eng.letter_lines([_row()])
     base = {"as_of": pd.Timestamp("2026-11-06"), "letter_today_kst": pd.Timestamp("2026-11-09"), "mode": "live",
             "letter_check": {"lag": 0, "notes": []}, "puddle_rebound": rb,
-            "puddle_v31": {"personal": ["웅덩이 실험이 QQQ와 같습니다."], "group": ["웅덩이 실험이 QQQ와 같습니다."]}}
+            "puddle_v31": {"personal": ["웅덩이 v3.1: QQQ와 같습니다."], "group": ["웅덩이 v3.1: QQQ와 같습니다."]}}
     d = lp.build(base, {"research_news": {}}, lp.PERSONAL)
     heads = [s["header"] for s in d["sections"]]
     assert heads[-2:] == ["■ 웅덩이 후보 (가상 실험 신호, 실제 매수 권유 아님)", "■ 가상 실험 (실제 돈 아님)"]
     lab = d["sections"][-1]["lines"]
-    assert lab[0] == "웅덩이 실험이 QQQ와 같습니다." and lab[1].startswith("웅덩이 반등 확인 실험이")
+    assert lab[0] == "웅덩이 v3.1: QQQ와 같습니다." and lab[1].startswith("웅덩이 반등 확인: ")
     assert "웅덩이 v3.1보다 0.3%p 앞섭니다." in lab  # 월요일
     t = lp.to_text(d)
     assert t.endswith("※ 웅덩이 후보는 12개월 시험 중인 가상 전략의 신호입니다. 검증 전이라 실제 매수 권유가 아닙니다.")

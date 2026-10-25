@@ -1,6 +1,6 @@
 """아침 편지 뉴스 받기 (2026-10-24, 아침 편지 v3) — 구글 뉴스 한국어 RSS(무료, 키 없음).
 
-검색어마다 https://news.google.com/rss/search?q=<검색어> when:1d&hl=ko&gl=KR&ceid=KR:ko 를 받는다.
+검색어마다 https://news.google.com/rss/search?q=<검색어> -<제외어>… when:1d&hl=ko&gl=KR&ceid=KR:ko 를 받는다.
 주제·검색어·가중치는 config/news_topics.yaml. 실패한 검색어는 조용히 넘기지 않고 목록으로 돌려준다.
 """
 
@@ -39,6 +39,12 @@ def queries(topics_cfg: dict) -> list[dict]:
     return out
 
 
+def search_query(q: str, exclude=()) -> str:
+    """RSS 검색어: 검색어 + 공통 제외어(-단어) + 최근 24시간(when:1d)."""
+    neg = " ".join(f"-{w}" for w in exclude or [] if str(w).strip())
+    return " ".join(x for x in (q, neg, "when:1d") if x)
+
+
 def _get(url: str) -> str:
     import requests
 
@@ -54,11 +60,12 @@ def fetch(topics_cfg: dict, get=None, pause: float | None = None) -> dict:
     get = get or _get
     pause = PAUSE if pause is None else pause
     fetched, failed = [], []
+    exclude = topics_cfg.get("exclude") or []
     for i, q in enumerate(queries(topics_cfg)):
         if i and pause:
             time.sleep(pause)
         try:
-            items = cnews.parse_rss(get(RSS_URL.format(q=quote(q["q"] + " when:1d"))))
+            items = cnews.parse_rss(get(RSS_URL.format(q=quote(search_query(q["q"], exclude)))))
         except Exception as exc:  # noqa: BLE001 — 검색어 하나 실패가 편지를 막으면 안 된다(목록으로 보고)
             print(f"[news] '{q['q']}' 뉴스를 받지 못했습니다: {type(exc).__name__}")
             failed.append(q["q"])

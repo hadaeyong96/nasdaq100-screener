@@ -165,16 +165,16 @@ savings_day: 17
 # 시작일·시작 환율: main 병합 뒤 첫 정규 실행(GitHub Actions)이 DB에 고정 → 그 뒤 여기에 적는다(값이 있으면 이것이 우선).
 puddle_v31:
   enabled: true
-  start_date: "" # 첫 정규 실행 뒤 고정 (YYYY-MM-DD)
-  start_fx: "" # 첫 정규 실행 뒤 고정 (원/달러)
+  start_date: "2026-10-23" # 첫 정규 실행(Actions)의 기준일 — 2026-10-25 DB 기록에서 고정
+  start_fx: "1323.6600341796875" # 그날 환율(원/달러, DB 기록 그대로) — 2026-10-25 고정
   sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 v3.1 (가상)」 탭에만 쓴다
 
 # ── 웅덩이 반등 확인 가상 1억 장부 (2026-10-24, docs/prereg/puddle_rebound_forward.md, 태그 puddle-rebound-prereg) ──
 # 규칙은 사전 등록 문서가 기준(수정 = 새 장부). 실제 돈 없음. 저장·시트 쓰기는 GitHub Actions에서만.
 puddle_rebound:
   enabled: true
-  start_date: "" # 첫 정규 실행 뒤 고정 (YYYY-MM-DD)
-  start_fx: "" # 첫 정규 실행 뒤 고정 (원/달러)
+  start_date: "2026-10-23" # 첫 정규 실행(Actions)의 기준일 — 2026-10-25 DB 기록에서 고정
+  start_fx: "1323.6600341796875" # 그날 환율(원/달러, DB 기록 그대로) — 2026-10-25 고정
   sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 반등 확인 (가상)」 탭에만 쓴다
 
 # ── 사용자 시트 「전략공장」의 「QQQM 모으기」 탭 (2026-10-22, 읽기 전용 — data/holdings.py) ─────────────

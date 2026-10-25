@@ -106,6 +106,12 @@ def pick_top(scored: list[dict], min_score: float = 3.0, most: int = 10, least: 
     return core if len(core) >= least else scored[:least]
 
 
+def excluded(title: str, words) -> bool:
+    """제목에 제외어(공통 제외어, news_topics.yaml exclude)가 하나라도 들어 있으면 True. 띄어쓰기는 무시."""
+    t = re.sub(r"\s+", "", title or "")
+    return any(re.sub(r"\s+", "", w) in t for w in words or [] if str(w).strip())
+
+
 def select(fetched: list[dict], topics_cfg: dict, now_utc) -> dict:
     """검색어별로 받은 기사 → 편지 뉴스.
 
@@ -120,13 +126,14 @@ def select(fetched: list[dict], topics_cfg: dict, now_utc) -> dict:
     overlap = float(topics_cfg.get("group_overlap", 0.5))
     min_shared = int(topics_cfg.get("group_min_shared", 2))
     order = [t["name"] for t in topics_cfg.get("topics") or []]
+    exclude = topics_cfg.get("exclude") or []
 
-    # 1) 허용 언론사·24시간 안만, 같은 기사(주소 또는 제목+언론사)는 가중치 큰 주제 하나로
+    # 1) 허용 언론사·24시간 안만·제외어 없는 제목만, 같은 기사(주소 또는 제목+언론사)는 가중치 큰 주제 하나로
     arts: dict[tuple, dict] = {}
     for f in fetched:
         for it in f.get("items") or []:
             canon = canonical_source(it.get("source", ""), sources)
-            if canon is None:
+            if canon is None or excluded(it["title"], exclude):
                 continue
             age = (now - it["published"]).total_seconds() / 3600
             if age < -1 or recency(max(age, 0)) == 0:

@@ -102,11 +102,27 @@ def init_state(world: World, start, fx: float, year_days_fn, p: pr.Params) -> di
 
 
 def _v31_rebased(v31: dict, start: str, date: str) -> float | None:
-    """B = v3.1 세후(date) × 1억 ÷ v3.1 세후(이 장부 시작일). 둘 중 하나라도 없으면 None."""
-    a, b = v31.get(start), v31.get(date)
-    if not a or b is None:
+    """B = 같은 기준일의 v3.1 세후 평가금액(사전 등록 2-2 비교 B).
+    두 장부 시작일이 같으면 그대로 읽고, 다르면 v3.1 세후(date) × 1억 ÷ v3.1 세후(이 장부 시작일). 없으면 None."""
+    b = v31.get(date)
+    if b is None:
+        return None
+    if v31 and min(v31) == start:  # v3.1 첫 기록일 = v3.1 시작일
+        return b
+    a = v31.get(start)
+    if not a:
         return None
     return b * pv.Params().start_krw / a
+
+
+def refresh_v31(rows: list[dict], v31: dict, start: str) -> list[dict]:
+    """저장된 줄들의 비교 B(v31)를 지금 v3.1 기록으로 다시 계산 → 값이 바뀐 줄만 고친 사본으로 반환."""
+    fixed = []
+    for r in rows:
+        b = _v31_rebased(v31, start, r["date"])
+        if b != r.get("v31"):
+            fixed.append({**r, "v31": b})
+    return fixed
 
 
 def advance_day(state, day: pv.Day, world: World, checker: e31.FilingChecker, p: pr.Params, v31: dict) -> dict:
@@ -169,14 +185,12 @@ def candidate_lines(r: dict, personal: bool, phrases: dict | None = None) -> lis
 
 
 def lab_lines(rows: list[dict], personal: bool, phrases: dict | None = None) -> list[str]:
-    """■ 가상 실험 칸(v3.1 줄 아래) — 「웅덩이 반등 확인 실험이 QQQ보다 …」 + 보유·그날 매매(v3.1과 같은 문구 규칙)."""
+    """■ 가상 실험 칸(v3.1 줄 아래) 장부 한 줄 — "웅덩이 반등 확인: QQQ와 같습니다. …"(보유·그날 매매는 v3.1과 같은 문구 규칙)."""
     from notify import letter_plain as lp
 
     ph = phrases if phrases is not None else lp.load_phrases()
-    last = rows[-1]
-    key, d = lp.vs_qqq_parts((last["value"] - last["qqq"]) / 1_000_000)
-    v31_lines = e31._plain_lines([{**r, "v31": r["value"], "skipped": r.get("skipped", [])} for r in rows], personal, ph)
-    return [lp.phrase(ph, f"rebound.{key}", last.get("date"), d=d)] + v31_lines[1:]
+    parts = e31._plain_lines([{**r, "v31": r["value"], "skipped": r.get("skipped", [])} for r in rows], personal, ph)
+    return [lp.ledger_line(ph, "rebound", parts, rows[-1].get("date"))]
 
 
 def letter_lines(rows: list[dict]) -> dict:
@@ -245,12 +259,16 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
         else:
             todo = list(world.cal[(world.cal > pd.Timestamp(state["last_date"])) & (world.cal <= as_of)])
         result["start_date"] = state["start_date"]
+        v31 = v31_values(conn)
+        fixed = [] if fresh else refresh_v31(daily_history(conn), v31, state["start_date"])
         if not todo:
             result["status"] = "already"
-            hist = daily_history(conn)
+            if fixed and not dry_run and in_actions:
+                save(conn, state, fixed, [])
+                _write_sheet(result, pc, sheets_client, sheet_write, fixed)
+            hist = _merge(daily_history(conn), fixed)
             result["letter"] = letter_lines(hist[-1:]) if hist else letter_lines([])
             return result
-        v31 = v31_values(conn)
         fxm = fx_fn([d.date() for d in todo])
         rows, trades = [], []
         prev_fx = state["start_fx"] if fresh else None
@@ -273,27 +291,40 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
         if dry_run or not in_actions:
             result["status"] = "preview"
             return result
-        save(conn, state, rows, trades)
+        save(conn, state, fixed + rows, trades)
         if state.get("judged"):
             vbstore.set_meta(conn, META_JUDGMENT, json.dumps(state["judged"], ensure_ascii=False))
-        if sheet_write:
-            sheet_id = (os.environ.get(pc.get("sheet_id_env", "GOOGLE_SHEETS_ID")) or "").strip()
-            if not sheet_id:
-                result["warnings"].append("GOOGLE_SHEETS_ID가 없어 웅덩이 반등 확인 탭 기록을 건너뜁니다")
-            else:
-                try:
-                    from data import puddle_rebound_sheet as psheet
-
-                    if sheets_client is None:
-                        from data import sheets
-
-                        sheets_client = sheets.get_client()
-                    psheet.write_rows(sheets_client, sheet_id, [sheet_row(r) for r in rows])
-                except Exception as exc:  # noqa: BLE001 — 장부는 저장됨, 시트만 실패
-                    result["errors"].append(f"웅덩이 반등 확인 시트 기록 실패: {type(exc).__name__}")
+        _write_sheet(result, pc, sheets_client, sheet_write, fixed + rows)
         return result
     finally:
         conn.close()
+
+
+def _merge(hist: list[dict], fixed: list[dict]) -> list[dict]:
+    """저장된 줄에 고친 줄을 날짜로 덮어쓴 목록(미리보기용)."""
+    by = {r["date"]: r for r in hist}
+    by.update({r["date"]: r for r in fixed})
+    return [by[d] for d in sorted(by)]
+
+
+def _write_sheet(result: dict, pc: dict, sheets_client, sheet_write: bool, rows: list[dict]) -> None:
+    """「웅덩이 반등 확인 (가상)」 탭에 rows를 날짜 줄로 덮어쓰기/붙이기. 실패는 result에 적는다."""
+    if not (sheet_write and rows):
+        return
+    sheet_id = (os.environ.get(pc.get("sheet_id_env", "GOOGLE_SHEETS_ID")) or "").strip()
+    if not sheet_id:
+        result["warnings"].append("GOOGLE_SHEETS_ID가 없어 웅덩이 반등 확인 탭 기록을 건너뜁니다")
+        return
+    try:
+        from data import puddle_rebound_sheet as psheet
+
+        if sheets_client is None:
+            from data import sheets
+
+            sheets_client = sheets.get_client()
+        psheet.write_rows(sheets_client, sheet_id, [sheet_row(r) for r in rows])
+    except Exception as exc:  # noqa: BLE001 — 장부는 저장됨, 시트만 실패
+        result["errors"].append(f"웅덩이 반등 확인 시트 기록 실패: {type(exc).__name__}")
 
 
 def diagnose(world: World, checker: e31.FilingChecker, d, state, row: dict) -> list[dict]:
