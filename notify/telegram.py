@@ -176,14 +176,43 @@ def _send_photo(token: str, chat_id: str, path: Path, caption: str | None = None
 
 
 def chart_photo(summary: dict, cfg: dict, edition: str = "personal") -> Path | None:
-    """월요일(chart.weekday, 한국 날짜) 편지에 넣을 수익곡선 그림(notify/curve_chart) 경로. 그날이 아니거나 그림이 없으면 None."""
+    """월요일(chart.weekday, 한국 날짜) 편지에 넣을 수익곡선 그림(notify/curve_chart) 경로. 그날이 아니거나 그림이 없으면 None.
+    어떤 오류든 None(그림만 빠지고 편지는 나간다)."""
+    try:
+        from notify import curve_chart
+
+        ch = summary.get("curve_chart") or {}
+        p = ch.get(edition)
+        if not p or not Path(p).exists() or not curve_chart.is_chart_day(summary.get("letter_today_kst"), cfg):
+            return None
+        return Path(p)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"[telegram] 그래프 그림을 찾지 못했습니다(편지는 그대로): {type(exc).__name__}")
+        return None
+
+
+def notify_key(as_of_str: str, summary: dict, cfg: dict, group: bool = False) -> str:
+    """중복 발송 방지 키(2026-10-26): 보통은 미국 기준일("YYYY-MM-DD", 단체방 "…:group") — 기준일마다 한 번.
+    주간 편지 요일(chart.weekday, 기본 월 — 한국 날짜)에는 기준일이 토요일 편지와 같아도(미국 금요일) 한 번 더 보낸다:
+    "YYYY-MM-DD:weekly:한국날짜"(단체방 "…:group:weekly:한국날짜"). 이게 없어서 월요일 편지가 한 번도 나가지 않았다."""
     from notify import curve_chart
 
-    ch = summary.get("curve_chart") or {}
-    p = ch.get(edition)
-    if not p or not Path(p).exists() or not curve_chart.is_chart_day(summary.get("letter_today_kst"), cfg):
-        return None
-    return Path(p)
+    key = f"{as_of_str}:group" if group else as_of_str
+    today = summary.get("letter_today_kst")
+    try:
+        weekly = curve_chart.is_chart_day(today, cfg)
+    except Exception:  # noqa: BLE001
+        weekly = False
+    return f"{key}:weekly:{today.date() if hasattr(today, 'date') else today}" if weekly else key
+
+
+def _safe_letter_message(summary: dict, cfg: dict, edition: str = "personal") -> str | None:
+    """편지 본문 — 만들다 실패하면 제목 한 줄과 안내(편지는 반드시 나간다). 쉬운 문장판이 아니면 None."""
+    try:
+        return letter_message(summary, cfg, edition=edition)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"[telegram] 편지 본문을 만들지 못했습니다: {type(exc).__name__}")
+        return f"{title_line(summary, cfg)}\n▶ 자료 문제: 편지 본문을 만들지 못했습니다. 첨부 파일을 봐 주십시오."
 
 
 def _extract_migrate_id(resp) -> int | None:
@@ -360,14 +389,15 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
 
     conn = db.connect(db.db_path_for_mode(mode))
     try:
-        if db.has_notified(conn, as_of_str) and not summary.get("rebuilt_from"):
-            _log(f"[telegram] {as_of_str} 기준 이미 발송한 기록이 있어 다시 보내지 않습니다.")
+        key = notify_key(as_of_str, summary, cfg)
+        if db.has_notified(conn, key) and not summary.get("rebuilt_from"):
+            _log(f"[telegram] {key} 기준 이미 발송한 기록이 있어 다시 보내지 않습니다.")
             return out_path
 
         report_path = summary.get("report_path")
         if report_path and Path(report_path).exists():
             ok = True
-            msg = letter_message(summary, cfg)  # 아침 편지 v3(2026-10-24): 본문 문자 메시지 먼저, 보고서 파일은 바로 뒤
+            msg = _safe_letter_message(summary, cfg)  # 아침 편지 v3(2026-10-24): 본문 문자 메시지 먼저, 보고서 파일은 바로 뒤
             if msg:
                 ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(msg))
             photo = chart_photo(summary, cfg)  # 2026-10-26: 월요일만 본문 → 그래프 그림 → 보고서 파일
@@ -382,7 +412,7 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
             ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
 
         if ok:
-            db.record_notified(conn, as_of_str, datetime.now().isoformat(timespec="seconds"))
+            db.record_notified(conn, key, datetime.now().isoformat(timespec="seconds"))
         else:
             _log("[telegram] 일부 발송에 실패해 발송 기록을 남기지 않습니다 (다음 실행에서 재시도 가능).")
     finally:
@@ -507,7 +537,7 @@ def send_group_briefing(
     result["attempted"] = True
     conn = db.connect(db.db_path_for_mode(mode))
     try:
-        dedup_key = f"{as_of_str}:group"
+        dedup_key = notify_key(as_of_str, summary, cfg, group=True)
         if db.has_notified(conn, dedup_key) and not summary.get("rebuilt_from"):
             _log(f"[telegram] {as_of_str} 기준 단체방에 이미 보낸 기록이 있어 다시 보내지 않습니다.")
             result["ok"] = True
@@ -518,7 +548,7 @@ def send_group_briefing(
         migrate_id: int | None = None
         error: str | None = None
         if report_path and Path(report_path).exists():
-            msg = letter_message(summary, cfg, edition="group")  # 아침 편지 v3: 본문 문자 메시지 먼저, 파일은 바로 뒤
+            msg = _safe_letter_message(summary, cfg, edition="group")  # 아침 편지 v3: 본문 문자 메시지 먼저, 파일은 바로 뒤
             for chunk in split_message(msg) if msg else []:
                 c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
                 ok, migrate_id, error = ok and c_ok, migrate_id or c_migrate, error or c_err
