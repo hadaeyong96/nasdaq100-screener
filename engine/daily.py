@@ -2289,21 +2289,23 @@ def main() -> None:
     # 장부 오류는 run_safely가 잡아 따로 알림 — 기존 브리핑은 그대로 나간다.
     vb_result = None
     if mode == "live" and not args.dry_run and not summary.get("stale"):
-        vb_result = vbooks.run_safely(cfg, force_no_send=args.no_send, briefing=_briefing_recs(summary))
-        _attach_regime_line(summary, vb_result, cfg)
-        _attach_market_glance(summary, cfg)
+        # 2026-10-26: 편지에 붙는 단계는 하나씩 감싼다 — 어느 단계가 실패해도 편지 본문은 나가고 「자료 문제」에 한 줄(_safe_step)
+        vb_result = _safe_step(summary, "가상 장부", lambda: vbooks.run_safely(cfg, force_no_send=args.no_send,
+                                                                            briefing=_briefing_recs(summary)))
+        _safe_step(summary, "국면 줄", lambda: _attach_regime_line(summary, vb_result, cfg))
+        _safe_step(summary, "시장 지수", lambda: _attach_market_glance(summary, cfg))
         if (cfg.get("letter") or {}).get("show_books", False):  # 예전(가상 장부 있던 때) 편지
-            _attach_dec_tax(summary, cfg)
-            _attach_letter_v2(summary, vb_result, cfg)
+            _safe_step(summary, "12월 공제 안내", lambda: _attach_dec_tax(summary, cfg))
+            _safe_step(summary, "편지", lambda: _attach_letter_v2(summary, vb_result, cfg))
         else:  # 2026-10-22 새 출발: 「QQQM 모으기」(읽기 전용)으로 내 돈·12월 공제, 점검은 기준일·데이터 지연만
-            holdings = _read_holdings(cfg)
-            _attach_dec_tax(summary, cfg, holdings=holdings)
-            _attach_letter_v3(summary, cfg, holdings)
-            _attach_puddle_v31(summary, cfg)
-            _attach_puddle_rebound(summary, cfg)
-            _attach_curve_chart(summary, cfg)
-            _attach_candidate_charts(summary)
-            _attach_news(summary, cfg)
+            holdings = _safe_step(summary, "내 돈", lambda: _read_holdings(cfg))
+            _safe_step(summary, "12월 공제 안내", lambda: _attach_dec_tax(summary, cfg, holdings=holdings))
+            _safe_step(summary, "편지 기본 칸", lambda: _attach_letter_v3(summary, cfg, holdings))
+            _safe_step(summary, "웅덩이 v3.1 장부", lambda: _attach_puddle_v31(summary, cfg))
+            _safe_step(summary, "웅덩이 반등 확인 장부", lambda: _attach_puddle_rebound(summary, cfg))
+            _safe_step(summary, "그래프", lambda: _attach_curve_chart(summary, cfg))
+            _safe_step(summary, "웅덩이 후보 차트", lambda: _attach_candidate_charts(summary))
+            _safe_step(summary, "뉴스", lambda: _attach_news(summary, cfg))
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
         if (cfg.get("report") or {}).get("monthly_scorecard", True):
             try:
@@ -2321,7 +2323,11 @@ def main() -> None:
         if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 배너 보고서 한 통만 보낸다(지연 문구는 첨부 설명)
             sent_path = telegram.send_delay_notice(summary, cfg, force_no_send=args.no_send)
         else:
-            text = briefing.build_briefing_text(summary, cfg)
+            try:
+                text = briefing.build_briefing_text(summary, cfg)
+            except Exception as exc:  # noqa: BLE001 — 예전 브리핑 글은 보고서 파일이 없을 때만 쓰인다
+                print(f"[daily] 브리핑 글을 만들지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
+                text = briefing.title_line(summary, cfg)
             # 개인 채팅·단체방에 같은 보고서·같은 첨부 설명 (2026-10-15). 한쪽이 실패해도 다른 쪽은 나간다.
             # 오류 알림(ops)은 개인 채팅에만.
             try:
@@ -2545,6 +2551,20 @@ def _attach_curve_chart(summary: dict, cfg: dict, out_dir: Path | None = None, d
     except Exception as exc:  # noqa: BLE001 — 그래프만 빠진다
         print(f"[daily] 수익곡선 그래프를 만들지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
         summary["curve_chart"] = {"error": type(exc).__name__}
+
+
+def _safe_step(summary: dict, label: str, fn):
+    """편지에 붙는 단계 하나를 감싼다(2026-10-26 월요일 편지 사고 뒤): 실패하면 None을 돌려주고
+    letter_check.notes에 "{label}을(를) 만들지 못했습니다" — 편지 「자료 문제」 줄로 나간다. 편지 본문 발송은 막지 않는다."""
+    try:
+        return fn()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] {label} 단계 오류(편지는 그대로 보냅니다): {type(exc).__name__}: {exc}")
+        from notify import letter_plain
+
+        note = f"{letter_plain.josa(label, ('을', '를'))} 만들지 못했습니다"
+        summary.setdefault("letter_check", {"lag": 0, "notes": []}).setdefault("notes", []).append(note)
+        return None
 
 
 def _attach_candidate_charts(summary: dict, out_dir: Path | None = None) -> None:
