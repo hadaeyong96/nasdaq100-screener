@@ -1,5 +1,8 @@
 """상승장 대형주 웅덩이 v3.1 — 가상 1억 장부 하루 실행 (docs/prereg/puddle_v31_forward.md, 태그 puddle-v31-prereg).
 
+2026-10-27: v3.1 장부는 보관(config enabled false, DB 기록은 그대로)하고, 같은 코드를 Book(BOOK_V32)으로 불러
+웅덩이 v3.2(시가총액 상위 10, docs/prereg/puddle_v32_forward.md)를 돌린다 — engine/puddle_v32.py. 규칙 코드는 같고 대상 고르기·저장 위치만 다르다.
+
 실제 주문 없음. 장부 4종(v3.1·v3·QQQ 보유·무작위 200경로)을 data/virtual_books.db(드라이브 동기화)에 상태로 저장해 이어 쓴다.
 흐름 (engine/daily.py live 실행, 편지 만들기 전):
   1) QQQ·현재 나스닥100·보유 종목 확정 종가(data.prices.fetch_one 캐시) → 지표(core.puddle_v31.indicators)
@@ -15,11 +18,12 @@
 from __future__ import annotations
 
 import argparse
-import copy
+import importlib
 import json
 import os
 import sys
 import traceback
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -33,40 +37,81 @@ if str(ROOT) not in sys.path:
 from core import puddle_v31 as pv  # noqa: E402
 from store import virtual_books as vbstore  # noqa: E402
 
-META_STATE = "puddle_v31_state"
-META_JUDGMENT = "puddle_v31_judgment"
-MAIN, V3, QQQ = "v31", "v3", "qqq"
+MAIN, V3, QQQ = "v31", "v3", "qqq"  # 장부 이름(v3.2도 같은 이름 — 일별 줄의 값 열 이름 "v31"·"v3"도 그대로 쓴다)
+
+
+@dataclass(frozen=True)
+class Book:
+    """장부 하나의 이름·저장 위치·대상 고르기(2026-10-27). 규칙은 같고 이것만 다르다.
+
+    ranking: "dv"(20일 평균 거래대금 상위 10 — v3.1) | "mcap"(시가총액 상위 10 — v3.2, docs/prereg/puddle_v32_forward.md 2-2)."""
+
+    cfg_key: str
+    label: str  # 편지·로그 이름
+    name_key: str  # config/letter_phrases.yaml lab.names 키
+    table: str  # 일별 기록 표 = {table}_daily, 매매 = {table}_trades, meta = {table}_state·{table}_judgment
+    sheet_module: str
+    ranking: str = "dv"
+    archives: tuple = ()  # 이 장부가 처음 저장될 때 DB에 보관 표시할 옛 장부 표 이름(기록은 지우지 않음)
+
+    @property
+    def meta_state(self) -> str:
+        return f"{self.table}_state"
+
+    @property
+    def meta_judgment(self) -> str:
+        return f"{self.table}_judgment"
+
+
+BOOK = Book("puddle_v31", "웅덩이 v3.1", "v31", "puddle_v31", "data.puddle_v31_sheet")  # 2026-10-27 보관(매일 실행에서 끔)
+BOOK_V32 = Book("puddle_v32", "웅덩이 v3.2", "v32", "puddle_v32", "data.puddle_v32_sheet", ranking="mcap",
+                archives=("puddle_v31", "puddle_rebound"))
+META_STATE, META_JUDGMENT = BOOK.meta_state, BOOK.meta_judgment
+META_ARCHIVED = "puddle_archived"  # 보관 표시(2026-10-27): {장부 표 이름: {date, tag, reason}} — 옛 기록은 지우지 않는다
+ARCHIVE_TAG = "archive-puddle-v31-20261027"
 
 
 # ── 저장 ─────────────────────────────────────────────────────────────────────
 
 
-def _ensure_schema(conn) -> None:
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS puddle_v31_daily (date TEXT PRIMARY KEY, row_json TEXT);
-        CREATE TABLE IF NOT EXISTS puddle_v31_trades (ledger TEXT, exit_date TEXT, tk TEXT, row_json TEXT);
+def _ensure_schema(conn, book: Book = BOOK) -> None:
+    conn.executescript(f"""
+        CREATE TABLE IF NOT EXISTS {book.table}_daily (date TEXT PRIMARY KEY, row_json TEXT);
+        CREATE TABLE IF NOT EXISTS {book.table}_trades (ledger TEXT, exit_date TEXT, tk TEXT, row_json TEXT);
     """)
     conn.commit()
 
 
-def load_state(conn) -> dict | None:
-    raw = vbstore.get_meta(conn, META_STATE)
+def load_state(conn, book: Book = BOOK) -> dict | None:
+    raw = vbstore.get_meta(conn, book.meta_state)
     return json.loads(raw) if raw else None
 
 
-def save(conn, state: dict, daily_rows: list[dict], trades: list[tuple[str, dict]]) -> None:
-    _ensure_schema(conn)
-    vbstore.set_meta(conn, META_STATE, json.dumps(state, ensure_ascii=False))
+def save(conn, state: dict, daily_rows: list[dict], trades: list[tuple[str, dict]], book: Book = BOOK) -> None:
+    _ensure_schema(conn, book)
+    vbstore.set_meta(conn, book.meta_state, json.dumps(state, ensure_ascii=False))
     for r in daily_rows:
-        conn.execute("INSERT OR REPLACE INTO puddle_v31_daily VALUES (?, ?)", (r["date"], json.dumps(r, ensure_ascii=False)))
+        conn.execute(f"INSERT OR REPLACE INTO {book.table}_daily VALUES (?, ?)", (r["date"], json.dumps(r, ensure_ascii=False)))
     for ledger, t in trades:
-        conn.execute("INSERT INTO puddle_v31_trades VALUES (?, ?, ?, ?)", (ledger, t["exit_date"], t["tk"], json.dumps(t, ensure_ascii=False)))
+        conn.execute(f"INSERT INTO {book.table}_trades VALUES (?, ?, ?, ?)", (ledger, t["exit_date"], t["tk"], json.dumps(t, ensure_ascii=False)))
     conn.commit()
 
 
-def daily_history(conn) -> list[dict]:
-    _ensure_schema(conn)
-    return [json.loads(r[0]) for r in conn.execute("SELECT row_json FROM puddle_v31_daily ORDER BY date")]
+def daily_history(conn, book: Book = BOOK) -> list[dict]:
+    _ensure_schema(conn, book)
+    return [json.loads(r[0]) for r in conn.execute(f"SELECT row_json FROM {book.table}_daily ORDER BY date")]
+
+
+def mark_archived(conn, tables: list[str], date: str, reason: str) -> list[str]:
+    """옛 장부 보관 표시(meta puddle_archived). 기록·상태는 지우지 않는다. 이미 표시된 표는 그대로 → 새로 표시한 표 목록."""
+    raw = vbstore.get_meta(conn, META_ARCHIVED)
+    cur = json.loads(raw) if raw else {}
+    new = [t for t in tables if t not in cur]
+    for t in new:
+        cur[t] = {"date": date, "tag": ARCHIVE_TAG, "reason": reason}
+    if new:
+        vbstore.set_meta(conn, META_ARCHIVED, json.dumps(cur, ensure_ascii=False))
+    return new
 
 
 # ── 입력 ─────────────────────────────────────────────────────────────────────
@@ -88,6 +133,12 @@ def _default_fx(dates: list) -> dict:
     from data.fx import get_usd_krw_rate_map
 
     return get_usd_krw_rate_map(dates)
+
+
+def _default_shares(tickers: list[str]):
+    from data.shares import fetch_shares
+
+    return fetch_shares(tickers)
 
 
 def _default_year_days(year: int) -> pd.DatetimeIndex:
@@ -140,8 +191,11 @@ class FilingChecker:
 class World:
     """가격·지표·달력 — 실행 한 번 동안 고정."""
 
-    def __init__(self, cfg, universe: list[str], held: set[str], history_fn, p: pv.Params):
+    def __init__(self, cfg, universe: list[str], held: set[str], history_fn, p: pv.Params, ranking: str = "dv", shares_fn=None):
         self.p = p
+        self.ranking = ranking
+        self._shares_fn = shares_fn or _default_shares
+        self._shares = None  # (주식 수, 회사 전체 티커, 실패 티커) — 시총 판 순위 날에만 한 번 받는다
         q = history_fn("QQQ", cfg)
         self.cal = pd.DatetimeIndex(q.index).normalize()
         self.qqq = q["close"].set_axis(self.cal)
@@ -171,8 +225,21 @@ class World:
         return i == 0 or self.cal[i - 1].month != self.cal[i].month
 
     def top10(self, d) -> list[str]:
+        return self.rank(d)["list"]
+
+    def rank(self, d) -> dict:
+        """그날 상위 10 → {list, caps(시총 판만: 거래 티커 → 회사 시가총액 달러), missing(주식 수 없는 티커)}."""
         row = self.ind["dv"].loc[pd.Timestamp(d)]
-        return pv.top_by_dollar_volume({t: row.get(t) for t in self.universe if t in row.index}, self.universe, self.p.top_n)
+        dv = {t: row.get(t) for t in self.universe if t in row.index}
+        if self.ranking != "mcap":
+            return {"list": pv.top_by_dollar_volume(dv, self.universe, self.p.top_n), "caps": None, "missing": []}
+        if self._shares is None:
+            self._shares = self._shares_fn([t for t in self.universe if t in self.close.columns])
+        shares, whole, _ = self._shares
+        crow = self.close.loc[pd.Timestamp(d)]
+        closes = {t: float(crow[t]) for t in self.universe if t in crow.index}
+        top, caps, missing = pv.top_by_market_cap(closes, shares, dv, self.universe, self.p.top_n, whole=set(whole))
+        return {"list": top, "caps": caps, "missing": missing}
 
     def tickers_ind(self, d, tickers) -> tuple[dict, dict]:
         d = pd.Timestamp(d)
@@ -199,7 +266,10 @@ def build_day(state, world: World, d, fx: float, year_days_fn) -> pv.Day:
     i = world.pos(d)
     held = {tk for L in _all_ledgers(state) for tk in L["pos"]}
     if world.month_first(d) or not state.get("top10"):
-        state["top10"] = {"month": d.strftime("%Y-%m"), "date": str(d.date()), "list": world.top10(d)}
+        rk = world.rank(d)
+        state["top10"] = {"month": d.strftime("%Y-%m"), "date": str(d.date()), "list": rk["list"]}
+        if rk["caps"] is not None:  # 시총 판(v3.2·반등 확인 v2): 순위 날 시가총액·주식 수 없는 종목도 남긴다
+            state["top10"].update(caps=rk["caps"], missing=rk["missing"])
     top = state["top10"]["list"]
     closes, ind = world.tickers_ind(d, set(top) | held)
     yd = year_days_fn(d.year)
@@ -248,7 +318,15 @@ def advance_day(state, day: pv.Day, world: World, checker: FilingChecker, p: pv.
             "random": dist, "weights": w, "qqq_weight": L[MAIN]["q_units"] * day.qqq / nav if nav else 1.0,
             "fills": ev["fills"], "sells": ev["sells"], "skipped": ev["skipped"], "failed": sorted(set(ev["failed"])),
             "v3_fills": ev3["fills"], "v3_sells": ev3["sells"], "realized_year": L[MAIN]["realized"].get(str(day.date.year), 0.0),
-            "mdd": {MAIN: L[MAIN]["mdd"], QQQ: L[QQQ]["mdd"], V3: L[V3]["mdd"]}, "top10": list(day.top10)}
+            "mdd": {MAIN: L[MAIN]["mdd"], QQQ: L[QQQ]["mdd"], V3: L[V3]["mdd"]}, "top10": list(day.top10), **rank_fields(state, day)}
+
+
+def rank_fields(state, day: pv.Day) -> dict:
+    """순위 날(그날 상위 10을 새로 정한 날) 시총 판 줄에만: caps(시가총액 달러)·shares_missing(주식 수 없는 티커)."""
+    t = state.get("top10") or {}
+    if t.get("date") != str(day.date.date()) or "caps" not in t:
+        return {}
+    return {"caps": t["caps"], "shares_missing": list(t.get("missing") or [])}
 
 
 # ── 표시 ─────────────────────────────────────────────────────────────────────
@@ -321,19 +399,26 @@ def _plain_lines(rows: list[dict], personal: bool, phrases: dict | None = None) 
 _REASON_KEY = {v: k for k, v in pv.REASONS.items()}  # 매도 이유 글 → 문구 키(high·rank·max_hold·gone)
 
 
-def letter_lines(rows: list[dict]) -> dict:
-    """이번 실행에서 진행한 날들의 기록 → 편지 줄 {personal: [...], group: [...], check_personal, check_group}."""
+def shares_checks(rows: list[dict]) -> dict:
+    """주식 수를 못 받아 시가총액 순위에서 뺀 종목(사전 등록 v3.2 2-2-7) → {shares_personal: "(티커, …)", shares_group: "(n종목)"}."""
+    miss = sorted({t for r in rows for t in r.get("shares_missing") or []})
+    return {"shares_personal": f"({', '.join(miss)})" if miss else None, "shares_group": f"({len(miss)}종목)" if miss else None}
+
+
+def letter_lines(rows: list[dict], book: Book = BOOK) -> dict:
+    """이번 실행에서 진행한 날들의 기록 → 편지 줄 {personal: [...], group: [...], check_personal, check_group, shares_*}."""
     if not rows:
-        return {"personal": [], "group": [], "check_personal": None, "check_group": None}
+        return {"personal": [], "group": [], "check_personal": None, "check_group": None, "shares_personal": None, "shares_group": None}
     from notify import letter_plain as lp
 
     ph = lp.load_phrases()
     day = rows[-1].get("date")  # 장부 한 줄(2026-10-25): "웅덩이 v3.1: QQQ와 같습니다. QQQ만 들고 있습니다."
-    out = {"personal": [lp.ledger_line(ph, "v31", _plain_lines(rows, True, ph), day)],
-           "group": [lp.ledger_line(ph, "v31", _plain_lines(rows, False, ph), day)]}
+    out = {"personal": [lp.ledger_line(ph, book.name_key, _plain_lines(rows, True, ph), day)],
+           "group": [lp.ledger_line(ph, book.name_key, _plain_lines(rows, False, ph), day)]}
     failed = sorted({t for r in rows for t in r["failed"]})
     out["check_personal"] = f"실적 확인 실패({', '.join(failed)})" if failed else None
     out["check_group"] = f"실적 확인 실패({len(failed)}종목)" if failed else None
+    out.update(shares_checks(rows))
     last = rows[-1]  # 표시 전용(2026-10-24): 월요일 「필터 없는 판(v3)보다 x%p」 — 이미 기록하는 v3 값을 읽기만
     out["filter_gap_pp"] = (last["v31"] - last["v3"]) / 1_000_000 if last.get("v3") is not None else None
     return out
@@ -355,12 +440,13 @@ def judgment_date(start) -> pd.Timestamp:
 
 
 def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=None, universe_fn=None, fx_fn=None,
-        year_days_fn=None, filings_fn=None, sheets_client=None, sheet_write: bool | None = None, p: pv.Params = pv.Params()) -> dict:
-    """하루 실행. as_of = 오늘 기준일(직전 확정 미국 종가일).
+        year_days_fn=None, filings_fn=None, sheets_client=None, sheet_write: bool | None = None, p: pv.Params = pv.Params(),
+        book: Book = BOOK, shares_fn=None) -> dict:
+    """하루 실행. as_of = 오늘 기준일(직전 확정 미국 종가일). book = 장부(v3.1 보관본·v3.2), shares_fn = 주식 수(시총 판, 테스트 주입).
 
     dry_run=True면 DB·시트에 쓰지 않는다. sheet_write 기본값은 GitHub Actions에서만 True.
     출력: {status, start_date, rows(이번에 진행한 날들), letter, warnings, errors, diag}"""
-    pc = cfg.get("puddle_v31") or {}
+    pc = cfg.get(book.cfg_key) or {}
     as_of = pd.Timestamp(as_of).normalize()
     history_fn = history_fn or _default_history
     year_days_fn = year_days_fn or _default_year_days
@@ -370,14 +456,14 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
         sheet_write = in_actions
     db_path = Path(db_path or vbstore.VBOOKS_DB_PATH)
     conn = vbstore.connect(db_path)
-    result = {"status": "ok", "rows": [], "warnings": [], "errors": [], "letter": letter_lines([]), "diag": None}
+    result = {"status": "ok", "rows": [], "warnings": [], "errors": [], "letter": letter_lines([], book), "diag": None}
     try:
-        state = load_state(conn)
+        state = load_state(conn, book)
         if state is None and in_actions and not pc.get("start_date") and not (os.environ.get("GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS") or "").strip():
-            raise RuntimeError("드라이브 state 파일도 config 시작일도 없어 매 실행이 새 장부가 됩니다 — 웅덩이 v3.1을 건너뜁니다")
+            raise RuntimeError(f"드라이브 state 파일도 config 시작일도 없어 매 실행이 새 장부가 됩니다 — {book.label}을 건너뜁니다")
         held = {tk for L in (_all_ledgers(state) if state else []) for tk in L["pos"]}
         universe = (universe_fn or _default_universe)()
-        world = World(cfg, universe, held, history_fn, p)
+        world = World(cfg, universe, held, history_fn, p, ranking=book.ranking, shares_fn=shares_fn)
         if as_of not in world.cal:
             as_of = world.cal[world.cal <= as_of][-1]
         if world.missing:
@@ -397,8 +483,8 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
         result["start_date"] = state["start_date"]
         if not todo:
             result["status"] = "already"
-            hist = daily_history(conn)
-            result["letter"] = letter_lines(hist[-1:]) if hist else letter_lines([])
+            hist = daily_history(conn, book)
+            result["letter"] = letter_lines(hist[-1:], book) if hist else letter_lines([], book)
             result["rows_all"] = hist
             return result
         fxm = fx_fn([d.date() for d in todo])
@@ -418,21 +504,23 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
                 p80 = r["random"]["80"]
                 state["judged"] = {"date": r["date"], **pv.judge(r["v31"], r["qqq"], r["v3"], p80, r["mdd"][MAIN], r["mdd"][QQQ])}
         result["rows"] = rows
-        result["letter"] = letter_lines(rows)
+        result["letter"] = letter_lines(rows, book)
         result["diag"] = diagnose(world, checker, as_of, state)
         if dry_run or not in_actions:
             result["status"] = "preview"
             return result
-        save(conn, state, rows, trades)
+        save(conn, state, rows, trades, book)
+        if book.archives:
+            mark_archived(conn, list(book.archives), rows[-1]["date"], f"{book.label}(시가총액 상위 10)로 재시작 — 2026-10-27 사용자 지시")
         if state.get("judged"):
-            vbstore.set_meta(conn, META_JUDGMENT, json.dumps(state["judged"], ensure_ascii=False))
+            vbstore.set_meta(conn, book.meta_judgment, json.dumps(state["judged"], ensure_ascii=False))
         if sheet_write:
             sheet_id = (os.environ.get(pc.get("sheet_id_env", "GOOGLE_SHEETS_ID")) or "").strip()
             if not sheet_id:
-                result["warnings"].append("GOOGLE_SHEETS_ID가 없어 웅덩이 v3.1 탭 기록을 건너뜁니다")
+                result["warnings"].append(f"GOOGLE_SHEETS_ID가 없어 {book.label} 탭 기록을 건너뜁니다")
             else:
                 try:
-                    from data import puddle_v31_sheet as psheet
+                    psheet = importlib.import_module(book.sheet_module)
 
                     if sheets_client is None:
                         from data import sheets
@@ -440,7 +528,7 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, history_fn=Non
                         sheets_client = sheets.get_client()
                     psheet.write_rows(sheets_client, sheet_id, [sheet_row(r) for r in rows])
                 except Exception as exc:  # noqa: BLE001 — 장부는 저장됨, 시트만 실패
-                    result["errors"].append(f"웅덩이 v3.1 시트 기록 실패: {type(exc).__name__}")
+                    result["errors"].append(f"{book.label} 시트 기록 실패: {type(exc).__name__}")
         return result
     finally:
         conn.close()
@@ -451,34 +539,35 @@ def diagnose(world: World, checker: FilingChecker, d, state) -> list[dict]:
     d = pd.Timestamp(d)
     top = state["top10"]["list"] if state.get("top10") else world.top10(d)
     closes, ind = world.tickers_ind(d, top)
+    caps = (state.get("top10") or {}).get("caps") or {}
     out = []
     for t in top:
         x, i = closes.get(t), ind.get(t) or {}
         qual = pv._qualified(i, x)
         below60 = x < i.get("sma60", np.nan)
-        out.append({"ticker": t, "close": x, "qualified": qual, "below_sma60": bool(below60),
+        out.append({"ticker": t, "close": x, "cap": caps.get(t), "qualified": qual, "below_sma60": bool(below60),
                     "above_prev20": i.get("above_prev") == 1.0, "first_cross_60": bool(below60 and i.get("above_prev") == 1.0),
                     "below_sma120": bool(x < i.get("sma120", np.nan)), "last_filing": checker.last_filing(t, d)})
     return out
 
 
-def run_safely(cfg: dict, as_of, **kwargs) -> dict | None:
-    """run을 감싼다 — 예외를 밖으로 내보내지 않는다(브리핑 보호)."""
-    if not (cfg.get("puddle_v31") or {}).get("enabled", False):
+def run_safely(cfg: dict, as_of, book: Book = BOOK, **kwargs) -> dict | None:
+    """run을 감싼다 — 예외를 밖으로 내보내지 않는다(브리핑 보호). config enabled가 false(보관된 장부)면 돌지 않는다."""
+    if not (cfg.get(book.cfg_key) or {}).get("enabled", False):
         return None
     try:
-        res = run(cfg, as_of, **kwargs)
+        res = run(cfg, as_of, book=book, **kwargs)
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
-        print(f"[puddle_v31] 장부 오류(브리핑은 그대로): {type(exc).__name__}: {exc}")
-        return {"status": "error", "error": f"{type(exc).__name__}", "letter": letter_lines([]), "rows": [], "warnings": [], "errors": [str(exc)]}
+        print(f"[{book.cfg_key}] 장부 오류(브리핑은 그대로): {type(exc).__name__}: {exc}")
+        return {"status": "error", "error": f"{type(exc).__name__}", "letter": letter_lines([], book), "rows": [], "warnings": [], "errors": [str(exc)]}
     for w in res.get("warnings", []):
-        print(f"[puddle_v31] 경고: {w}")
+        print(f"[{book.cfg_key}] 경고: {w}")
     return res
 
 
-def main(argv=None) -> None:
-    ap = argparse.ArgumentParser(description="웅덩이 v3.1 가상 장부 미리보기")
+def main(argv=None, book: Book = BOOK) -> None:
+    ap = argparse.ArgumentParser(description=f"{book.label} 가상 장부 미리보기")
     ap.add_argument("--dry-run", action="store_true", help="DB·시트에 쓰지 않음(로컬은 늘 미리보기)")
     ap.add_argument("--as-of", default=None)
     a = ap.parse_args(argv)
@@ -487,7 +576,7 @@ def main(argv=None) -> None:
 
     cfg = load_config()
     as_of = a.as_of or latest_closed_trading_day(datetime.now(US_EASTERN))
-    res = run(cfg, as_of, dry_run=True)
+    res = run(cfg, as_of, dry_run=True, book=book)
     print(json.dumps({k: res[k] for k in ("status", "start_date", "letter", "warnings")}, ensure_ascii=False, indent=1, default=str))
     for r in res.get("diag") or []:
         print(r)

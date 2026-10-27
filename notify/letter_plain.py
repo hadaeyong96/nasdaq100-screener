@@ -357,7 +357,8 @@ def research_lines(cfg: dict, ph: dict, today_kst) -> list[str]:
 
 
 def lab_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
-    """■ 가상 실험 (실제 돈 아님) — 웅덩이 v3.1 줄(engine.puddle_v31.letter_lines) + (월요일만) 필터 비교 + 연구 소식."""
+    """■ 가상 실험 (실제 돈 아님) — 웅덩이 장부 줄(summary["puddle_v31"] 칸, 2026-10-27부터 v3.2) + (월요일만) 필터 비교
+    + 반등 확인 장부 줄(summary["puddle_rebound"] 칸, 지금 v2) + 연구 소식."""
     pv = summary.get("puddle_v31") or {}
     lines = list(pv.get(edition) or [])
     today = summary.get("letter_today_kst")
@@ -365,10 +366,11 @@ def lab_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
     if gap is not None and today is not None and pd.Timestamp(today).dayofweek == 0:
         lines.append(phrase(ph, "lab.filter_compare", today, e=f"{abs(gap):.1f}", 방향="앞섭니다" if gap >= 0 else "뒤처집니다"))
     rb = summary.get("puddle_rebound") or {}
-    lines += list(rb.get(edition) or [])  # 웅덩이 반등 확인 장부(2026-10-24) — v3.1 줄 아래
-    vs = rb.get("vs_v31_pp")
+    lines += list(rb.get(edition) or [])  # 웅덩이 반등 확인 장부(2026-10-24, 2026-10-27부터 v2) — 웅덩이 장부 줄 아래
+    vs = rb.get("vs_v31_pp")  # 비교 B(v2는 웅덩이 v3.2) 대비
     if rb.get(edition) and vs is not None and today is not None and pd.Timestamp(today).dayofweek == 0:
-        lines.append(phrase(ph, "rebound.vs_v31", today, e=f"{abs(vs):.1f}", 방향="앞섭니다" if vs >= 0 else "뒤처집니다"))
+        lines.append(phrase(ph, "rebound.vs_v31", today, e=f"{abs(vs):.1f}", 방향="앞섭니다" if vs >= 0 else "뒤처집니다",
+                            b=rb.get("b_label") or "v3.2"))
     lines += research_lines(cfg, ph, today)
     return lines
 
@@ -404,6 +406,9 @@ def _shorten(title: str) -> str:
     return cnews.shorten(title)
 
 
+PUDDLE_ERROR_NOTES = ("웅덩이 v3.1 장부 오류", "웅덩이 반등 확인 장부 오류", "웅덩이 v3.2 장부 오류", "웅덩이 반등 확인 v2 장부 오류")
+
+
 def problems(summary: dict, ph: dict, edition: str) -> list[str]:
     """자료 문제(있을 때만 머리줄 아래 한 줄): 자료 지연·뉴스 일부 실패·실적 확인 실패·장부 오류·지표 누락·시트 입력 오류."""
     day = _day(summary)
@@ -424,6 +429,10 @@ def problems(summary: dict, ph: dict, edition: str) -> list[str]:
         else:
             detail = max((f[f.find("("):] for f in fails if "(" in f), default="")
         out.append(phrase(ph, "problem.earnings_check", day, 상세=detail))
+    skey = "shares_personal" if edition == PERSONAL else "shares_group"
+    miss = [f for f in (pv.get(skey), rb.get(skey)) if f]  # 시가총액 순위에서 뺀 종목(주식 수 없음, 2026-10-27) — 두 장부 같은 목록이면 한 번
+    if miss:
+        out.append(phrase(ph, "problem.shares_missing", day, 상세=max(miss, key=len)))
     if pv.get("error"):
         out.append(phrase(ph, "problem.puddle_error", day))
     if rb.get("error"):
@@ -431,7 +440,7 @@ def problems(summary: dict, ph: dict, edition: str) -> list[str]:
     if (summary.get("curve_chart") or {}).get("error"):
         out.append(phrase(ph, "problem.chart_error", day))
     for note in info.get("notes") or []:
-        if note.startswith("실적 확인 실패") or note in ("웅덩이 v3.1 장부 오류", "웅덩이 반등 확인 장부 오류"):
+        if note.startswith("실적 확인 실패") or note in PUDDLE_ERROR_NOTES:
             continue
         out.append(note.rstrip(".") + ".")
     if summary.get("fred_missing"):

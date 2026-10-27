@@ -54,7 +54,7 @@ def test_already_run_rewrites_wrong_v31_row(tmp_path, monkeypatch):
 
     e31.run({"puddle_v31": {"enabled": True}}, start, p=pv.Params(n_random=5), **kw)
     written = []
-    monkeypatch.setattr(eng, "_write_sheet", lambda result, pc, client, sw, rows: written.extend(rows))
+    monkeypatch.setattr(eng, "_write_sheet", lambda result, pc, client, sw, rows, book=None: written.extend(rows))
     r2 = _run(tmp_path, start, monkeypatch)
     assert r2["status"] == "already"
     from store import virtual_books as vbstore

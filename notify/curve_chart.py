@@ -1,6 +1,6 @@
-"""가상 실험 수익곡선 겹침 그래프 (2026-10-26) — QQQ 기준(시작일 = 100), 웅덩이 v3.1·웅덩이 반등 확인.
+"""가상 실험 수익곡선 겹침 그래프 (2026-10-26) — QQQ 기준(시작일 = 100), 웅덩이 v3.2·웅덩이 반등 확인 v2(2026-10-27 시총 판으로 교체).
 
-그리기만 한다: 가상 장부 DB(data/virtual_books.db)의 일별 기록(puddle_v31_daily·puddle_rebound_daily)을 읽기만 하고
+그리기만 한다: 가상 장부 DB(data/virtual_books.db)의 일별 기록(TABLES = puddle_v32_daily·puddle_rebound_v2_daily)을 읽기만 하고
 장부 계산·기록은 건드리지 않는다. 월요일(chart.weekday) 편지에는 그림으로, 매일 HTML 보고서에는 「▶ 그래프로 보기」 맨 위에.
 단체방판 그림에는 종목명을 쓰지 않는다(매매 표시만).
 
@@ -22,10 +22,12 @@ WAITING = "기록이 쌓이는 중입니다({n}일째)."
 PHOTO_CAPTION = "가상 실험 성적 그래프입니다."
 LINES = {  # 열 이름: (표시 이름, 색, 선 모양)
     "qqq": ("QQQ", "#8a8a8a", "--"),
-    "v31": ("v3.1", "#f28c28", "-"),
-    "rebound": ("반등 확인", "#1f6fd1", "-"),
+    "v31": ("v3.2", "#f28c28", "-"),  # 열 이름 v31·rebound는 그대로(첫 웅덩이 장부·반등 확인 장부 칸)
+    "rebound": ("반등 확인 v2", "#1f6fd1", "-"),
 }
-LEGEND = {"qqq": "QQQ 그냥 보유", "v31": "웅덩이 v3.1", "rebound": "웅덩이 반등 확인"}
+LEGEND = {"qqq": "QQQ 그냥 보유", "v31": "웅덩이 v3.2", "rebound": "웅덩이 반등 확인 v2"}
+BAND_LABEL = "v3.2 무작위 10~90%"
+TABLES = ("puddle_v32_daily", "puddle_rebound_v2_daily")  # (웅덩이 장부, 반등 확인 장부) 일별 기록 표 — 옛 v3.1 표는 보관본
 AHEAD_COLOR, BEHIND_COLOR, BAND_COLOR = "#2e9d4f", "#d64545", "#f28c28"
 WEEKDAYS = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
 FONT_CANDIDATES = ("NanumGothic", "NanumBarunGothic", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR", "AppleGothic")
@@ -37,9 +39,9 @@ FONT_CANDIDATES = ("NanumGothic", "NanumBarunGothic", "Malgun Gothic", "Noto San
 def curve_frame(v31_rows: list[dict], rb_rows: list[dict], start: str | None = None) -> pd.DataFrame:
     """일별 기록 → 시작일 = 100으로 맞춘 표(날짜 순).
 
-    입력: v31_rows(puddle_v31_daily 줄: date·v31·qqq·random), rb_rows(puddle_rebound_daily 줄: date·value·qqq), start(시작일)
+    입력: v31_rows(웅덩이 장부 일별 줄: date·v31·qqq·random), rb_rows(반등 확인 장부 일별 줄: date·value·qqq), start(시작일)
     출력: DataFrame(index 날짜) 열 qqq·v31·rebound·band_lo·band_hi — 각 선 = 그날 세후 평가금액 ÷ 시작일 평가금액 × 100.
-         띠(band) = v3.1 무작위 경로 10·90백분위를 v3.1 시작일 값으로 나눈 것. 없는 값은 NaN."""
+         띠(band) = 웅덩이 장부 무작위 경로 10·90백분위를 그 장부 시작일 값으로 나눈 것. 없는 값은 NaN."""
     v = {r["date"]: r for r in v31_rows}
     b = {r["date"]: r for r in rb_rows}
     dates = sorted(set(v) | set(b))
@@ -92,7 +94,7 @@ def trade_marks(rows: list[dict], frame: pd.DataFrame, col: str) -> list[dict]:
 
 
 def end_labels(frame: pd.DataFrame) -> list[tuple[str, str, float]]:
-    """오른쪽 끝 글씨: [(열, 글, y)] 예 ("v31", "v3.1 100.4 (+0.4%p)", 100.4). QQQ는 값만."""
+    """오른쪽 끝 글씨: [(열, 글, y)] 예 ("v31", "v3.2 100.4 (+0.4%p)", 100.4). QQQ는 값만."""
     out = []
     q = frame["qqq"].dropna()
     for col in ("qqq", "v31", "rebound"):
@@ -131,7 +133,7 @@ def is_chart_day(today_kst, cfg: dict) -> bool:
 
 
 def read_rows(db_path: Path) -> tuple[list[dict], list[dict]]:
-    """가상 장부 DB → (v3.1 일별 줄, 반등 확인 일별 줄). 표가 없으면 빈 목록(읽기만)."""
+    """가상 장부 DB → (웅덩이 v3.2 일별 줄, 반등 확인 v2 일별 줄). 표가 없으면 빈 목록(읽기만)."""
     from store import virtual_books as vbstore
 
     conn = vbstore.connect(db_path)
@@ -142,7 +144,7 @@ def read_rows(db_path: Path) -> tuple[list[dict], list[dict]]:
             except Exception:  # noqa: BLE001 — 표 없음(장부 첫 저장 전)
                 return []
 
-        return rows("puddle_v31_daily"), rows("puddle_rebound_daily")
+        return rows(TABLES[0]), rows(TABLES[1])
     finally:
         conn.close()
 
@@ -200,8 +202,8 @@ def render(frame: pd.DataFrame, marks: list[dict], path: Path, *, personal: bool
     labels.append(title)
     if frame["band_lo"].notna().any():
         ax.fill_between(x, frame["band_lo"], frame["band_hi"], color=BAND_COLOR, alpha=0.08, linewidth=0,
-                        label="v3.1 무작위 10~90%")
-        labels.append("v3.1 무작위 10~90%")
+                        label=BAND_LABEL)
+        labels.append(BAND_LABEL)
     segments = {}
     for col in ("v31", "rebound"):
         if frame[col].notna().any():
