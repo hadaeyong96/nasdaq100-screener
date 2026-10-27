@@ -385,5 +385,6 @@ def test_research_news_in_progress_on_monday(cfg):
     from notify import letter
 
     lines = letter.research_lines(cfg, pd.Timestamp("2026-10-26"))
-    assert lines[-1] == "연구 중: 상승장 대형주 웅덩이 v3.1(가상 기록, 12개월)"
+    assert lines[-1] == ("연구 중: 웅덩이 v3.2(시가총액 상위 10, 가상 기록, 12개월) · "
+                         "웅덩이 반등 확인 v2(시가총액 상위 10, 가상 기록, 12개월)")  # 2026-10-27 시총 판으로 재시작
     assert letter.research_lines(cfg, pd.Timestamp("2026-10-27")) == []

@@ -57,6 +57,7 @@ def _no_real_telegram(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pv31, "_default_universe", _no_net_pv)
     monkeypatch.setattr(pv31, "_default_history", _no_net_pv)
+    monkeypatch.setattr(pv31, "_default_shares", _no_net_pv)  # 웅덩이 v3.2·반등 확인 v2(2026-10-27) 시가총액용 주식 수
     monkeypatch.setattr(pv31.FilingChecker, "_edgar", _no_net_pv)  # 웅덩이 반등 확인(2026-10-24)도 같은 World·FilingChecker를 쓴다
     # 아침 편지 v3(2026-10-24): 뉴스 RSS·S&P500·SOXX 종가는 네트워크라 막는다 — 주입하지 않은 테스트에선 뉴스 실패·지수 줄 없음
     from data import news as dnews

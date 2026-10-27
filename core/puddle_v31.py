@@ -67,6 +67,40 @@ def top_by_dollar_volume(dv: dict[str, float], members: list[str], n: int = 10) 
     return [t for _, t in sorted(best.values(), key=lambda x: (-x[0], x[1]))[:n]]
 
 
+def top_by_market_cap(closes: dict[str, float], shares: dict[str, float | None], dv: dict[str, float], members: list[str],
+                      n: int = 10, whole: set[str] | frozenset = frozenset()) -> tuple[list[str], dict[str, float], list[str]]:
+    """웅덩이 v3.2·반등 확인 v2 대상(docs/prereg/puddle_v32_forward.md 2-2): 그날 종가 × 발행 주식 수 → 시가총액 상위 n.
+
+    입력: closes·dv(그날 종가·20일 평균 거래대금), shares(티커 → 주식 수, 못 받으면 None), members(구성 종목),
+          whole(주식 수가 회사 전체 보통주인 티커 — EDGAR 값).
+    같은 회사(COMPANY)는 시가총액을 합쳐 한 회사로, 거래 티커는 거래대금 큰 쪽(모르면 알파벳 앞). 한 종류라도 주식 수가 없으면 회사 전체 제외.
+    whole 티커가 있는 회사는 그 주식 수 × 거래 티커 종가 하나로 센다(이중 계산 방지).
+    출력: (상위 n 거래 티커 — 시가총액 큰 순·같으면 티커 순, {거래 티커: 회사 시가총액(달러)}, 주식 수 없는 티커 목록)."""
+    groups: dict[str, list[str]] = {}
+    for t in dict.fromkeys(members):
+        c = closes.get(t)
+        if c is None or not np.isfinite(c):
+            continue
+        groups.setdefault(COMPANY.get(t, t), []).append(t)
+    caps: dict[str, float] = {}
+    missing: list[str] = []
+    for tks in groups.values():
+        lack = [t for t in tks if not (shares.get(t) is not None and np.isfinite(shares[t]) and shares[t] > 0)]
+        if lack:
+            missing += lack
+            continue
+
+        def dvv(t):
+            v = dv.get(t)
+            return float(v) if v is not None and np.isfinite(v) else -1.0
+
+        trade = sorted(tks, key=lambda t: (-dvv(t), t))[0]
+        w = sorted(t for t in tks if t in whole)
+        caps[trade] = float(shares[w[0]]) * float(closes[trade]) if w else sum(float(shares[t]) * float(closes[t]) for t in tks)
+    top = [t for t, _ in sorted(caps.items(), key=lambda kv: (-kv[1], kv[0]))[:n]]
+    return top, {t: caps[t] for t in top}, sorted(missing)
+
+
 def has_earnings_filing(filings: list[dict], window_start, signal_date) -> bool:
     """접수 목록 [{form, filingDate, items}] 중 10-Q·10-K·8-K(Item 2.02)의 접수일이 [window_start, signal_date] 안에 있는가."""
     a, b = pd.Timestamp(window_start).normalize(), pd.Timestamp(signal_date).normalize()

@@ -74,7 +74,7 @@ def test_trade_marks():
 def test_end_labels_text():
     idx = pd.bdate_range(START, periods=2)
     f = pd.DataFrame({"qqq": [100, 100.0], "v31": [100, 100.4], "rebound": [100, 99.75]}, index=idx)
-    assert [t for _, t, _ in cc.end_labels(f)] == ["QQQ 100.0", "v3.1 100.4 (+0.4%p)", "반등 확인 99.8 (-0.2%p)"]
+    assert [t for _, t, _ in cc.end_labels(f)] == ["QQQ 100.0", "v3.2 100.4 (+0.4%p)", "반등 확인 v2 99.8 (-0.2%p)"]  # 2026-10-27 시총 판
 
 
 def test_render_personal_has_tickers_group_has_none(tmp_path):
@@ -87,7 +87,7 @@ def test_render_personal_has_tickers_group_has_none(tmp_path):
     assert all(t not in lab for lab in g["labels"] for t in TICKERS)
     assert "가상 실험 성적 — QQQ 기준 (시작 10/23 = 100)" in g["labels"]
     assert any(lab.startswith("가상 1억 · 실제 돈 아님 · 미국 ") for lab in g["labels"])
-    assert any(lab.startswith("v3.1 ") and "%p" in lab for lab in g["labels"])
+    assert any(lab.startswith("v3.2 ") and "%p" in lab for lab in g["labels"])
     from matplotlib import image
 
     h, w = image.imread(str(g["path"])).shape[:2]

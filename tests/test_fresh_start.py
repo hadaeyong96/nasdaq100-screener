@@ -42,7 +42,8 @@ def test_defaults_everything_off(cfg):
     from engine import virtual_books as vbooks
 
     assert vbooks.run_safely(cfg) is None  # 장부·장부 시트 쓰기·동전주 알림 모두 안 돈다
-    assert cfg["research_news"]["in_progress"] == ["상승장 대형주 웅덩이 v3.1(가상 기록, 12개월)"]  # 2026-10-23 웅덩이 v3.1 가상 기록
+    assert cfg["research_news"]["in_progress"] == ["웅덩이 v3.2(시가총액 상위 10, 가상 기록, 12개월)",
+                                                   "웅덩이 반등 확인 v2(시가총액 상위 10, 가상 기록, 12개월)"]  # 2026-10-27 시총 판으로 재시작
     assert [x["name"] for x in cfg["research_news"]["finished"]] == ["상승장 RSI 눌림 전략"]  # 끝난 기록만 남김
 
 

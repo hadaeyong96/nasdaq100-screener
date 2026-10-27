@@ -2327,8 +2327,8 @@ def main() -> None:
             holdings = _safe_step(summary, "내 돈", lambda: _read_holdings(cfg))
             _safe_step(summary, "12월 공제 안내", lambda: _attach_dec_tax(summary, cfg, holdings=holdings))
             _safe_step(summary, "편지 기본 칸", lambda: _attach_letter_v3(summary, cfg, holdings))
-            _safe_step(summary, "웅덩이 v3.1 장부", lambda: _attach_puddle_v31(summary, cfg))
-            _safe_step(summary, "웅덩이 반등 확인 장부", lambda: _attach_puddle_rebound(summary, cfg))
+            _safe_step(summary, "웅덩이 v3.2 장부", lambda: _attach_puddle_v31(summary, cfg))
+            _safe_step(summary, "웅덩이 반등 확인 v2 장부", lambda: _attach_puddle_rebound(summary, cfg))
             _safe_step(summary, "그래프", lambda: _attach_curve_chart(summary, cfg))
             _safe_step(summary, "웅덩이 후보 차트", lambda: _attach_candidate_charts(summary))
             _safe_step(summary, "뉴스", lambda: _attach_news(summary, cfg))
@@ -2527,30 +2527,32 @@ def _attach_letter_v3(summary: dict, cfg: dict, holdings: dict | None, *, qqqm_f
 
 
 def _attach_puddle_v31(summary: dict, cfg: dict, run_fn=None) -> None:
-    """웅덩이 v3.1 가상 장부(2026-10-23, engine/puddle_v31) — 편지 줄과 점검 메모(실적 확인 실패)만 붙인다. 오류는 장부만 건너뛴다."""
-    from engine import puddle_v31
+    """웅덩이 가상 장부 칸(summary["puddle_v31"]) — 2026-10-27부터 웅덩이 v3.2(시가총액 상위 10, engine/puddle_v32).
+    v3.1 장부(2026-10-23)는 보관(config puddle_v31.enabled false). 편지 줄과 점검 메모(실적 확인 실패)만 붙인다. 오류는 장부만 건너뛴다."""
+    from engine import puddle_v32
 
     if summary.get("as_of") is None:
         return
-    res = (run_fn or puddle_v31.run_safely)(cfg, summary["as_of"])
+    res = (run_fn or puddle_v32.run_safely)(cfg, summary["as_of"])
     if not res:
         return
-    summary["puddle_v31"] = res.get("letter") or {}
+    summary["puddle_v31"] = dict(res.get("letter") or {})
     note = summary["puddle_v31"].get("check_personal")
     if res.get("status") == "error":
-        note = "웅덩이 v3.1 장부 오류"
+        summary["puddle_v31"]["error"] = True
+        note = "웅덩이 v3.2 장부 오류"
     if note and summary.get("letter_check") is not None:
         summary["letter_check"].setdefault("notes", []).append(note)
 
 
 def _attach_puddle_rebound(summary: dict, cfg: dict, run_fn=None) -> None:
-    """웅덩이 반등 확인 가상 장부(2026-10-24, engine/puddle_rebound) — ■ 웅덩이 후보·■ 가상 실험 줄과 점검 메모. 오류는 장부만 건너뛴다.
-    v3.1 장부 다음에 돈다(비교 B = v3.1 일별 기록을 읽는다)."""
-    from engine import puddle_rebound
+    """반등 확인 가상 장부 칸(summary["puddle_rebound"]) — 2026-10-27부터 웅덩이 반등 확인 v2(시가총액 상위 10, engine/puddle_rebound_v2).
+    ■ 웅덩이 후보·■ 가상 실험 줄과 점검 메모. 오류는 장부만 건너뛴다. v3.2 장부 다음에 돈다(비교 B = v3.2 일별 기록을 읽는다)."""
+    from engine import puddle_rebound_v2
 
     if summary.get("as_of") is None:
         return
-    res = (run_fn or puddle_rebound.run_safely)(cfg, summary["as_of"])
+    res = (run_fn or puddle_rebound_v2.run_safely)(cfg, summary["as_of"])
     if not res:
         return
     summary["puddle_rebound"] = dict(res.get("letter") or {})
@@ -2558,7 +2560,7 @@ def _attach_puddle_rebound(summary: dict, cfg: dict, run_fn=None) -> None:
     if res.get("status") == "error":
         summary["puddle_rebound"]["error"] = True
         if summary.get("letter_check") is not None:
-            summary["letter_check"].setdefault("notes", []).append("웅덩이 반등 확인 장부 오류")
+            summary["letter_check"].setdefault("notes", []).append("웅덩이 반등 확인 v2 장부 오류")
 
 
 def _attach_curve_chart(summary: dict, cfg: dict, out_dir: Path | None = None, db_path=None) -> None:
@@ -2570,7 +2572,7 @@ def _attach_curve_chart(summary: dict, cfg: dict, out_dir: Path | None = None, d
     if summary.get("as_of") is None:
         return
     ch = cfg.get("chart") or {}
-    start = (cfg.get("puddle_v31") or {}).get("start_date") or None
+    start = (cfg.get("puddle_v32") or {}).get("start_date") or None  # 2026-10-27부터 v3.2·반등 확인 v2 기록
     try:
         v31_rows, rb_rows = curve_chart.read_rows(Path(db_path or vbstore.VBOOKS_DB_PATH))
         as_of = summary["as_of"]

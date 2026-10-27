@@ -164,7 +164,7 @@ savings_day: 17
 # 규칙 값은 사전 등록대로 core/puddle_v31.Params에 고정(수정 = 새 장부). 여기는 운영 값만.
 # 시작일·시작 환율: main 병합 뒤 첫 정규 실행(GitHub Actions)이 DB에 고정 → 그 뒤 여기에 적는다(값이 있으면 이것이 우선).
 puddle_v31:
-  enabled: true
+  enabled: false # 2026-10-27 보관(시가총액 상위 10 v3.2로 재시작) — DB 기록은 지우지 않음, 태그 archive-puddle-v31-20261027
   start_date: "2026-10-23" # 첫 정규 실행(Actions)의 기준일 — 2026-10-25 DB 기록에서 고정
   start_fx: "1323.6600341796875" # 그날 환율(원/달러, DB 기록 그대로) — 2026-10-25 고정
   sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 v3.1 (가상)」 탭에만 쓴다
@@ -172,13 +172,30 @@ puddle_v31:
 # ── 웅덩이 반등 확인 가상 1억 장부 (2026-10-24, docs/prereg/puddle_rebound_forward.md, 태그 puddle-rebound-prereg) ──
 # 규칙은 사전 등록 문서가 기준(수정 = 새 장부). 실제 돈 없음. 저장·시트 쓰기는 GitHub Actions에서만.
 puddle_rebound:
-  enabled: true
+  enabled: false # 2026-10-27 보관(반등 확인 v2로 재시작) — DB 기록은 지우지 않음
   start_date: "2026-10-23" # 첫 정규 실행(Actions)의 기준일 — 2026-10-25 DB 기록에서 고정
   start_fx: "1323.6600341796875" # 그날 환율(원/달러, DB 기록 그대로) — 2026-10-25 고정
   sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 반등 확인 (가상)」 탭에만 쓴다
 
+# ── 웅덩이 v3.2 (시가총액 상위 10) 가상 1억 장부 (2026-10-27, docs/prereg/puddle_v32_forward.md, 태그 puddle-v32-prereg) ─────
+# 규칙은 v3.1 그대로, 대상만 시가총액 상위 10. 실제 돈 없음. 저장·시트 쓰기는 GitHub Actions에서만.
+# 시작일·시작 환율: main 병합 뒤 첫 정규 실행(Actions)이 DB에 고정 → 그 뒤 여기에 적는다(값이 있으면 이것이 우선).
+puddle_v32:
+  enabled: true
+  start_date: null # 첫 정규 실행 뒤 DB 기록에서 고정
+  start_fx: null
+  sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 v3.2 (가상·시총)」 탭에만 쓴다(첫 기록 때 옛 v3.1 탭을 이 이름으로 바꾸고 비움)
+
+# ── 웅덩이 반등 확인 v2 (시가총액 상위 10) 가상 1억 장부 (2026-10-27, docs/prereg/puddle_rebound_v2_forward.md, 태그 puddle-rebound-v2-prereg) ──
+# 규칙은 반등 확인 그대로, 대상만 시가총액 상위 10, 비교 B = 웅덩이 v3.2. v3.2 장부 다음에 돈다.
+puddle_rebound_v2:
+  enabled: true
+  start_date: null # 첫 정규 실행 뒤 DB 기록에서 고정
+  start_fx: null
+  sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 반등 확인 v2 (가상·시총)」 탭에만 쓴다(첫 기록 때 옛 탭을 이 이름으로 바꾸고 비움)
+
 # ── 가상 실험 수익곡선 그래프 (2026-10-26, notify/curve_chart) — 그리기만(장부 계산·기록 그대로) ─────────────
-# QQQ 기준(시작일 = 100) 웅덩이 v3.1·반등 확인 겹침. 매일 HTML 「▶ 그래프로 보기」 맨 위, 편지에는 weekday(한국 날짜)에만 그림으로.
+# QQQ 기준(시작일 = 100) 웅덩이 v3.2·반등 확인 v2 겹침(2026-10-27 시총 판으로 교체). 매일 HTML 「▶ 그래프로 보기」 맨 위, 편지에는 weekday(한국 날짜)에만 그림으로.
 # ── 매일 예약 실행 (2026-10-27, .github/workflows/daily.yml) ─────────────
 # 예약 4개(KST 07:37·08:07·08:37·09:07) 중 먼저 새 종가를 받은 실행이 편지를 보내고, 나머지는 기준일당 1회 규칙으로 건너뛴다.
 # 데이터 지연 알림은 마지막 예약(또는 수동 실행)에서만 보낸다 — 앞 예약에서 지연이면 다음 예약이 다시 확인.
@@ -461,7 +478,8 @@ research_news:
     plain_result: "2000~21년 QQQ에서만 그냥 보유보다 나았고, 다른 시장에서는 못 이겼어요." # 쉬운 문장 편지용(2026-10-23)
     date: 2026-10-22
   in_progress: # 진행 중 가상 기록(월요일 연구 소식에 「연구 중: …」 한 줄)
-    - "상승장 대형주 웅덩이 v3.1(가상 기록, 12개월)"
+    - "웅덩이 v3.2(시가총액 상위 10, 가상 기록, 12개월)"
+    - "웅덩이 반등 확인 v2(시가총액 상위 10, 가상 기록, 12개월)"
   finished:
     - name: "상승장 RSI 눌림 전략"
       desc: "200일선 위 상승장에서 주봉 MACD 상승 + RSI 눌림 반등 때 사기"
