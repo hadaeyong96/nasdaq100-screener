@@ -6,13 +6,20 @@ name: Daily screener
 # 11월~3월(EST) KST 06:00 — 08:07이면 여름 3시간 7분, 겨울 2시간 7분 여유. 날짜 계산은 그대로:
 # 편지·월간 성적표는 한국 날짜(06:47과 같은 날), 12월 공제 안내는 미국 기준일, 확정 봉 판정은 미국 동부 시각(같은 미국 날 저녁).
 # 정각(:00)은 GitHub 예약 실행이 몰려 지연되기 쉬워 피한다 (2026-09-30 UTC 22:00 예약이 약 3시간 늦게 돌았다).
+# 2026-10-27 예약 4개: 23:07 하나는 실제로 1시간 55분~2시간 53분 늦게 돌았다(10/21~10/27) — 도착 시각이 들쭉날쭉.
+# KST 07:37·08:07·08:37·09:07(UTC 22:37·23:07·23:37·00:07) 중 먼저 새 종가를 받은 실행이 편지를 보내고,
+# 나머지는 기준일당 1회 규칙(state DB last_processed_date + 발송 기록, 월요일 주간 편지는 하루 한 번 더)으로 아무것도 안 한다.
+# 데이터 지연 알림은 마지막 예약(config.yaml run_schedule.final_cron)·수동 실행에서만 보낸다.
 on:
   schedule:
+    - cron: "37 22 * * *"
     - cron: "7 23 * * *"
+    - cron: "37 23 * * *"
+    - cron: "7 0 * * *"
   workflow_dispatch: {}
 
-# 예약 실행과 수동 실행이 겹치면 드라이브 state DB를 서로 덮어쓴다 -> 한 번에 하나만.
-# 진행 중인 실행은 취소하지 않고 끝날 때까지 기다린다.
+# 예약 실행끼리·수동 실행과 겹치면 드라이브 state DB를 서로 덮어쓴다 -> 한 번에 하나만(그룹 하나).
+# 진행 중인 실행은 취소하지 않고 끝날 때까지 기다린다 — 다음 실행은 앞 실행이 올린 DB를 받아 중복 발송을 막는다.
 concurrency:
   group: daily-screener
   cancel-in-progress: false
@@ -81,6 +88,8 @@ jobs:
           GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
           # 8번 가치평가 장부의 EDGAR 요청 User-Agent(연락처) — 없으면 8번만 오류로 기다리고 나머지는 그대로
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          # 어느 예약이 돌았는지(수동 실행은 빈 값) — 마지막 예약 전에는 데이터 지연 알림을 미룬다(engine/daily._delay_notice_held)
+          SCHEDULE_CRON: ${{ github.event.schedule }}
         run: |
           python -m engine.daily --mode live
           python -m engine.daily --mode paper --no-send

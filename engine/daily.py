@@ -1962,7 +1962,15 @@ def run(cfg: dict, mode: str, do_replay: bool, dry_run: bool, sheets_client=None
                         f"→ {rebuild_from.date()} 이후 상태를 다시 계산합니다."
                     )
 
-        if rebuild_from is None and last_processed_str is not None and actual_date <= pd.Timestamp(last_processed_str).date():
+        if (rebuild_from is None and last_processed_str is not None
+                and actual_date <= pd.Timestamp(last_processed_str).date()
+                and mode == "live" and _weekly_letter_due(conn, actual_date, cfg)):
+            # 2026-10-27: 주간 편지 요일(한국 월요일)은 기준일이 토요일 편지와 같은 미국 금요일이라 여기서 늘 건너뛰어
+            # 월요일 편지가 발송 단계까지 가지 못했다(10/26 고친 발송 키만으로는 부족). 상태는 이미 처리했으니
+            # DB에는 아무것도 쓰지 않고(dry_run) 저장된 상태로 편지만 다시 만든다 — 같은 월요일 두 번째 실행은 발송 기록으로 건너뜀.
+            print(f"[daily] 기준일 {actual_date.isoformat()}은 이미 처리됨 — 주간 편지 요일이라 상태는 그대로 두고 편지만 다시 만듭니다.")
+            dry_run = True
+        elif rebuild_from is None and last_processed_str is not None and actual_date <= pd.Timestamp(last_processed_str).date():
             conn.close()
             reason = (
                 f"기준일 {actual_date.isoformat()}은 이미 처리됨"
@@ -2216,6 +2224,24 @@ def _write_outputs(summary: dict, cfg: dict | None = None) -> None:
     (OUTPUT_DIR / f"signals_{mode}_{as_of_str}.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def _weekly_letter_due(conn, actual_date, cfg: dict) -> bool:
+    """오늘(한국 날짜)이 주간 편지 요일이고 그 주간 발송 키(notify.telegram.notify_key)가 아직 기록되지 않았는지.
+    입력: 실전 DB 연결, 기준일(date), cfg. 출력: bool"""
+    today = pd.Timestamp(datetime.now(KST).astimezone(KST).date())
+    key = telegram.notify_key(actual_date.isoformat(), {"letter_today_kst": today}, cfg)
+    return key != actual_date.isoformat() and not db.has_notified(conn, key)
+
+
+def _delay_notice_held(cfg: dict) -> bool:
+    """데이터 지연 알림을 이번 실행에서는 미룰지 (2026-10-27 예약 여러 개).
+    GitHub 예약 실행(SCHEDULE_CRON = github.event.schedule)이 마지막 예약(run_schedule.final_cron)이 아니면
+    다음 예약이 새 종가로 편지를 보낼 수 있으니 지연 알림을 보내지 않는다. 수동 실행·로컬(값 없음)은 지금처럼 보낸다.
+    입력: cfg. 출력: bool"""
+    cron = (os.environ.get("SCHEDULE_CRON") or "").strip()
+    final = str((cfg.get("run_schedule") or {}).get("final_cron") or "").strip()
+    return bool(cron and final and cron != final)
+
+
 def _resend_last(cfg: dict, mode: str, force_no_send: bool) -> None:
     """--resend(P3.4 3번): 상태를 다시 처리하지 않고 마지막 기준일의 보고서·글을
     다시 보낸다. 중복 발송 방지 기록(store.db의 notifications)은 확인하지 않는다.
@@ -2320,7 +2346,10 @@ def main() -> None:
         render_editions(summary, cfg)
 
     if not args.dry_run:
-        if summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 배너 보고서 한 통만 보낸다(지연 문구는 첨부 설명)
+        if summary.get("stale") and _delay_notice_held(cfg):  # 마지막 예약 전: 다음 예약 실행이 다시 확인한다
+            sent_path = None
+            print("[daily] 데이터 지연 — 마지막 예약 실행이 아니라 지연 알림은 보내지 않습니다(다음 예약 실행에서 다시 확인).")
+        elif summary.get("stale"):  # P3.2 2번: 데이터 지연 모드 — 지연 배너 보고서 한 통만 보낸다(지연 문구는 첨부 설명)
             sent_path = telegram.send_delay_notice(summary, cfg, force_no_send=args.no_send)
         else:
             try:
