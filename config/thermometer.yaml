@@ -1,0 +1,75 @@
+# 시장 온도계 (0~100도) 설정 — thermometer/ (2026-10-28). 모든 기준값·구간·예약을 여기서 고친다.
+# 시장 상태를 보는 온도계일 뿐 매매 신호가 아니다. 가상 장부(puddle_v32·puddle_rebound_v2)에는 연결하지 않는다.
+
+item_max: 20 # 항목 하나의 최고 도수 (5개 × 20 = 100도)
+
+# ① 150일선(빠른 신호) ② 200일선(확인 신호): QQQ 종가의 이격률 x% → item_max × clip((x − low) / (high − low), 0, 1)
+sma:
+  ticker: QQQ
+  fast_days: 150
+  slow_days: 200
+  gap_low_pct: -10.0 # 이하면 0도
+  gap_high_pct: 10.0 # 이상이면 20도
+
+# ③ 시장 폭: 그날 나스닥100 구성 종목 중 종가 > 자기 SMA50 비율 p% → p ÷ 5
+breadth:
+  sma_days: 50
+  min_coverage: 0.8 # 구성 종목 중 SMA50을 계산할 수 있는 종목이 이 비율 미만이면 "자료 없음"
+  recovery_lookback: 10 # 직전 10거래일 안에
+  recovery_low_pct: 20.0 # 20% 미만이었다가
+  recovery_high_pct: 50.0 # 50% 이상이 되면 "강한 회복"
+
+# ④ VIX v → item_max × clip((high − v) / (high − low), 0, 1)
+vix:
+  ticker: ^VIX
+  high: 35.0 # 이상이면 0도
+  low: 12.0 # 이하면 20도
+  peak_lookback: 21 # 직전 21거래일(오늘 제외) 최고가(장중 고가)가
+  peak_mark: 25.0 # 이 값 이상이면 "(지난달 {최고}에서 하락)" 덧붙임
+
+# ⑤ 공포·탐욕 f → f ÷ 5 (아침 편지와 같은 data.macro.get_fear_greed 값)
+fear_greed:
+  stale_days: 3 # 기준일보다 3일 넘게 오래된 값이면 "자료 없음"
+  labels: # f가 max 이하인 첫 구간 이름
+    - {max: 44, label: 공포}
+    - {max: 55, label: 중립}
+    - {max: 100, label: 탐욕}
+
+# 구간: 합계 온도(정수)가 max 이하인 첫 구간
+zones:
+  - {max: 20, name: 얼음, desc: 극심한 공포·약세}
+  - {max: 40, name: 차가움, desc: 약세}
+  - {max: 60, name: 미지근함, desc: 회복 진행}
+  - {max: 80, name: 따뜻함, desc: 건강한 상승}
+  - {max: 100, name: 뜨거움, desc: 과열 주의}
+
+# 해석 한 줄 (150일선·200일선 위/아래). fast_below_slow_above는 지시문에 없던 경우라 임시 문구(사용자 확인 필요).
+interpretation:
+  both_above: 장기 흐름 회복
+  fast_above_slow_below: 회복 초기(빠른 신호만 켜짐)
+  both_below: 장기 흐름 약세
+  fast_below_slow_above: 단기 흐름 약해짐(200일선은 위)
+
+# 이름 (메시지·자료 없음 줄)
+names:
+  sma_fast: 150일선
+  sma_slow: 200일선
+  breadth: 시장 폭
+  vix: 공포 지수 VIX
+  fear_greed: 공포·탐욕
+
+# 예약 (.github/workflows/thermometer.yml의 cron과 같아야 한다 — tests/test_thermometer.py가 확인)
+schedule:
+  crons: ["50 22 * * *", "50 23 * * *"] # KST 07:50 · 08:50
+  final_cron: "50 23 * * *" # 마지막 예약: 여기서도 자료가 안 되면 실패로 본다
+  skip_weekdays_kst: [6, 0] # 일(6)·월(0) — 새 미국 종가 없음 (파이썬 weekday 번호)
+
+# 기록
+history:
+  path: data/thermometer/history.csv # Actions에서는 드라이브 동기화(scripts/drive_sync.py --mode thermo)
+  drive_env: GOOGLE_DRIVE_STATE_FILE_ID_THERMO
+  backfill_path: data/thermometer/history_backfill.csv
+  backfill_start: "1999-01-01"
+  backfill_end: "2021-12-31" # 2022-01-01 이후 과거 시계열은 계산 금지(봉인)
+
+footer: ※ 시장 상태를 보는 온도계입니다. 매매 신호가 아닙니다.

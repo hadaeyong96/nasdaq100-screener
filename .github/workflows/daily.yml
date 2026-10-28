@@ -68,6 +68,14 @@ jobs:
           GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
         run: python scripts/drive_sync.py download --mode vbooks
 
+      # 시장 온도계 기록(thermometer.yml이 올림) — 편지 ■ 미국 증시 마감 끝 한 줄용, 읽기만(올리지 않음). 실패해도 편지는 그대로(줄만 생략).
+      - name: Download thermometer history from Google Drive
+        continue-on-error: true
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_STATE_FILE_ID_THERMO: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_THERMO }}
+        run: python scripts/drive_sync.py download --mode thermo
+
       - name: Run engine.daily (live, then paper)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

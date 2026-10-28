@@ -247,7 +247,20 @@ def market_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
     w = warn_line(summary, ph, day)
     if w:
         lines.append(w)
+    t = _thermometer_line(summary)
+    if t:
+        lines.append(t)
     return lines
+
+
+def _thermometer_line(summary: dict) -> str | None:
+    """시장 온도계 한 줄(그 기준일 data/thermometer/history.csv에 값이 있을 때만) — 어떤 오류도 편지를 멈추지 않는다."""
+    try:
+        from thermometer.history import letter_line
+
+        return letter_line(summary.get("as_of"))
+    except Exception:
+        return None
 
 
 def warn_line(summary: dict, ph: dict, day=None) -> str | None:
