@@ -79,9 +79,9 @@ def test_group_gets_given_file_and_group_caption(setup, monkeypatch, cfg):
     assert p["path"] == g["path"] == report and p["filename"] == g["filename"] == "오빠의 아침 편지_2026-10-14.html"
     assert p["caption"] == g["caption"] == "[오빠의 아침 편지] 10/14(수)"
     pt, gt = sent.texts[0]["text"], sent.texts[1]["text"]
-    assert pt.startswith("[오빠의 아침 편지] 10/14(수)\n\n■ 오늘 할 일\n▶ 투자 포지션 변경 없습니다.")
-    assert "■ 내 돈" in pt and "■ 내 돈" not in gt and "NVDA" not in gt
-    assert gt.endswith("※ 뉴스는 제목 모음입니다. 매매 신호가 아닙니다.")
+    assert pt.startswith("[오빠의 아침 편지] 10/14(수)\n▶ 할 일: 투자 포지션 변경 없습니다.")  # 문자 = 요약 쪽지(2026-10-28)
+    assert "내 돈" not in gt and "NVDA" not in gt  # 요약 쪽지: 내 돈은 개인판만(빈칸이면 개인판도 생략)
+    assert gt.endswith("자세한 내용은 첨부 보고서에 있습니다.")  # 유의 줄은 첨부 보고서에
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-10-14") and db.has_notified(conn, "2026-10-14:group")
     conn.close()

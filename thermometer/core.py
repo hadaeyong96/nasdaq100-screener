@@ -86,6 +86,15 @@ def fear_greed_label(f: float, cfg: dict) -> str:
     return cfg["fear_greed"]["labels"][-1]["label"]
 
 
+def interpretation(gap_fast: float | None, gap_slow: float | None, cfg: dict) -> str | None:
+    """150일선·200일선 이격률(%) → 해석 한 줄(config interpretation). 둘 중 하나라도 없으면 None."""
+    if gap_fast is None or gap_slow is None:
+        return None
+    key = {(True, True): "both_above", (True, False): "fast_above_slow_below",
+           (False, False): "both_below", (False, True): "fast_below_slow_above"}[(gap_fast > 0, gap_slow > 0)]
+    return cfg["interpretation"][key]
+
+
 def _sma_gap(q: pd.Series, days: int) -> float | None:
     """그날까지 자른 종가 q → 이격률 %(자료가 days일 미만이면 None)."""
     if len(q) < days:
@@ -194,12 +203,7 @@ def _compute(prices: dict, ts: pd.Timestamp, cfg: dict) -> dict:
         total = sum(parts[k]["deg"] for k in have)
         temp = round_half_up(total * 100.0 / (cfg["item_max"] * len(have)))
         zone = zone_of(temp, cfg)
-    note = None
-    if gf is not None and gs is not None:
-        it = cfg["interpretation"]
-        key = {(True, True): "both_above", (True, False): "fast_above_slow_below",
-               (False, False): "both_below", (False, True): "fast_below_slow_above"}[(gf > 0, gs > 0)]
-        note = it[key]
+    note = interpretation(gf, gs, cfg)
     return {"temp": temp, "zone": zone["name"] if zone else None, "zone_desc": zone["desc"] if zone else None,
             "parts": parts, "note": note, "missing": missing}
 

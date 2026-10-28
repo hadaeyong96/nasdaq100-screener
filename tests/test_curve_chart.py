@@ -152,8 +152,8 @@ def test_report_html_embeds_edition_chart(tmp_path, cfg):
     assert ctx_p["curve_chart_src"].startswith("data:image/png;base64,")
     assert ctx_p["curve_chart_src"] != ctx_g["curve_chart_src"]  # 판마다 자기 그림
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    fold = html[html.index("▶ 그래프로 보기"):]
-    assert fold.index('class="curve-chart"') < fold.index("</details>")
+    lab = html[html.index('id="sec-lab"'):html.index("▶ 그래프로 보기")]  # 2026-10-28: 성적 그래프는 ■ 가상 실험 칸에
+    assert 'class="curve-chart"' in lab and html.count('aria-label="가상 실험 성적 그래프"') == 1
     s.pop("curve_chart")
     assert report_html.build_context(s, cfg, "personal")["curve_chart_src"] is None
 
@@ -314,7 +314,7 @@ def test_candidate_charts_only_in_personal_html(tmp_path, cfg):
     assert len(s["candidate_charts"]) == 2
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
     group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
-    assert "▶ 웅덩이 후보 차트" in personal and personal.count('class="curve-chart cand-chart"') == 2
+    assert personal.count('class="curve-chart cand-chart"') == 2  # 2026-10-28: ■ 웅덩이 후보 칸 안(접기 아님)
     assert "웅덩이 후보 차트" not in group and "cand-chart\"" not in group and "AAPL — 웅덩이" not in group
     s2 = _summary(copy.deepcopy(cfg))
     daily._attach_candidate_charts(s2, out_dir=tmp_path)

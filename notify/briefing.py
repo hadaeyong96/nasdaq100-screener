@@ -136,7 +136,7 @@ def title_line(summary: dict, cfg: dict) -> str:
 
 
 def letter_message(summary: dict, cfg: dict, edition: str = "personal") -> str | None:
-    """아침 편지 v3(2026-10-24) 본문 문자 메시지(한도 4,096자 — 넘으면 주제 칸부터 줄이고 "나머지는 첨부 파일에 있습니다.").
+    """아침 편지 본문 문자 메시지 = 요약 쪽지(2026-10-28, 최대 12줄·700자 — letter_plain.summary_text). 자세한 내용은 첨부 HTML.
     보고서 파일보다 먼저 보낸다. 쉬운 문장판(letter.show_books false, 개인판은 report.show_screening false)이 아니면 None."""
     from notify import letter, letter_plain
 
@@ -144,7 +144,7 @@ def letter_message(summary: dict, cfg: dict, edition: str = "personal") -> str |
         return None
     if edition != letter.GROUP and (cfg.get("report") or {}).get("show_screening", False):
         return None
-    return letter_plain.to_text(letter_plain.build(summary, cfg, edition), limit=letter_plain.MESSAGE_LIMIT)
+    return letter_plain.summary_text(summary, cfg, edition)
 
 
 def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") -> str:

@@ -432,9 +432,9 @@ def test_send_briefing_sends_letter_text_then_report_file(tmp_path, monkeypatch,
 
     assert [c[0] for c in calls] == ["text", "file"]
     text = calls[0][1]
-    assert text.startswith("[오빠의 아침 편지] 10/1(목)\n\n■ 오늘 할 일\n▶ 투자 포지션 변경 없습니다.")
-    assert "■ 내 돈\n▶ 시트 노란 칸을 채우면 표시됩니다." in text
-    assert text.endswith("미국 9/30 종가 기준입니다.\n※ 뉴스는 제목 모음입니다. 매매 신호가 아닙니다.")
+    assert text.startswith("[오빠의 아침 편지] 10/1(목)\n▶ 할 일: 투자 포지션 변경 없습니다.")  # 문자 = 요약 쪽지(2026-10-28)
+    assert "내 돈" not in text  # 빈칸이면 줄 생략
+    assert text.endswith("자세한 내용은 첨부 보고서에 있습니다.")
     assert calls[1] == ("file", f"{cfg['report']['short_title']}_2026-09-30.html", "[오빠의 아침 편지] 10/1(목)")
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-09-30") is True  # 글·파일 모두 성공이면 발송 기록
@@ -514,8 +514,8 @@ def test_short_caption_is_title_and_letter_message_has_problem_line_personal_onl
     }
     assert briefing.build_report_caption(summary, {}) == "[오빠의 아침 편지] 10/13(화)"
     p = briefing.letter_message(summary, {}).split("\n")
-    assert p[:5] == ["[오빠의 아침 편지] 10/13(화)", "▶ 자료 문제: 시장 지표 1개를 받지 못했습니다.", "", "■ 오늘 할 일",
-                     "▶ 10월 가상 성적표가 나왔습니다. 첨부 파일에 있습니다."]
+    assert p[:3] == ["[오빠의 아침 편지] 10/13(화)", "▶ 자료 문제: 시장 지표 1개를 받지 못했습니다.",
+                     "▶ 할 일: 10월 가상 성적표가 나왔습니다."]  # 문자 = 요약 쪽지(2026-10-28), 할 일은 첫 문장
     assert not any("다시 계산" in x for x in p)  # 「체결 기록이 바뀌어 …」 줄 삭제
     g = briefing.letter_message(summary, {}, edition="group")
     assert "NVDA" not in g and "ROP" not in g and "성적표" not in g and "■ 내 돈" not in g
