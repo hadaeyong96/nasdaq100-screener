@@ -14,11 +14,9 @@ DB로 내려받고, 실행 후 upload로 같은 파일에 다시 덮어쓴다(�
     python scripts/drive_sync.py upload --mode paper
     python scripts/drive_sync.py download --mode vbooks   (가상 장부 data/virtual_books.db)
     python scripts/drive_sync.py upload --mode vbooks
-    python scripts/drive_sync.py download --mode thermo   (시장 온도계 기록 data/thermometer/history.csv)
-    python scripts/drive_sync.py upload --mode thermo
 
 파일 ID는 환경변수 GOOGLE_DRIVE_STATE_FILE_ID_LIVE / GOOGLE_DRIVE_STATE_FILE_ID_PAPER /
-GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS / GOOGLE_DRIVE_STATE_FILE_ID_THERMO에서 읽는다. 로컬 개발처럼 해당 환경변수가 없으면 아무것도 안 하고 조용히
+GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS에서 읽는다. 로컬 개발처럼 해당 환경변수가 없으면 아무것도 안 하고 조용히
 넘어간다 — 드라이브 없이도 지금처럼 로컬 DB 파일로 그대로 돈다.
 """
 
@@ -45,15 +43,11 @@ _FILE_ID_ENV = {
     "live": "GOOGLE_DRIVE_STATE_FILE_ID_LIVE",
     "paper": "GOOGLE_DRIVE_STATE_FILE_ID_PAPER",
     "vbooks": "GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS",
-    "thermo": "GOOGLE_DRIVE_STATE_FILE_ID_THERMO",
 }
-THERMO_HISTORY_PATH = ROOT / "data" / "thermometer" / "history.csv"
 
 
 def local_path_for_mode(mode: str) -> Path:
-    """모드별 로컬 DB 경로 — vbooks는 가상 장부 DB(store/virtual_books.py), thermo는 시장 온도계 기록 CSV."""
-    if mode == "thermo":
-        return THERMO_HISTORY_PATH
+    """모드별 로컬 DB 경로 — vbooks는 가상 장부 DB(store/virtual_books.py, 시장 온도계 기록 표도 여기)."""
     return vbstore.VBOOKS_DB_PATH if mode == "vbooks" else db.db_path_for_mode(mode)
 
 

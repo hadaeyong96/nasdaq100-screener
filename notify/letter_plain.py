@@ -254,13 +254,9 @@ def market_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
 
 
 def _thermometer_line(summary: dict) -> str | None:
-    """시장 온도계 한 줄(그 기준일 data/thermometer/history.csv에 값이 있을 때만) — 어떤 오류도 편지를 멈추지 않는다."""
-    try:
-        from thermometer.history import letter_line
-
-        return letter_line(summary.get("as_of"))
-    except Exception:
-        return None
+    """시장 온도계 한 줄 "시장 온도계 {T}도 · {구간}." — 그 기준일 온도가 있을 때만(summary["thermometer"]), 없으면 None."""
+    t = thermometer_result(summary)
+    return f"시장 온도계 {t['temp']}도 · {t['zone']}." if t else None
 
 
 def warn_line(summary: dict, ph: dict, day=None) -> str | None:
@@ -590,23 +586,25 @@ def _as_of_day(summary: dict) -> str | None:
     return str(getattr(as_of, "date", lambda: as_of)())[:10] if as_of is not None else None
 
 
-def thermometer_row(summary: dict) -> dict | None:
-    """그 기준일 시장 온도계 기록(data/thermometer/history.csv) — 없거나 오류면 None(편지는 그대로)."""
+def thermometer_result(summary: dict) -> dict | None:
+    """그 기준일 시장 온도(engine.daily._attach_thermometer가 thermometer.core.get_temperature(기준일)로 붙인 값,
+    온도계 메시지와 같은 함수). 없거나·기준일과 자료 날짜가 다르거나·모양이 이상하면 None(줄만 생략)."""
+    t = summary.get("thermometer")
     try:
-        from thermometer import history as th
-
-        day = _as_of_day(summary)
-        return th.find(day) if day else None
+        if not t or t.get("temp") is None or t.get("data_date") != _as_of_day(summary):
+            return None
+        return t
     except Exception:
         return None
 
 
 def thermometer_detail(summary: dict) -> dict | None:
-    """보고서 「시장 온도계」 칸 자료(thermometer.history.detail) — 없거나 오류면 None."""
+    """보고서 「시장 온도계」 칸 자료(thermometer.message.report_detail) — 없거나 오류면 None."""
     try:
-        from thermometer import history as th
+        from thermometer.core import load_config
+        from thermometer.message import report_detail
 
-        return th.detail(summary.get("as_of"))
+        return report_detail(thermometer_result(summary), load_config())
     except Exception:
         return None
 
@@ -618,9 +616,9 @@ def market_summary(summary: dict, ph: dict) -> str | None:
     if m is None:
         return None
     out = phrase(ph, "summary.market", day, q=signed(m["day"]))
-    t = thermometer_row(summary)
-    if t and t.get("temp"):
-        out += " · " + phrase(ph, "summary.temp", day, T=int(t["temp"]), 구간=t.get("zone", ""))
+    t = thermometer_result(summary)
+    if t:
+        out += " · " + phrase(ph, "summary.temp", day, T=t["temp"], 구간=t["zone"])
     return out
 
 
@@ -670,7 +668,7 @@ def _more_line(summary: dict, ph: dict, edition: str) -> str:
     if n:
         seg.append(phrase(ph, "summary.more_news", day, n=n))
     m = candidate_count(summary)
-    if m is not None:
+    if m:  # 0종목이면 생략(2026-10-28)
         seg.append(phrase(ph, "summary.more_candidates", day, m=m))
     if has_chart(summary, edition):
         seg.append(phrase(ph, "summary.more_chart", day))

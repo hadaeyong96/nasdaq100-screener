@@ -54,3 +54,15 @@ def build_message(result: dict, cfg: dict, day: date) -> str:
         lines.append(f"▶ 자료 없음: {', '.join(names[k] for k in result['missing'])}. 나머지로 환산했습니다.")
     lines.append(cfg["footer"])
     return "\n".join(lines)
+
+
+def report_detail(result: dict | None, cfg: dict) -> dict | None:
+    """첨부 보고서 「시장 온도계」 칸 → {temp, zone, rows[{key, name, raw, deg}], note, missing[이름]}. 온도가 없으면 None."""
+    if not result or result.get("temp") is None:
+        return None
+    fmt = {"sma_fast": lambda v: f"{v:+.1f}%", "sma_slow": lambda v: f"{v:+.1f}%", "breadth": lambda v: f"{v:.0f}%",
+           "vix": lambda v: f"{v:.1f}", "fear_greed": lambda v: f"{v:.0f}"}
+    rows = [{"key": k, "name": cfg["names"][k], "raw": fmt[k](p["raw"]), "deg": _deg(p["deg"])}
+            for k, p in result["parts"].items() if p["deg"] is not None]
+    return {"temp": result["temp"], "zone": result["zone"], "rows": rows, "note": result.get("note"),
+            "missing": [cfg["names"][k] for k in result["missing"]]}

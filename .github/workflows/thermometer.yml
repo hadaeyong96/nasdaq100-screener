@@ -2,8 +2,10 @@ name: Market thermometer
 
 # 시장 온도계(0~100도) 독립 실행 — python -m thermometer (config/thermometer.yaml, 2026-10-28).
 # 예약 KST 07:50 · 08:50 (UTC 22:50 · 23:50). config/thermometer.yaml schedule.crons와 같아야 한다(tests/test_thermometer.py).
-# 같은 기준일은 한 번만 보낸다(드라이브의 data/thermometer/history.csv 확인). 한국 일·월요일은 보내지 않는다.
-# 실패하면 개인방에 "시장 온도계 실패" 한 줄만. 아침 편지(daily.yml)와 concurrency 그룹이 달라 서로 기다리지 않는다.
+# 같은 기준일은 한 번만 보낸다(가상 장부 DB data/virtual_books.db의 thermometer_history 표 확인). 한국 일·월요일은 보내지 않는다.
+# 실패하면 개인방에 "시장 온도계 실패" 한 줄만.
+# 2026-10-28: 기록을 아침 편지와 같은 가상 장부 DB에 두므로 concurrency 그룹을 daily.yml과 같게(daily-screener) — 둘이 동시에
+# 받고 올려 서로의 기록을 덮어쓰지 않게 한 번에 하나만 돈다. 편지 실행은 2~4분이라 기다림은 짧다.
 on:
   schedule:
     - cron: "50 22 * * *"
@@ -11,7 +13,7 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: market-thermometer
+  group: daily-screener
   cancel-in-progress: false
 
 jobs:
@@ -29,28 +31,30 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # 기록 파일 ID 시크릿이 없으면 drive_sync가 건너뛰고, 온도계는 보내지 않는다(마지막 예약에서 실패로 알림).
-      - name: Download thermometer history from Google Drive
+      # 가상 장부 DB(기록 표 thermometer_history가 여기 있음)를 받는다. 실패하면 온도계를 보내지 않고, 올리지도 않는다(장부 DB 보호).
+      - name: Download virtual books state from Google Drive
+        id: download
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_DRIVE_STATE_FILE_ID_THERMO: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_THERMO }}
-        run: python scripts/drive_sync.py download --mode thermo
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
+        run: python scripts/drive_sync.py download --mode vbooks
 
       - name: Run thermometer
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
-          GOOGLE_DRIVE_STATE_FILE_ID_THERMO: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_THERMO }}
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
           SCHEDULE_CRON: ${{ github.event.schedule }}
         run: python -m thermometer
 
-      - name: Upload thermometer history to Google Drive
-        if: always()
+      # 받기에 성공했을 때만 올린다 — 못 받은 채(빈 DB) 올려 가상 장부 기록을 지우는 일이 없게.
+      - name: Upload virtual books state to Google Drive
+        if: always() && steps.download.outcome == 'success'
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          GOOGLE_DRIVE_STATE_FILE_ID_THERMO: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_THERMO }}
-        run: python scripts/drive_sync.py upload --mode thermo
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
+        run: python scripts/drive_sync.py upload --mode vbooks
 
       - name: Notify on failure
         if: failure()
