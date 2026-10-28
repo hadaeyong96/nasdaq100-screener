@@ -1,0 +1,60 @@
+name: Market thermometer
+
+# 시장 온도계(0~100도) 독립 실행 — python -m thermometer (config/thermometer.yaml, 2026-10-28).
+# 예약 KST 07:50 · 08:50 (UTC 22:50 · 23:50). config/thermometer.yaml schedule.crons와 같아야 한다(tests/test_thermometer.py).
+# 같은 기준일은 한 번만 보낸다(드라이브의 data/thermometer/history.csv 확인). 한국 일·월요일은 보내지 않는다.
+# 실패하면 개인방에 "시장 온도계 실패" 한 줄만. 아침 편지(daily.yml)와 concurrency 그룹이 달라 서로 기다리지 않는다.
+on:
+  schedule:
+    - cron: "50 22 * * *"
+    - cron: "50 23 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: market-thermometer
+  cancel-in-progress: false
+
+jobs:
+  thermometer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 기록 파일 ID 시크릿이 없으면 drive_sync가 건너뛰고, 온도계는 보내지 않는다(마지막 예약에서 실패로 알림).
+      - name: Download thermometer history from Google Drive
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_STATE_FILE_ID_THERMO: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_THERMO }}
+        run: python scripts/drive_sync.py download --mode thermo
+
+      - name: Run thermometer
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_GROUP_CHAT_ID: ${{ secrets.TELEGRAM_GROUP_CHAT_ID }}
+          GOOGLE_DRIVE_STATE_FILE_ID_THERMO: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_THERMO }}
+          SCHEDULE_CRON: ${{ github.event.schedule }}
+        run: python -m thermometer
+
+      - name: Upload thermometer history to Google Drive
+        if: always()
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_STATE_FILE_ID_THERMO: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_THERMO }}
+        run: python scripts/drive_sync.py upload --mode thermo
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/send_ops_alert.py "시장 온도계 실패"
