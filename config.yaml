@@ -182,16 +182,16 @@ puddle_rebound:
 # 시작일·시작 환율: main 병합 뒤 첫 정규 실행(Actions)이 DB에 고정 → 그 뒤 여기에 적는다(값이 있으면 이것이 우선).
 puddle_v32:
   enabled: true
-  start_date: null # 첫 정규 실행 뒤 DB 기록에서 고정
-  start_fx: null
+  start_date: "2026-10-27" # 첫 정규 실행(Actions)의 기준일 — 2026-10-28 DB 기록에서 고정
+  start_fx: 1324.77001953125 # 시작일 원/달러 종가 — 2026-10-28 DB 기록에서 고정
   sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 v3.2 (가상·시총)」 탭에만 쓴다(첫 기록 때 옛 v3.1 탭을 이 이름으로 바꾸고 비움)
 
 # ── 웅덩이 반등 확인 v2 (시가총액 상위 10) 가상 1억 장부 (2026-10-27, docs/prereg/puddle_rebound_v2_forward.md, 태그 puddle-rebound-v2-prereg) ──
 # 규칙은 반등 확인 그대로, 대상만 시가총액 상위 10, 비교 B = 웅덩이 v3.2. v3.2 장부 다음에 돈다.
 puddle_rebound_v2:
   enabled: true
-  start_date: null # 첫 정규 실행 뒤 DB 기록에서 고정
-  start_fx: null
+  start_date: "2026-10-27" # 첫 정규 실행(Actions)의 기준일 — 2026-10-28 DB 기록에서 고정
+  start_fx: 1324.77001953125 # 시작일 원/달러 종가 — 2026-10-28 DB 기록에서 고정
   sheet_id_env: GOOGLE_SHEETS_ID # 사용자 시트 — 「웅덩이 반등 확인 v2 (가상·시총)」 탭에만 쓴다(첫 기록 때 옛 탭을 이 이름으로 바꾸고 비움)
 
 # ── 가상 실험 수익곡선 그래프 (2026-10-26, notify/curve_chart) — 그리기만(장부 계산·기록 그대로) ─────────────

@@ -110,7 +110,8 @@ def test_old_ledgers_are_off_and_new_ones_on_in_config(cfg):
     assert cfg["puddle_v31"]["enabled"] is False and cfg["puddle_rebound"]["enabled"] is False
     assert cfg["puddle_v31"]["start_date"] == "2026-10-23"  # 보관본 시작값은 그대로
     assert cfg["puddle_v32"]["enabled"] is True and cfg["puddle_rebound_v2"]["enabled"] is True
-    assert not cfg["puddle_v32"].get("start_date") and not cfg["puddle_rebound_v2"].get("start_date")  # 첫 정규 실행 뒤 고정
+    for k in ("puddle_v32", "puddle_rebound_v2"):  # 첫 정규 실행(2026-10-28) DB 기록에서 고정
+        assert cfg[k]["start_date"] == "2026-10-27" and cfg[k]["start_fx"] == 1324.77001953125
     assert e31.run_safely(cfg, "2026-10-27") is None and erb.run_safely(cfg, "2026-10-27") is None
 
 
