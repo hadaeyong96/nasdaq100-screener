@@ -45,7 +45,7 @@ def _cut(prices, ts):
 # ── 경계값 ──────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("x,deg", [(-10, 0), (10, 20), (0, 10), (-25, 0), (30, 20), (5, 15)])
+@pytest.mark.parametrize("x,deg", [(-15, 0), (15, 20), (0, 10), (-25, 0), (30, 20), (7.5, 15), (-7.5, 5)])  # ±15% (2026-10-28)
 def test_gap_boundaries(x, deg):
     assert score_gap(x, CFG) == pytest.approx(deg)
 
@@ -202,47 +202,69 @@ def test_block_true_false():
 
 
 def test_same_value_telegram_letter_block(tmp_path, monkeypatch):
+    """같은 기준일: 텔레그램 메시지 · 편지 줄(get_temperature 직접 호출) · 블록이 같은 값."""
+    from engine import daily
+    from notify import letter_plain
+
     p = make_prices()
-    path = tmp_path / "history.csv"
     monkeypatch.setenv(CFG["history"]["drive_env"], "x")
     sent = []
-    r = tmain.run(now=datetime(2026, 10, 28, 7, 50, tzinfo=KST), prices=p, send=sent.append, history_path=path,
+    r = tmain.run(now=datetime(2026, 10, 28, 7, 50, tzinfo=KST), prices=p, send=sent.append, history_path=tmp_path / "vb.db",
                   cfg=CFG, schedule_cron="50 22 * * *", real_send=True, on_date="2026-10-27")
     assert r["status"] == "sent"
     temp, zone = r["result"]["temp"], r["result"]["zone"]
     assert f"■ 오늘 온도: {temp}도 · {zone}" in sent[0]
-    monkeypatch.setattr(history, "DEFAULT_PATH", path)
-    from notify import letter_plain
-
-    assert letter_plain._thermometer_line({"as_of": pd.Timestamp("2026-10-27")}) == f"시장 온도계 {temp}도 · {zone}."
+    s = {"as_of": pd.Timestamp("2026-10-27")}
+    daily._attach_thermometer(s, temp_fn=lambda d: get_temperature(d, prices=p, cfg=CFG))
+    assert letter_plain._thermometer_line(s) == f"시장 온도계 {temp}도 · {zone}."
     assert blocks.market_temperature("2026-10-27", temp, temp, prices=p, cfg=CFG) is True
 
 
-def test_letter_line_absent_and_never_raises(tmp_path, monkeypatch):
+def test_letter_line_omitted_on_failure():
+    from engine import daily
     from notify import letter_plain
 
-    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "none.csv")
-    assert letter_plain._thermometer_line({"as_of": pd.Timestamp("2026-10-27")}) is None
-    assert letter_plain._thermometer_line({}) is None
-    bad = tmp_path / "bad.csv"
-    bad.write_bytes(b"\xff\xfe\x00garbage")
-    monkeypatch.setattr(history, "DEFAULT_PATH", bad)
-    assert letter_plain._thermometer_line({"as_of": "2026-10-27"}) is None
+    s = {"as_of": pd.Timestamp("2026-10-27")}
+    daily._attach_thermometer(s)  # 테스트에서는 오늘 자료 받기가 막혀 있음(conftest) → 실패
+    assert s["thermometer"] is None and letter_plain._thermometer_line(s) is None
+    assert "letter_check" not in s  # 자료 문제 줄도 남기지 않는다
+    daily._attach_thermometer(s, temp_fn=lambda d: (_ for _ in ()).throw(ValueError("x")))
+    assert letter_plain._thermometer_line(s) is None
+    old = get_temperature("2026-10-27", prices=make_prices(end="2026-10-26"), cfg=CFG)  # 기준일 자료가 아직 없음
+    assert letter_plain._thermometer_line({**s, "thermometer": old}) is None
+    assert letter_plain._thermometer_line({}) is None and letter_plain._thermometer_line({"thermometer": "이상한 값"}) is None
 
 
-def test_letter_market_section_ends_with_thermometer_line(tmp_path, monkeypatch):
+def test_letter_market_section_ends_with_thermometer_line(monkeypatch):
     from notify import letter_plain
 
-    path = tmp_path / "h.csv"
-    history.append(get_temperature("2026-10-27", prices=make_prices(), cfg=CFG), path)
-    monkeypatch.setattr(history, "DEFAULT_PATH", path)
     monkeypatch.setattr(letter_plain, "headline", lambda *a, **k: (None, None))
     monkeypatch.setattr(letter_plain, "market_state", lambda s: None)
-    lines = letter_plain.market_lines({"as_of": pd.Timestamp("2026-10-27")}, {}, letter_plain.load_phrases(), "personal")
+    s = {"as_of": pd.Timestamp("2026-10-27"), "thermometer": get_temperature("2026-10-27", prices=make_prices(), cfg=CFG)}
+    lines = letter_plain.market_lines(s, {}, letter_plain.load_phrases(), "personal")
     assert lines[-1].startswith("시장 온도계 ") and lines[-1].endswith(".")
-    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "missing.csv")
-    lines2 = letter_plain.market_lines({"as_of": pd.Timestamp("2026-10-27")}, {}, letter_plain.load_phrases(), "personal")
+    lines2 = letter_plain.market_lines({**s, "thermometer": None}, {}, letter_plain.load_phrases(), "personal")
     assert not any(ln.startswith("시장 온도계") for ln in lines2 if isinstance(ln, str))
+
+
+def test_history_in_virtual_books_db(tmp_path):
+    db = tmp_path / "virtual_books.db"
+    import sqlite3
+
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")  # 가상 장부 기존 표는 그대로
+    conn.execute("INSERT INTO meta VALUES ('puddle_v32_state', '{}')")
+    conn.commit()
+    conn.close()
+    r = get_temperature("2026-10-27", prices=make_prices(), cfg=CFG)
+    history.append(r, db)
+    history.append(r, db)  # 같은 기준일은 한 번만
+    assert [x["date"] for x in history.load(db)] == ["2026-10-27"] and history.find("2026-10-27", db)["temp"] == str(r["temp"])
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT value FROM meta WHERE key='puddle_v32_state'").fetchone() == ("{}",)
+    conn.close()
+    assert history.find("2026-10-27", tmp_path / "none.db") is None and not (tmp_path / "none.db").exists()
+    assert CFG["history"]["path"] == "data/virtual_books.db" and CFG["history"]["drive_env"] == "GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS"
 
 
 # ── 실행: 중복 막기 · 요일 · 지연 · 보관 ────────────────────────────────────
@@ -251,7 +273,7 @@ def test_letter_market_section_ends_with_thermometer_line(tmp_path, monkeypatch)
 def _run(tmp_path, monkeypatch, now, prices=None, cron="50 22 * * *", base="2026-10-27", **kw):
     monkeypatch.setattr(tmain, "base_date_for", lambda now_kst: pd.Timestamp(base).date())
     sent = kw.pop("sent", [])
-    r = tmain.run(now=now, prices=prices or make_prices(), send=sent.append, history_path=tmp_path / "h.csv",
+    r = tmain.run(now=now, prices=prices or make_prices(), send=sent.append, history_path=tmp_path / "vb.db",
                   cfg=CFG, schedule_cron=cron, real_send=kw.pop("real_send", True), **kw)
     return r, sent
 
@@ -263,7 +285,7 @@ def test_duplicate_send_blocked(tmp_path, monkeypatch):
     r1, _ = _run(tmp_path, monkeypatch, now, sent=sent)
     r2, _ = _run(tmp_path, monkeypatch, now, cron="50 23 * * *", sent=sent)
     assert (r1["status"], r2["status"]) == ("sent", "already_sent") and len(sent) == 1
-    assert len(history.load(tmp_path / "h.csv")) == 1
+    assert len(history.load(tmp_path / "vb.db")) == 1
 
 
 @pytest.mark.parametrize("day,skip", [(25, True), (26, True), (27, False), (31, False)])  # 10/25 일 · 10/26 월 · 화 · 토
@@ -286,6 +308,10 @@ def test_not_ready_defers_then_fails_on_final(tmp_path, monkeypatch):
         _run(tmp_path, monkeypatch, now, prices=old, cron=CFG["schedule"]["final_cron"])
 
 
+def test_interpretation_confirmed_text():
+    assert CFG["interpretation"]["fast_below_slow_above"] == "단기 흐름 약해짐(200일선은 위)"
+
+
 def test_no_storage_not_sent(tmp_path, monkeypatch):
     monkeypatch.delenv(CFG["history"]["drive_env"], raising=False)
     now = datetime(2026, 10, 28, 7, 50, tzinfo=KST)
@@ -297,7 +323,7 @@ def test_no_storage_not_sent(tmp_path, monkeypatch):
 
 def test_dry_run_writes_nothing(tmp_path, monkeypatch):
     r, sent = _run(tmp_path, monkeypatch, datetime(2026, 10, 28, 7, 50, tzinfo=KST), real_send=True, dry_run=True)
-    assert r["status"] == "dry_run" and not sent and not (tmp_path / "h.csv").exists()
+    assert r["status"] == "dry_run" and not sent and not (tmp_path / "vb.db").exists()
     assert r["text"].startswith("[시장 온도계] 10/28(수)")
 
 
@@ -312,4 +338,9 @@ def test_schedule_matches_workflow():
     assert [c["cron"] for c in on["schedule"]] == CFG["schedule"]["crons"]
     assert CFG["schedule"]["final_cron"] == CFG["schedule"]["crons"][-1]
     daily = yaml.safe_load((ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8"))
-    assert wf["concurrency"]["group"] != daily["concurrency"]["group"]
+    assert wf["concurrency"]["group"] == daily["concurrency"]["group"]  # 같은 가상 장부 DB를 쓰므로 한 번에 하나만(2026-10-28)
+    steps = {st.get("name"): st for st in wf["jobs"]["thermometer"]["steps"]}
+    up = steps["Upload virtual books state to Google Drive"]
+    assert "steps.download.outcome == 'success'" in up["if"]  # 못 받은 DB를 올려 장부를 지우지 않게
+    text = (ROOT / ".github" / "workflows" / "thermometer.yml").read_text(encoding="utf-8")
+    assert "THERMO" not in text and "THERMO" not in (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")

@@ -2320,6 +2320,7 @@ def main() -> None:
                                                                             briefing=_briefing_recs(summary)))
         _safe_step(summary, "국면 줄", lambda: _attach_regime_line(summary, vb_result, cfg))
         _safe_step(summary, "시장 지수", lambda: _attach_market_glance(summary, cfg))
+        _safe_step(summary, "시장 온도계", lambda: _attach_thermometer(summary))
         if (cfg.get("letter") or {}).get("show_books", False):  # 예전(가상 장부 있던 때) 편지
             _safe_step(summary, "12월 공제 안내", lambda: _attach_dec_tax(summary, cfg))
             _safe_step(summary, "편지", lambda: _attach_letter_v2(summary, vb_result, cfg))
@@ -2431,6 +2432,20 @@ def _fetch_index_closes(cfg: dict) -> dict:
         except Exception as exc:  # noqa: BLE001
             print(f"[daily] {tk} 종가를 받지 못해 지수 줄에서 뺍니다: {type(exc).__name__}")
     return out
+
+
+def _attach_thermometer(summary: dict, temp_fn=None) -> None:
+    """편지 시장 온도 줄(2026-10-28): thermometer.core.get_temperature(기준일) 그대로 → summary["thermometer"](온도계 메시지와 같은 함수·같은 값).
+    실패하면 None — 편지에서는 그 줄만 빠진다(자료 문제 줄도 안 남김)."""
+    summary["thermometer"] = None
+    if summary.get("as_of") is None:
+        return
+    try:
+        from thermometer.core import get_temperature
+
+        summary["thermometer"] = (temp_fn or get_temperature)(pd.Timestamp(summary["as_of"]).date().isoformat())
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] 시장 온도계를 구하지 못해 편지 온도 줄을 뺍니다: {type(exc).__name__}: {exc}")
 
 
 def _attach_news(summary: dict, cfg: dict, news_fn=None) -> None:

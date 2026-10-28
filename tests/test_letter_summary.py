@@ -9,15 +9,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
+BS = chr(10)  # 줄바꿈
+
 from notify import briefing, letter_plain, report_html
-from thermometer import history
 
 
 @pytest.fixture
 def rich(cfg, tmp_path, monkeypatch):
     from tests.test_fresh_start import _summary
 
-    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "none.csv")  # 온도계 기록 없음이 기본
     s = _summary(copy.deepcopy(cfg))
     long = "미국 연준 의장이 금리 인하 속도를 늦출 수 있다고 말해 시장이 크게 흔들렸다는 소식과 함께 전한 이야기"
     s["news"] = {"status": "ok",
@@ -114,21 +114,26 @@ def test_html_order_toc_and_subs(rich, cfg, tmp_path):
     assert "sec-money" not in group
 
 
-def test_thermometer_in_text_and_html(rich, cfg, tmp_path, monkeypatch):
+def test_thermometer_in_text_and_html(rich, cfg, tmp_path):
     from thermometer.core import get_temperature
     from tests.test_thermometer import make_prices
 
     r = get_temperature("2026-09-30", prices=make_prices(end="2026-09-30"))  # 편지 기준일과 같은 날
-    path = tmp_path / "h.csv"
-    history.append(r, path)
-    monkeypatch.setattr(history, "DEFAULT_PATH", path)
-    t = briefing.letter_message(rich, cfg).split("\n")
+    rich["thermometer"] = r
+    t = briefing.letter_message(rich, cfg).split(BS)
     assert t[2] == f"▶ 시장: QQQ +0.1% · 시장 온도 {r['temp']}도({r['zone']})"
     html = report_html.render_report(rich, cfg, tmp_path).read_text(encoding="utf-8")
     sec = html[html.index('id="sec-thermometer"'):html.index('id="sec-todo"')]
     assert f"— {r['temp']}도 · {r['zone']}" in sec and "150일선" in sec and f"<b>{r['temp']}도</b>" in sec
-    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "none.csv")
-    assert briefing.letter_message(rich, cfg).split("\n")[2] == "▶ 시장: QQQ +0.1%"
+    rich["thermometer"] = None
+    assert briefing.letter_message(rich, cfg).split(BS)[2] == "▶ 시장: QQQ +0.1%"
+
+
+def test_more_line_omits_zero_candidates(rich, cfg):
+    rich["puddle_rebound"]["cand_count"] = 0
+    rich["puddle_rebound"]["cand_personal"] = ["오늘은 웅덩이 후보가 없습니다."]
+    rich["puddle_rebound"]["cand_group"] = ["오늘은 웅덩이 후보가 없습니다."]
+    assert briefing.letter_message(rich, cfg).split(BS)[-1] == "자세한 내용은 첨부 보고서에 있습니다(뉴스 6건)."
 
 
 def test_money_line_omitted_when_empty(rich, cfg):

@@ -29,7 +29,9 @@ for _stream in (sys.stdout, sys.stderr):  # 윈도우 콘솔 cp949 UnicodeEncode
 from data import backtest_prices as bp  # noqa: E402
 from data import universe_history as uh  # noqa: E402
 from thermometer import history  # noqa: E402
-from thermometer.core import get_temperature, load_config  # noqa: E402
+from thermometer.core import get_temperature, load_config, round_half_up, score_gap, zone_of  # noqa: E402
+
+PREV_GAP_PCT = 10.0  # 이전 이격률 만점 기준(±10%, 2026-10-28 ±15%로 바뀜) — d) 비교용
 
 NOTES_PATH = ROOT / "docs" / "thermometer_notes.md"
 
@@ -116,6 +118,23 @@ def stats(df: pd.DataFrame) -> dict:
     }
 
 
+def zone_share_with_gap(df: pd.DataFrame, cfg: dict, gap_pct: float) -> pd.Series:
+    """같은 원값으로 ①② 만점 기준만 ±gap_pct%로 바꿔 다시 매긴 온도의 구간별 일수 비율(같은 core 함수 사용)."""
+    alt = {**cfg, "sma": {**cfg["sma"], "gap_low_pct": -gap_pct, "gap_high_pct": gap_pct}}
+    zones = []
+    for _, r in df.iterrows():
+        degs = []
+        for k in ("sma_fast", "sma_slow", "breadth", "vix", "fear_greed"):
+            if k in ("sma_fast", "sma_slow"):
+                if pd.notna(r[f"raw_{k}"]):
+                    degs.append(score_gap(float(r[f"raw_{k}"]), alt))
+            elif pd.notna(r[f"deg_{k}"]):
+                degs.append(float(r[f"deg_{k}"]))
+        if degs:
+            zones.append(zone_of(round_half_up(sum(degs) * 100.0 / (cfg["item_max"] * len(degs))), cfg)["name"])
+    return pd.Series(zones, dtype=object).value_counts(normalize=True)
+
+
 def write_notes(st: dict, info: dict, cfg: dict) -> str:
     zones = [z["name"] for z in cfg["zones"]]
     names = cfg["names"]
@@ -157,9 +176,11 @@ QQQ가 200일선을 아래→위로 넘어선 날 {a['n']}번마다, 그날 또�
 
 ## d) 전체 온도 구간별 일수 비율 ({st['n_temp']:,}일, 자료 없는 항목은 환산)
 
-| 구간 | 비율 |
-| --- | --- |
-""" + "\n".join(f"| {z} | {st['d'].get(z, 0) * 100:.1f}% |" for z in zones) + "\n"
+①② 이격률 만점 기준이 2026-10-28 ±{info['gap_now']:g}%로 바뀌었다. 이전 기준(±{PREV_GAP_PCT:g}%)은 같은 원값으로 ①②만 다시 매긴 값.
+
+| 구간 | 새 기준 ±{info['gap_now']:g}% | 이전 기준 ±{PREV_GAP_PCT:g}% |
+| --- | --- | --- |
+""" + "\n".join(f"| {z} | {st['d'].get(z, 0) * 100:.1f}% | {st['d_prev'].get(z, 0) * 100:.1f}% |" for z in zones) + "\n"
     NOTES_PATH.write_text(text, encoding="utf-8")
     return text
 
@@ -172,8 +193,11 @@ def main() -> None:
     history.write_rows(rows, cfg["history"]["backfill_path"])
     df = pd.DataFrame(rows).set_index("date").replace("", None).infer_objects()
     br = df["raw_breadth"].dropna()
-    info.update(breadth_first=br.index.min(), breadth_last=br.index.max(), breadth_days=len(br))
-    print(write_notes(stats(df), info, cfg))
+    info.update(breadth_first=br.index.min(), breadth_last=br.index.max(), breadth_days=len(br),
+                gap_now=float(cfg["sma"]["gap_high_pct"]))
+    st = stats(df)
+    st["d_prev"] = zone_share_with_gap(df, cfg, PREV_GAP_PCT)
+    print(write_notes(st, info, cfg))
     if info["no_price"]:
         print(f"가격 캐시 없는 명단 종목 {len(info['no_price'])}개: {', '.join(info['no_price'])}")
 

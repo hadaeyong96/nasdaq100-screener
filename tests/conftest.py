@@ -35,6 +35,13 @@ def _no_real_telegram(monkeypatch, tmp_path):
         return real_post(url, *a, **k)
 
     monkeypatch.setattr(requests, "post", guarded)
+    # 시장 온도계(2026-10-28): 편지가 get_temperature(기준일)를 부를 때 오늘 자료를 받으러 나가지 않게 — 자료가 필요한 테스트는 prices를 직접 준다
+    from thermometer import data as thermo_data
+
+    def _no_live(*a, **k):
+        raise RuntimeError("테스트: 온도계 오늘 자료 받기 금지(네트워크 없음)")
+
+    monkeypatch.setattr(thermo_data, "load_live", _no_live)
     # 공장 알림: 재시도 대기 0, 실패 보관은 임시 폴더(진짜 outputs/에 남지 않게)
     from factory import notify as fnotify
 

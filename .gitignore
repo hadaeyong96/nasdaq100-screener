@@ -35,6 +35,3 @@ exports/
 
 # 보관 사본 (가상 장부 DB 등, 커밋 금지)
 archive/
-
-# 시장 온도계 매일 기록 (드라이브에 보관, 커밋 금지 — 백필 history_backfill.csv는 커밋)
-data/thermometer/history.csv

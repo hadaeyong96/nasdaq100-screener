@@ -1,10 +1,11 @@
 """시장 온도계 독립 실행: python -m thermometer [--dry-run] [--date YYYY-MM-DD]
 
-순서: 일·월(한국 날짜)이면 건너뜀 → 기준일(가장 최근 마감된 미국 거래일) → history.csv에 그 기준일이 있으면 건너뜀(중복 발송 막기)
-→ 온도 계산 → QQQ 자료가 기준일까지 안 왔으면 다음 예약으로 미룸(마지막 예약이면 실패) → 개인방·단체방 발송 → 기록 한 줄.
+순서: 일·월(한국 날짜)이면 건너뜀 → 기준일(가장 최근 마감된 미국 거래일) → 기록 표에 그 기준일이 있으면 건너뜀(중복 발송 막기)
+→ 온도 계산 → QQQ 자료가 기준일까지 안 왔으면 다음 예약으로 미룸(마지막 예약이면 실패) → 개인방·단체방 발송 → 기록 한 줄
+(가상 장부 DB thermometer_history 표 — 드라이브 동기화는 workflow가, 아침 편지와 같은 concurrency 그룹이라 서로 덮어쓰지 않는다).
 실제 발송은 GitHub Actions(또는 SCREENER_REAL_SEND=1)에서만 — 로컬·--dry-run은 글만 보여 주고 기록도 남기지 않는다.
 실패하면 0이 아닌 종료 코드 → workflow가 개인방에 "시장 온도계 실패" 한 줄을 보낸다(.github/workflows/thermometer.yml).
-아침 편지·가상 장부와 무관하게 돈다(실패해도 편지는 그대로).
+아침 편지와 따로 돈다(실패해도 편지는 그대로).
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ def run(dry_run: bool = False, now: datetime | None = None, prices: dict | None 
         print(f"[thermometer] 기준일 {base} 온도계는 이미 보냈습니다 — 건너뜁니다")
         return {**out, "status": "already_sent"}
     if real and not (os.environ.get(cfg["history"]["drive_env"]) or "").strip():
-        msg = f"{cfg['history']['drive_env']}가 없어 기록을 보관할 수 없습니다(중복 발송 막기 불가) — 보내지 않습니다"
+        msg = f"{cfg['history']['drive_env']}가 없어 가상 장부 DB를 받을 수 없습니다(중복 발송 막기 불가) — 보내지 않습니다"
         if final:
             raise RuntimeError(msg)
         print(f"[thermometer] {msg}")
