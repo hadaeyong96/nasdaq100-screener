@@ -9,7 +9,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from thermometer.core import KEYS
+from thermometer.core import KEYS, interpretation, load_config
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PATH = ROOT / "data" / "thermometer" / "history.csv"
@@ -89,5 +89,30 @@ def letter_line(as_of, path=None) -> str | None:
         if not r or not r.get("temp"):
             return None
         return f"시장 온도계 {int(r['temp'])}도 · {r['zone']}."
+    except Exception:
+        return None
+
+
+def detail(as_of, path=None, cfg: dict | None = None) -> dict | None:
+    """보고서 「시장 온도계」 칸 — 그 기준일 기록 → {temp, zone, rows[{key, name, raw, deg}], note, missing[이름]}. 없거나 오류면 None."""
+    try:
+        if as_of is None:
+            return None
+        day = str(getattr(as_of, "date", lambda: as_of)())[:10]
+        r = find(day, path)
+        if not r or not r.get("temp"):
+            return None
+        cfg = cfg or load_config()
+        num = lambda v: float(v) if v not in (None, "") else None  # noqa: E731
+        fmt = {"sma_fast": lambda v: f"{v:+.1f}%", "sma_slow": lambda v: f"{v:+.1f}%", "breadth": lambda v: f"{v:.0f}%",
+               "vix": lambda v: f"{v:.1f}", "fear_greed": lambda v: f"{v:.0f}"}
+        rows = []
+        for k in KEYS:
+            raw, deg = num(r.get(f"raw_{k}")), num(r.get(f"deg_{k}"))
+            if deg is not None:
+                rows.append({"key": k, "name": cfg["names"][k], "raw": fmt[k](raw) if raw is not None else "", "deg": f"{deg:.1f}"})
+        missing = [cfg["names"][k] for k in (r.get("missing") or "").split("|") if k]
+        return {"temp": int(r["temp"]), "zone": r["zone"], "rows": rows, "missing": missing,
+                "note": interpretation(num(r.get("raw_sma_fast")), num(r.get("raw_sma_slow")), cfg)}
     except Exception:
         return None

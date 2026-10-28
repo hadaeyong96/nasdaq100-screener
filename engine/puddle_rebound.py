@@ -209,7 +209,13 @@ def letter_lines(rows: list[dict], book: RBook = BOOK) -> dict:
             "cand_personal": candidate_lines(last, True), "cand_group": candidate_lines(last, False),
             "vs_v31_pp": (last["value"] - last["v31"]) / 1_000_000 if last.get("v31") is not None else None, "b_label": book.b_label,
             "check_personal": f"실적 확인 실패({', '.join(failed)})" if failed else None,
-            "check_group": f"실적 확인 실패({len(failed)}종목)" if failed else None, **e31.shares_checks(rows)}
+            "check_group": f"실적 확인 실패({len(failed)}종목)" if failed else None, **e31.shares_checks(rows),
+            "cand_count": candidate_count(last)}  # 표시 전용(2026-10-28 편지 요약 쪽지)
+
+
+def candidate_count(r: dict) -> int:
+    """■ 웅덩이 후보 종목 수(반등 확인 매수 + 대기 + 진입, 같은 종목은 한 번) — 표시 전용."""
+    return len({b["tk"] for b in r.get("buys") or []} | {w["tk"] for w in r.get("waiting") or []} | set(r.get("opened") or []))
 
 
 def sheet_row(r: dict) -> list:

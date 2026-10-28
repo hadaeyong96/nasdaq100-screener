@@ -421,6 +421,10 @@ def letter_lines(rows: list[dict], book: Book = BOOK) -> dict:
     out.update(shares_checks(rows))
     last = rows[-1]  # 표시 전용(2026-10-24): 월요일 「필터 없는 판(v3)보다 x%p」 — 이미 기록하는 v3 값을 읽기만
     out["filter_gap_pp"] = (last["v31"] - last["v3"]) / 1_000_000 if last.get("v3") is not None else None
+    # 표시 전용(2026-10-28 편지 요약 쪽지): 이미 기록한 값을 읽기만 — QQQ 대비 %p, 이번에 진행한 날들의 가상 매수·매도 건수
+    out["vs_qqq_pp"] = (last["v31"] - last["qqq"]) / 1_000_000
+    out["buys_today"] = sum(len(r["fills"]) for r in rows)
+    out["sells_today"] = sum(len(r["sells"]) for r in rows)
     return out
 
 

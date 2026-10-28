@@ -323,6 +323,10 @@ details.exp[open]>summary{color:var(--info)}
 .letter.plain h2{margin:14px 0 4px}
 .letter.plain a{color:var(--ink);text-decoration:underline}
 .letter.plain .foot{margin-top:14px}
+.letter.plain h3{margin:10px 0 2px;font-size:14px}
+.letter.plain .rsub{font-weight:400;font-size:13px;color:var(--mute,#666)}
+.letter.plain .rsec{scroll-margin-top:8px}
+nav.toc{line-height:1.9;margin:0 0 10px}
 .letter h2{font-size:14px;font-weight:800;margin:0 0 4px}
 .letter .todo{font-size:15px;font-weight:800}
 .letter .crash{font-size:13px;font-weight:700;color:var(--sell);background:var(--sell-bg);border-radius:6px;padding:4px 10px;margin:2px 0 8px}
@@ -374,7 +378,44 @@ details.exp[open]>summary{color:var(--info)}
   <h1>{{ letter.plain.title if (letter and letter.plain and not show_screening) else header_line }}</h1>
 </header>
 
-{% if letter and letter.plain %}
+{% if letter and letter.report %}
+{# 첨부 보고서 = 전부 (2026-10-28, notify/letter_plain.report_sections) — 문자는 요약 쪽지. 칸 순서: 요약 → 뉴스 → 증시 → 온도계 → 할 일 → 내 돈(개인판) → 웅덩이 후보 → 가상 실험 → 접기 #}
+<nav class="toc letter plain" aria-label="칸 바로가기"><b>바로가기</b> {% for s in letter.report %}<a href="#{{ s.id }}">{{ s.toc }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</nav>
+<section class="letter plain" aria-label="아침 편지">
+{% for s in letter.report %}
+<div class="rsec" id="{{ s.id }}">
+  <h2>{{ s.title }}{% if s.sub %} <span class="rsub">— {{ s.sub }}</span>{% endif %}</h2>
+  {% if s.key == 'news' %}
+  {% for g in s.groups %}<h3>{{ g.header }}</h3>
+  {% for line in g.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}{% endfor %}
+  {% endfor %}
+  {% endif %}
+  {% if s.key == 'market' and s.rows %}
+  <div class="sheet"><table class="fit"><thead><tr><th class="nosort l">지수</th><th class="nosort">종가</th><th class="nosort">하루</th></tr></thead>
+  <tbody>{% for r in s.rows %}<tr><td class="l">{{ r.name }}</td><td class="num">{{ r.close }}</td><td class="num">{{ r.day }}</td></tr>{% endfor %}</tbody></table></div>
+  {% endif %}
+  {% if s.key == 'thermometer' and s.detail %}
+  <div class="sheet"><table class="fit"><thead><tr><th class="nosort l">항목</th><th class="nosort">원값</th><th class="nosort">도수(20도 만점)</th></tr></thead>
+  <tbody>{% for r in s.detail.rows %}<tr><td class="l">{{ r.name }}</td><td class="num">{{ r.raw }}</td><td class="num">{{ r.deg }}</td></tr>{% endfor %}
+  <tr><td class="l"><b>합계</b></td><td></td><td class="num"><b>{{ s.detail.temp }}도</b></td></tr></tbody></table></div>
+  {% if s.detail.note %}<div class="ln">▶ {{ s.detail.note }}</div>{% endif %}
+  {% if s.detail.missing %}<div class="ln">▶ 자료 없음: {{ s.detail.missing|join(', ') }}. 나머지로 환산했습니다.</div>{% endif %}
+  <div class="ln mini">※ 시장 상태를 보는 온도계입니다. 매매 신호가 아닙니다.</div>
+  {% endif %}
+  {% for line in s.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}
+  {% if s.key == 'candidates' %}
+  {% if candidate_chart_srcs and not is_group %}{% for c in candidate_chart_srcs %}<figure class="curve-chart cand-chart"><img src="{{ c.src }}" alt="{{ c.title }}" width="1200" height="900"></figure>{% endfor %}{% endif %}
+  <div class="ln mini">{{ s.caution }}</div>
+  {% endif %}
+  {% if s.key == 'lab' and curve_chart_src %}
+  <figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>
+  {% endif %}
+</div>
+{% endfor %}
+  <div class="ln mini foot">{{ letter.plain.footer }}</div>
+  {% for c in (letter.plain.cautions or [letter.plain.caution]) %}<div class="ln mini">{{ c }}</div>{% endfor %}
+</section>
+{% elif letter and letter.plain %}
 {# 아침 편지 v3 (2026-10-24, notify/letter_plain.py + config/letter_phrases.yaml) — 텔레그램 첨부 설명과 같은 문장, 왼쪽 정렬 #}
 <section class="letter plain" aria-label="아침 편지">
 {% if letter.plain.problem %}<div class="ln crash">{{ letter.plain.problem }}</div>{% endif %}
@@ -985,7 +1026,7 @@ details.exp[open]>summary{color:var(--info)}
 
 
 
-{% if candidate_chart_srcs and not is_group %}
+{% if candidate_chart_srcs and not is_group and not (letter and letter.report) %}
 <details class="fold" id="fold-candidate-charts">
 <summary>▶ 웅덩이 후보 차트</summary>
 <div class="fold-body">
@@ -1000,7 +1041,7 @@ details.exp[open]>summary{color:var(--info)}
 <details class="fold" id="fold-fred">
 <summary>▶ 그래프로 보기</summary>
 <div class="fold-body">
-{% if curve_chart_src %}
+{% if curve_chart_src and not (letter and letter.report) %}
 <figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>
 {% endif %}
 {% if macro_rows %}

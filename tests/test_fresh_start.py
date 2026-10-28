@@ -165,11 +165,14 @@ def test_personal_letter_new_order_no_books_no_stock_folds(cfg, tmp_path):
     s = _summary(cfg)
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
     body = html[html.index("<header>"):html.index("<script>")]
-    keys = ("<header>", "■ 미국 증시 마감", "■ 오늘 할 일", "투자 포지션 변경 없습니다.", "■ 내 돈",
-            "■ 가상 실험 (실제 돈 아님)", "「변동성 맞춤 레버리지 전략」 시험 결과는 탈락입니다.", "종가 기준입니다.",
-            "※ 뉴스는 제목 모음입니다.", '<details class="fold"')
+    keys = ("<header>", 'id="sec-summary"', 'id="sec-market"', "■ 미국 증시 마감", 'id="sec-thermometer"', 'id="sec-todo"',
+            'id="sec-money"', "■ 내 돈",
+            'id="sec-lab"', "「변동성 맞춤 레버리지 전략」 시험 결과는 탈락입니다.", "종가 기준입니다.",
+            "※ 뉴스는 제목 모음입니다.", '<details class="fold"')  # 첨부 보고서 칸 순서(2026-10-28)
     i = [body.index(x) for x in keys]
     assert i == sorted(i)
+    todo = body[body.index('id="sec-todo"'):body.index('id="sec-money"')]
+    assert "▶ 투자 포지션 변경 없습니다." in todo
     check = re.search(r"미국 [^<]+ 종가 기준입니다\.", body).group(0)  # 기준 줄은 맨 아래(2026-10-24 아침 편지 v3)
     assert "장부" not in check and "자료 문제" not in body
     assert "시트 노란 칸을 채우면 표시됩니다." in body and "<h1>[오빠의 아침 편지] " in body
@@ -190,12 +193,11 @@ def test_group_letter_excludes_check_and_money(cfg, tmp_path):
         assert x not in body, x
     i = [body.index(x) for x in ("■ 미국 증시 마감", "■ 오늘 할 일", "■ 가상 실험 (실제 돈 아님)", "「변동성 맞춤 레버리지 전략」")]
     assert i == sorted(i)
-    msg = briefing.letter_message(s, cfg).split("\n")
-    assert "■ 오늘 할 일" in msg and "■ 내 돈" in msg and "▶ QQQM 280만 원, 1.0% 올랐습니다." in msg
-    assert msg[-2].endswith("종가 기준입니다.") and "장부" not in msg[-2]
+    msg = briefing.letter_message(s, cfg).split("\n")  # 문자 = 요약 쪽지(2026-10-28)
+    assert "▶ 내 돈: 합계 280만 원, 1.0% 올랐습니다." in msg and msg[-1].startswith("자세한 내용은 첨부 보고서에 있습니다")
     assert briefing.build_report_caption(s, cfg) == msg[0]  # 첨부 설명은 머리줄만
     group_msg = briefing.letter_message(s, cfg, edition="group")
-    assert "점검" not in group_msg and "■ 내 돈" not in group_msg and "280만" not in group_msg
+    assert "점검" not in group_msg and "내 돈" not in group_msg and "280만" not in group_msg
 
 
 def test_attach_letter_v3_lag_money_research(cfg):
