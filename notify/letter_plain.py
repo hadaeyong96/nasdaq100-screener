@@ -1,13 +1,14 @@
-"""아침 편지 v3 (2026-10-24) — 찌라시형 뉴스 브리핑 + 경어체. 텔레그램 첨부 설명과 HTML 맨 위가 같은 문장을 쓴다.
+"""아침 편지 v3 (2026-10-24) — 찌라시형 뉴스 브리핑 + 경어체. 2026-10-29부터 텔레그램은 HTML 보고서 파일 하나와
+설명 한 줄(caption_line)만 보내고, 내용은 모두 보고서(report_sections)에 있다.
 
 표시 전용 순수 함수: 이미 계산된 summary를 읽어 문장만 만든다(계산·판단 로직은 notify.letter·engine 그대로).
 문장은 config/letter_phrases.yaml(사용자 수정용, 경어체). 같은 상황 문장이 여럿이면 날짜로 돌려 쓴다(전날과 다른 문장).
 머리줄 "[오빠의 아침 편지] M/D(요일)"(편지 받는 한국 날짜), 섹션 "■ 이름", 항목 "▶ 한 줄". 이모지·들여쓰기 없음.
 단체방판(edition="group")은 ■ 내 돈·종목명·개인 금액 없음(뉴스는 같다).
 
-순서: 머리줄 → (문제 있을 때만) "▶ 자료 문제: …" → ■ 오늘의 핵심 → 뉴스 주제 칸(config/news_topics.yaml 순서)
-→ ■ 미국 증시 마감(첫 줄 = 오늘의 한 줄) → ■ 오늘 할 일 → ■ 내 돈(개인판) → ■ 웅덩이 후보(2026-10-24) → ■ 가상 실험 (실제 돈 아님)
-→ 기준 줄 → ※ 유의 줄(웅덩이 후보가 있으면 한 줄 더).
+보고서 칸 순서(REPORT_ORDER): ① 오늘 요약 → ② 시장 온도(+ 지수·금리·환율) → ③ 뉴스 → ④ 오늘 할 일 → ⑤ 내 돈(개인판)
+→ ⑥ 웅덩이 후보 → ⑦ 가상 실험 → 기준 줄 → ※ 유의 줄. 시장 상태 문장(장기 평균선·투자 심리·오늘의 한 줄)은 없고
+시장 온도 칸이 대신한다. 폭락장·급락장 경고는 ④ 오늘 할 일에만(2026-10-29).
 """
 
 from __future__ import annotations
@@ -23,8 +24,6 @@ from notify import letter
 PERSONAL, GROUP = letter.PERSONAL, letter.GROUP
 ROOT = Path(__file__).resolve().parents[1]
 PHRASES_PATH = ROOT / "config" / "letter_phrases.yaml"
-CAPTION_LIMIT = 1024  # 텔레그램 첨부 설명 최대 글자 수
-MESSAGE_LIMIT = 4096  # 텔레그램 문자 메시지 최대 글자 수(편지 본문은 문자 메시지로 먼저 보낸다)
 BULLET, SECTION = "▶ ", "■ "
 NEWS_SECTIONS = ("국제정세", "전쟁·지정학", "미국 경제·금리")  # 기본 순서(news_topics.yaml 순서가 우선)
 
@@ -130,18 +129,11 @@ def _closes(s) -> pd.Series | None:
 
 
 def market_state(summary: dict) -> dict | None:
-    """QQQ 종가 → {day(%), gap(200일 평균 대비 %), regime, drawdown(252일 고점 대비 %)}. 자료가 없으면 None."""
-    from factory import regimes
-
+    """QQQ 종가 → {day(하루 변화 %)}. 자료가 없으면 None. (장기 평균선·국면 문장은 2026-10-29 시장 온도 칸으로 대체)"""
     q = _closes(summary.get("qqq_close"))
     if q is None:
         return None
-    out = {"day": (q.iloc[-1] / q.iloc[-2] - 1) * 100, "gap": None, "regime": regimes.UNKNOWN,
-           "drawdown": (q.iloc[-1] / q.iloc[-252:].max() - 1) * 100}
-    if len(q) >= 200:
-        out["gap"] = (q.iloc[-1] / q.iloc[-200:].mean() - 1) * 100
-        out["regime"] = regimes.classify(q).iloc[-1]
-    return out
+    return {"day": (q.iloc[-1] / q.iloc[-2] - 1) * 100}
 
 
 def _is_holiday_after(summary: dict) -> bool:
@@ -153,110 +145,23 @@ def _is_holiday_after(summary: dict) -> bool:
     return us_day.dayofweek < 5 and pd.Timestamp(as_of).normalize() < us_day
 
 
-def headline(summary: dict, cfg: dict, ph: dict, edition: str) -> tuple[str | None, str | None]:
-    """오늘의 한 줄 → (문장, 쓴 상황). 위에서부터 먼저 맞는 것 하나: 휴장 다음 날 → 저축일(개인판) → 12월 공제(개인판)
-    → 폭락장 → 하락장(장기 평균선 근처면 갈림길) → 크게 오름 → 크게 내림(상승장) → 갈림길 → 평온."""
-    from factory import regimes
-
-    day = _day(summary)
-    th = ph.get("thresholds") or {}
-    big, cross = float(th.get("big_move_pct", 1.5)), float(th.get("crossroads_pct", 2.0))
-    if _is_holiday_after(summary):
-        return phrase(ph, "headline.holiday", day), "holiday"
-    if edition == PERSONAL and summary.get("savings_day"):
-        return phrase(ph, "headline.savings", day), "savings"
-    dt = summary.get("dec_tax") or {}
-    if edition == PERSONAL and dt.get("status") == "ok" and dt.get("deadline") is not None and day is not None:
-        n = (pd.Timestamp(dt["deadline"]).normalize() - pd.Timestamp(day).normalize()).days
-        if n >= 0:
-            return phrase(ph, "headline.dec_tax", day, n=n), "dec_tax"
-    m = market_state(summary)
-    if m is None:
-        return None, None
-    near = m["gap"] is not None and abs(m["gap"]) < cross
-    if m["regime"] == regimes.CRASH:
-        return phrase(ph, "headline.crash", day, dd=f"{abs(m['drawdown']):.1f}"), "crash"
-    if m["regime"] == regimes.DOWN:
-        if near:
-            return phrase(ph, "headline.crossroads", day, z=f"{abs(m['gap']):.1f}"), "crossroads"
-        return phrase(ph, "headline.down", day, z=f"{abs(m['gap']):.1f}"), "down"
-    if m["day"] >= big:
-        return phrase(ph, "headline.big_up", day, x=f"{abs(m['day']):.1f}"), "big_up"
-    if m["day"] <= -big:
-        return phrase(ph, "headline.big_down", day, x=f"{abs(m['day']):.1f}"), "big_down"
-    if near:
-        return phrase(ph, "headline.crossroads", day, z=f"{abs(m['gap']):.1f}"), "crossroads"
-    return phrase(ph, "headline.calm", day, x=signed(m["day"])), "calm"
-
-
-def _index_change(s, as_of) -> float | None:
-    s = _closes(s)
-    if s is None:
-        return None
-    if as_of is not None:
-        s = s[s.index <= pd.Timestamp(as_of)]
-    return (s.iloc[-1] / s.iloc[-2] - 1) * 100 if len(s) >= 2 else None
-
-
 def market_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
-    """■ 미국 증시 마감 — 오늘의 한 줄, 지수 변화, 금리·환율, 큰 흐름(오늘의 한 줄과 겹치면 생략), 투자 심리, 주의."""
-    from factory import regimes
-
+    """② 시장 온도 칸 아래 「지수·금리·환율」 글 줄 — (휴장 다음 날만) 휴장 안내, 미국 10년 금리·환율, (위험 단계 지표가 있으면)
+    주의 한 줄. 지수 등락은 표(index_rows)에만 있다. 시장 상태 문장(오늘의 한 줄·장기 평균선·투자 심리)은 없다(2026-10-29)."""
     day = _day(summary)
     lines = []
-    head, kind = headline(summary, cfg, ph, edition)
-    if head:
-        lines.append(head)
-    m = market_state(summary)
-    parts = {}
-    if m is not None:
-        parts["q"] = signed(m["day"])
-    ix = summary.get("index_close") or {}
-    for key, name in (("s", "spx"), ("c", "soxx")):
-        v = _index_change(ix.get(name), summary.get("as_of"))
-        if v is not None:
-            parts[key] = signed(v)
-    if "q" in parts:
-        tpl = phrase(ph, "market.index", day)
-        segs = [seg for seg in tpl.split(" · ") if all(f"{{{k}}}" not in seg or k in parts for k in ("q", "s", "c"))]
-        lines.append(fill(" · ".join(segs), **parts))
+    if _is_holiday_after(summary):
+        lines.append(phrase(ph, "market.holiday", day))
     by = {r.get("slug"): r for r in summary.get("macro_rows") or []}
     rate, fx = by.get("dgs10"), by.get("fx")
     if rate or fx:
         tpl = phrase(ph, "market.rates", day)
         segs = [seg for seg in tpl.split(" · ") if ("{r}" not in seg or rate) and ("{fx}" not in seg or fx)]
         lines.append(fill(" · ".join(segs), r=f"{rate['value']:.1f}" if rate else "", fx=f"{fx['value']:,.0f}" if fx else ""))
-    if m is not None and m["gap"] is not None and kind not in ("crash", "down", "crossroads"):
-        cross = float((ph.get("thresholds") or {}).get("crossroads_pct", 2.0))
-        z = f"{abs(m['gap']):.1f}"
-        if m["regime"] == regimes.CRASH:
-            lines.append(phrase(ph, "market.regime.crash", day, z=z))
-        elif abs(m["gap"]) < cross:
-            lines.append(phrase(ph, "market.regime.crossroads", day, z=z))
-        elif m["regime"] == regimes.DOWN:
-            lines.append(phrase(ph, "market.regime.down", day, z=z))
-        else:
-            lines.append(phrase(ph, "market.regime.up", day, z=z))
-    fg = by.get("fear-greed")
-    if fg and fg.get("value") is not None:
-        v = float(fg["value"])
-        for b in (ph.get("market") or {}).get("mood") or []:
-            if v <= float(b["max"]):
-                lines.append(fill(pick(b["text"], day), v=f"{v:.0f}"))
-                break
     w = warn_line(summary, ph, day)
     if w:
         lines.append(w)
-    t = _thermometer_line(summary)
-    if t:
-        lines.append(t)
     return lines
-
-
-def _thermometer_line(summary: dict) -> str | None:
-    """시장 온도계 한 줄 "시장 온도계 {T}도 · {구간}." — 그 기준일 온도가 있을 때만(summary["thermometer"]), 없으면 None."""
-    t = thermometer_result(summary)
-    return f"시장 온도계 {t['temp']}도 · {t['zone']}." if t else None
 
 
 def warn_line(summary: dict, ph: dict, day=None) -> str | None:
@@ -476,7 +381,7 @@ def title(summary: dict, cfg: dict, ph: dict) -> str:
 
 
 def build(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> dict:
-    """편지 구조 {title, problem, sections[{header, lines}], footer, caution} — 캡션과 HTML이 같이 쓴다.
+    """편지 구조 {title, problem, sections[{header, lines}], footer, caution} — HTML 머리줄·기준 줄·유의 줄이 쓴다.
     줄은 글(str) 또는 뉴스 줄(dict: text·url). 머리표 "▶ "는 그릴 때 붙인다."""
     ph = phrases if phrases is not None else load_phrases()
     hd = ph.get("headers") or {}
@@ -484,7 +389,7 @@ def build(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | Non
     sections = news_sections(summary, ph)
     m = market_lines(summary, cfg, ph, edition)
     if m:
-        sections.append({"header": hd.get("market", "■ 미국 증시 마감"), "lines": m})
+        sections.append({"header": hd.get("market", "■ 지수·금리·환율"), "lines": m})
     sections.append({"header": hd.get("todo", "■ 오늘 할 일"), "lines": todo_lines(summary, cfg, ph, edition)})
     if edition == PERSONAL:
         sections.append({"header": hd.get("money", "■ 내 돈"), "lines": money_lines(summary, cfg, ph)})
@@ -501,8 +406,8 @@ def build(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | Non
     return {"title": title(summary, cfg, ph),
             "problem": (BULLET + phrase(ph, "problem.prefix", day) + " ".join(probs)) if probs else None,
             "sections": sections, "footer": phrase(ph, "footer.base", day, 날짜=base),
-            "caution": phrase(ph, "footer.caution", day), "more": phrase(ph, "footer.more", day),
-            "cautions": [phrase(ph, "footer.caution", day)] + ([phrase(ph, "candidates.caution", day)] if cand else [])}
+            "caution": phrase(ph, "footer.caution", day),
+            "cautions": [phrase(ph, "footer.caution", day)]}  # 웅덩이 후보 유의 줄은 그 칸 안에만(2026-10-29 중복 정리)
 
 
 def line_text(line) -> str:
@@ -510,37 +415,33 @@ def line_text(line) -> str:
     return BULLET + (line["text"] if isinstance(line, dict) else str(line))
 
 
-def to_text(doc: dict, limit: int = MESSAGE_LIMIT) -> str:
-    """편지 구조 → 텔레그램 문자 메시지(들여쓰기 없음). 한도를 넘으면 뉴스 주제 칸(뒤에서부터) → 가상 실험 → 나머지 뒤쪽 칸 순으로 빼고
-    "▶ 나머지는 첨부 파일에 있습니다."를 붙인다."""
-    def render(sections, more=False):
-        head = [doc["title"]] + ([doc["problem"]] if doc.get("problem") else [])
-        body = ["\n".join(head)]
-        for s in sections:
-            body.append("\n".join([s["header"]] + [line_text(x) for x in s["lines"]]))
-        tail = ([BULLET + doc["more"]] if more else []) + [doc["footer"]] + doc.get("cautions", [doc["caution"]])
-        body.append("\n".join(tail))
-        return "\n\n".join(body)
+# ── 텔레그램 설명 한 줄 · 보고서 칸 (2026-10-29) ───────────────────────────────
+# 텔레그램 = 보고서 파일 하나 + 설명 한 줄(caption_line). 보고서 맨 위 「오늘 요약」(최대 5줄)부터. 표시 전용 — 계산은 읽기만.
 
-    secs = list(doc["sections"])
-    text = render(secs)
-    drop_order = [i for i in reversed(range(len(secs))) if secs[i].get("news_topic")]
-    drop_order += [i for i in range(len(secs)) if secs[i].get("lab")]
-    drop_order += [i for i in range(len(secs)) if secs[i].get("candidates")]
-    drop_order += [i for i in reversed(range(len(secs))) if i not in drop_order]
-    dropped: set[int] = set()
-    for i in drop_order:
-        if len(text) <= limit or len(dropped) >= len(secs) - 1:
-            break
-        dropped.add(i)
-        text = render([s for j, s in enumerate(secs) if j not in dropped], more=True)
-    return text[:limit]
+REPORT_ORDER = ("summary", "thermometer", "news", "todo", "money", "candidates", "lab")
+SUMMARY_MAX_LINES = 5  # ① 오늘 요약 최대 줄 수(자료 문제 줄 포함)
 
 
-# ── 요약 쪽지(텔레그램 문자) · 첨부 보고서 칸 (2026-10-28) ─────────────────────
-# 문자 = 요약 쪽지(최대 summary.max_lines줄·max_chars자), 자세한 내용은 첨부 HTML. 표시 전용 — 계산은 그대로 읽기만.
+def has_todo(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> bool:
+    """오늘 할 일이 기본 문장(todo.none "투자 포지션 변경 없습니다.")이 아니면 True — 판마다 다르다(저축일·12월 공제는 개인판만)."""
+    ph = phrases if phrases is not None else load_phrases()
+    return todo_lines(summary, cfg, ph, edition) != [phrase(ph, "todo.none", _day(summary))]
 
-REPORT_ORDER = ("summary", "news", "market", "thermometer", "todo", "money", "candidates", "lab")
+
+def caption_line(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> str:
+    """텔레그램 파일 설명 한 줄: "[오빠의 아침 편지] 10/29(목) · 시장 온도 60도"(온도가 없으면 뒷부분 생략)
+    + 할 일이 기본 문장이 아니면 " · 오늘 할 일 있음" + 자료 문제가 있으면 " · 자료 문제 있음"."""
+    ph = phrases if phrases is not None else load_phrases()
+    cp = ph.get("caption") or {}
+    out = [title(summary, cfg, ph)]
+    t = thermometer_result(summary)
+    if t:
+        out.append(fill(str(cp.get("temp", "시장 온도 {T}도")), T=t["temp"]))
+    if has_todo(summary, cfg, edition, ph):
+        out.append(str(cp.get("todo", "오늘 할 일 있음")))
+    if problems(summary, ph, edition):
+        out.append(str(cp.get("problem", "자료 문제 있음")))
+    return " · ".join(out)
 
 
 def first_sentence(text: str) -> str:
@@ -550,17 +451,15 @@ def first_sentence(text: str) -> str:
 
 
 def summary_todo(summary: dict, cfg: dict, ph: dict, edition: str) -> str:
-    """요약 쪽지 할 일 — 급락장 → 저축일(개인판) → 12월 공제(개인판) → 그 밖에는 ■ 오늘 할 일 첫 줄, 모두 첫 문장만."""
+    """① 오늘 요약 할 일 — ④ 오늘 할 일 첫 줄의 첫 문장(저축일 → 12월 공제 → 성적표 순, 개인판만). 급락장 경고 문장은
+    ④에만 두므로(2026-10-29) 급락장 줄만 있는 날은 summary.todo_crash("오늘 할 일 칸을 꼭 봐 주십시오.")."""
     day = _day(summary)
-    if letter.crash_warning(summary.get("qqq_close")):
-        return first_sentence(phrase(ph, "todo.crash", day))
-    if edition == PERSONAL:
-        if summary.get("savings_day"):
-            return first_sentence(phrase(ph, "todo.savings", day))
-        dl = _dec_tax_line(summary, ph, day)
-        if dl:
-            return first_sentence(dl)
-    return first_sentence(todo_lines(summary, cfg, ph, edition)[0])
+    crash = phrase(ph, "todo.crash", day)
+    lines = todo_lines(summary, cfg, ph, edition)
+    rest = [x for x in lines if x != crash]
+    if rest:
+        return first_sentence(rest[0])
+    return phrase(ph, "summary.todo_crash", day)
 
 
 def money_summary(summary: dict, ph: dict) -> str | None:
@@ -599,7 +498,7 @@ def thermometer_result(summary: dict) -> dict | None:
 
 
 def thermometer_detail(summary: dict) -> dict | None:
-    """보고서 「시장 온도계」 칸 자료(thermometer.message.report_detail) — 없거나 오류면 None."""
+    """보고서 ② 시장 온도 칸 자료(thermometer.message.report_detail — 온도·구간·어제 대비·항목 표·해석) — 없거나 오류면 None."""
     try:
         from thermometer.core import load_config
         from thermometer.message import report_detail
@@ -610,16 +509,16 @@ def thermometer_detail(summary: dict) -> dict | None:
 
 
 def market_summary(summary: dict, ph: dict) -> str | None:
-    """요약 쪽지 시장 — "시장: QQQ +0.4% · 시장 온도 62도(따뜻함)"(온도계 기록이 없으면 뒷부분 생략). QQQ가 없으면 None."""
+    """① 오늘 요약 첫 줄 — "시장 온도 60도(미지근함) · QQQ +0.4%"(둘 중 없는 쪽은 생략). 둘 다 없으면 None."""
     day = _day(summary)
-    m = market_state(summary)
-    if m is None:
-        return None
-    out = phrase(ph, "summary.market", day, q=signed(m["day"]))
+    parts = []
     t = thermometer_result(summary)
     if t:
-        out += " · " + phrase(ph, "summary.temp", day, T=t["temp"], 구간=t["zone"])
-    return out
+        parts.append(phrase(ph, "summary.temp", day, T=t["temp"], 구간=t["zone"]))
+    m = market_state(summary)
+    if m is not None:
+        parts.append(phrase(ph, "summary.market", day, q=signed(m["day"])))
+    return " · ".join(parts) or None
 
 
 def lab_summary(summary: dict, ph: dict) -> str | None:
@@ -653,31 +552,9 @@ def candidate_count(summary: dict) -> int | None:
     return int(rb.get("cand_count") or 0)
 
 
-def has_chart(summary: dict, edition: str) -> bool:
-    """그 판 보고서에 그림이 있는지 — 성적 그래프(판마다), 웅덩이 후보 차트(개인판만)."""
-    cc = summary.get("curve_chart") or {}
-    if cc.get("group" if edition == GROUP else "personal"):
-        return True
-    return edition == PERSONAL and bool(summary.get("candidate_charts"))
-
-
-def _more_line(summary: dict, ph: dict, edition: str) -> str:
-    day = _day(summary)
-    seg = []
-    n = news_count(summary)
-    if n:
-        seg.append(phrase(ph, "summary.more_news", day, n=n))
-    m = candidate_count(summary)
-    if m:  # 0종목이면 생략(2026-10-28)
-        seg.append(phrase(ph, "summary.more_candidates", day, m=m))
-    if has_chart(summary, edition):
-        seg.append(phrase(ph, "summary.more_chart", day))
-    return phrase(ph, "summary.more", day, 상세=" · ".join(seg)).replace("()", "")
-
-
-def summary_items(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None,
-                  news_max: int | None = None) -> dict:
-    """요약 쪽지 재료 → {title, problem(▶ 포함|None), lines(머리표 없는 글, 순서대로), more}. news_max = 뉴스 제목 최대 글자."""
+def summary_items(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> dict:
+    """① 오늘 요약 재료 → {title, problem(▶ 포함|None), lines(머리표 없는 글, 순서대로)}.
+    줄 = 시장 온도·QQQ / 할 일 / 내 돈 합계(개인판) / 가상 실험 — 자료 문제 줄까지 최대 SUMMARY_MAX_LINES줄."""
     ph = phrases if phrases is not None else load_phrases()
     day = _day(summary)
     probs = problems(summary, ph, edition)
@@ -690,51 +567,16 @@ def summary_items(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: di
         mo = money_summary(summary, ph)
         if mo:
             lines.append(mo)
-    nw = summary.get("news") or {}
-    if nw.get("status") != "fail":
-        for a in (nw.get("top") or [])[:3]:
-            t = _shorten(a["title"])
-            if news_max is not None and len(t) > news_max:
-                t = t[:max(1, news_max - 1)].rstrip() + "…"
-            lines.append(phrase(ph, "summary.news", day, 제목=t, 언론사=a["source"]))
     lb = lab_summary(summary, ph)
     if lb:
         lines.append(lb)
     return {"title": title(summary, cfg, ph),
             "problem": (BULLET + phrase(ph, "problem.prefix", day) + " ".join(probs)) if probs else None,
-            "lines": lines, "more": _more_line(summary, ph, edition)}
-
-
-def _render_summary(items: dict) -> str:
-    out = [items["title"]] + ([items["problem"]] if items.get("problem") else [])
-    out += [BULLET + x for x in items["lines"]] + [items["more"]]
-    return "\n".join(out)
-
-
-def summary_text(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> str:
-    """텔레그램 문자 = 요약 쪽지(최대 max_lines줄·max_chars자). 넘치면 뉴스 제목 → 자료 문제 줄 순으로 줄인다."""
-    ph = phrases if phrases is not None else load_phrases()
-    sm = ph.get("summary") or {}
-    max_chars, max_lines = int(sm.get("max_chars", 700)), int(sm.get("max_lines", 12))
-    items = summary_items(summary, cfg, edition, ph)
-    text = _render_summary(items)
-    n = 60
-    while len(text) > max_chars and n > 12:
-        n -= 4
-        items = summary_items(summary, cfg, edition, ph, news_max=n)
-        text = _render_summary(items)
-    if len(text) > max_chars and items.get("problem"):
-        p = items["problem"]
-        items["problem"] = p[:max(len(BULLET) + 8, len(p) - (len(text) - max_chars) - 1)].rstrip() + "…"
-        text = _render_summary(items)
-    lines = text.split("\n")
-    if len(lines) > max_lines:  # 정상 구성은 최대 10줄 — 혹시 넘으면 끝 안내 줄은 남기고 앞에서 자른다
-        lines = lines[:max_lines - 1] + [lines[-1]]
-    return "\n".join(lines)[:max_chars]
+            "lines": lines[:SUMMARY_MAX_LINES - (1 if probs else 0)]}
 
 
 def index_rows(summary: dict) -> list[dict]:
-    """보고서 「미국 증시 마감」 지수 표 — [{name, close, day}] (QQQ·S&P500·반도체, 자료 있는 것만)."""
+    """보고서 ② 「지수·금리·환율」 지수 표 — [{name, close, day}] (QQQ·S&P500·반도체, 자료 있는 것만)."""
     ix = summary.get("index_close") or {}
     out = []
     for name, s in (("나스닥100(QQQ)", summary.get("qqq_close")), ("S&P500", ix.get("spx")), ("반도체(SOXX)", ix.get("soxx"))):
@@ -750,43 +592,35 @@ def index_rows(summary: dict) -> list[dict]:
 
 
 def report_sections(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> list[dict]:
-    """첨부 보고서 칸(REPORT_ORDER 순서) — [{id, key, toc, title, sub(제목 옆 한 줄 요약), lines, …}]. 내 돈은 개인판만,
-    웅덩이 후보는 장부가 있을 때만. 단체방판은 문자와 같은 규칙(금액·종목명 없음)."""
+    """보고서 칸(REPORT_ORDER 순서) — [{id, key, toc, title, sub(제목 옆 짧은 표시: 건수·종목 수만), lines, …}].
+    ② 시장 온도 = 온도계 자료(detail) + 「지수·금리·환율」(rows 표 + market 줄). 내 돈은 개인판만, 웅덩이 후보는 장부가 있을 때만.
+    단체방판은 금액·종목명 없음. 같은 문장·숫자가 두 칸에 나오지 않게 제목 옆 요약은 건수만(① 오늘 요약은 요약이라 예외)."""
     ph = phrases if phrases is not None else load_phrases()
     rp = ph.get("report") or {}
     day = _day(summary)
     items = summary_items(summary, cfg, edition, ph)
-    secs = {"summary": {"title": rp.get("summary", "■ 오늘 요약"), "sub": rp.get("summary_sub", "문자와 같은 내용"),
+    secs = {"summary": {"title": rp.get("summary", "■ 오늘 요약"), "sub": "",
                         "lines": ([items["problem"][len(BULLET):]] if items.get("problem") else []) + items["lines"]}}
-    n = news_count(summary)
-    if summary.get("news") is not None:  # 뉴스를 받으려 한 날만(못 받았으면 실패 한 줄)
-        secs["news"] = {"title": rp.get("news", "■ 뉴스 전체"), "sub": f"{n}건" if n else phrase(ph, "news.failed", day),
-                        "groups": news_sections(summary, ph), "lines": []}
-    therm_line = _thermometer_line(summary)
-    m = market_state(summary)
-    secs["market"] = {"title": rp.get("market", "■ 미국 증시 마감"), "sub": f"QQQ {signed(m['day'])}%" if m is not None else "",
-                      "rows": index_rows(summary),
-                      "lines": [x for x in market_lines(summary, cfg, ph, edition) if x != therm_line]}
     td = thermometer_detail(summary)
     none_text = rp.get("thermometer_none", "")
-    secs["thermometer"] = {"title": rp.get("thermometer", "■ 시장 온도계"),
-                           "sub": f"{td['temp']}도 · {td['zone']}" if td else none_text,
-                           "detail": td, "lines": [] if td else [none_text]}
-    secs["todo"] = {"title": rp.get("todo", "■ 오늘 할 일"), "sub": summary_todo(summary, cfg, ph, edition),
-                    "lines": todo_lines(summary, cfg, ph, edition)}
+    secs["thermometer"] = {"title": rp.get("thermometer", "■ 시장 온도"), "sub": "", "detail": td,
+                           "lines": [] if td else [none_text],
+                           "market_title": rp.get("market", "지수·금리·환율"), "rows": index_rows(summary),
+                           "market_lines": market_lines(summary, cfg, ph, edition)}
+    n = news_count(summary)
+    if summary.get("news") is not None:  # 뉴스를 받으려 한 날만(못 받았으면 실패 한 줄)
+        secs["news"] = {"title": rp.get("news", "■ 뉴스"), "sub": f"{n}건" if n else "",
+                        "groups": news_sections(summary, ph), "lines": []}
+    secs["todo"] = {"title": rp.get("todo", "■ 오늘 할 일"), "sub": "", "lines": todo_lines(summary, cfg, ph, edition)}
     if edition == PERSONAL:
-        mo = money_summary(summary, ph)
-        secs["money"] = {"title": rp.get("money", "■ 내 돈"), "sub": (mo or "").removeprefix("내 돈: "),
-                         "lines": money_lines(summary, cfg, ph)}
+        secs["money"] = {"title": rp.get("money", "■ 내 돈"), "sub": "", "lines": money_lines(summary, cfg, ph)}
     cand = candidate_lines(summary, edition)
     if cand or (edition == PERSONAL and summary.get("candidate_charts")):
         c = candidate_count(summary) or (len(summary.get("candidate_charts") or []) if edition == PERSONAL else 0)
         secs["candidates"] = {"title": rp.get("candidates", "■ 웅덩이 후보"), "sub": f"{c}종목" if c else "없음",
                               "lines": cand, "caution": phrase(ph, "candidates.caution", day)}
-    lb = lab_summary(summary, ph)
     lab = lab_lines(summary, cfg, ph, edition)
     if lab or (summary.get("curve_chart") or {}).get("group" if edition == GROUP else "personal"):
-        secs["lab"] = {"title": rp.get("lab", "■ 가상 실험 (실제 돈 아님)"),
-                       "sub": (lb or "").removeprefix("가상 실험: ").rstrip("."), "lines": lab}
+        secs["lab"] = {"title": rp.get("lab", "■ 가상 실험 (실제 돈 아님)"), "sub": "", "lines": lab}
     return [{"id": f"sec-{k}", "key": k, "toc": secs[k]["title"].removeprefix(SECTION).split(" (")[0], **secs[k]}
             for k in REPORT_ORDER if k in secs]

@@ -286,7 +286,7 @@ def test_letter_monday_line_names_v32_and_shares_problem_line():
     assert "웅덩이 v3.2보다 0.3%p 앞섭니다." in lab
     assert d["problem"].endswith("주식 수를 못 받아 시가총액 순위에서 뺀 종목이 있습니다(CCC).")
     g = lp.build(base, {"research_news": {}}, lp.GROUP)
-    assert g["problem"].endswith("주식 수를 못 받아 시가총액 순위에서 뺀 종목이 있습니다(1종목).") and "CCC" not in lp.to_text(g)
+    assert g["problem"].endswith("주식 수를 못 받아 시가총액 순위에서 뺀 종목이 있습니다(1종목).") and "CCC" not in str(g)
 
 
 def test_research_news_in_progress_lists_new_ledgers(cfg):

@@ -58,13 +58,19 @@ names:
   vix: 공포 지수 VIX
   fear_greed: 공포·탐욕
 
-# 예약 (.github/workflows/thermometer.yml의 cron과 같아야 한다 — tests/test_thermometer.py가 확인)
+# 독립 텔레그램 메시지 (2026-10-29 중단): 온도는 아침 편지 보고서 「시장 온도」 칸에 들어가고, 기록(thermometer_history)은
+# 아침 편지 실행(engine.daily)이 남긴다. true로 바꾸고 thermometer.yml에 예약(schedule.crons)을 다시 넣으면 예전처럼 따로 보낸다.
+telegram:
+  enabled: false
+
+# 예약 — 지금은 꺼져 있다(thermometer.yml은 수동 실행만). 다시 켤 때 thermometer.yml의 cron을 이 값과 같게 넣는다.
 schedule:
   crons: ["50 22 * * *", "50 23 * * *"] # KST 07:50 · 08:50
   final_cron: "50 23 * * *" # 마지막 예약: 여기서도 자료가 안 되면 실패로 본다
   skip_weekdays_kst: [6, 0] # 일(6)·월(0) — 새 미국 종가 없음 (파이썬 weekday 번호)
 
-# 기록: 가상 장부 DB(드라이브 동기화 중)의 thermometer_history 표 — 중복 발송 막기도 이 표(2026-10-28)
+# 기록: 가상 장부 DB(드라이브 동기화 중)의 thermometer_history 표 — 2026-10-29부터 아침 편지 실행이 기준일마다 한 줄
+# (독립 메시지를 다시 켜면 중복 발송 막기도 이 표)
 history:
   path: data/virtual_books.db
   drive_env: GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS # Actions에서 이 시크릿이 없으면 기록을 못 남기므로 보내지 않는다

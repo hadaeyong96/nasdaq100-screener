@@ -40,7 +40,7 @@ def test_monday_letter_sent_although_saturday_sent_same_as_of(tmp_path, monkeypa
     _seed(telegram, tmp_path, "2026-10-23", "2026-10-23:group")
     telegram.send_briefing("본문", s, cfg)
     telegram.send_group_briefing("본문", rep, s, cfg)
-    assert [m for m, _ in calls] == ["sendMessage", "sendPhoto", "sendDocument"] * 2
+    assert [m for m, _ in calls] == ["sendDocument"] * 2  # 2026-10-29: 파일만(문자·그림 없음)
     assert _sent(telegram, tmp_path, "2026-10-23:weekly:2026-10-26")
     assert _sent(telegram, tmp_path, "2026-10-23:group:weekly:2026-10-26")
     calls.clear()
@@ -59,32 +59,18 @@ def test_sunday_and_weekday_still_once_per_as_of(tmp_path, monkeypatch, cfg):
     assert calls == []
 
 
-def test_letter_body_failure_still_sends_fallback_and_file(tmp_path, monkeypatch, cfg):
+def test_caption_failure_still_sends_file(tmp_path, monkeypatch, cfg):
+    """설명 한 줄을 만들다 실패해도 파일은 나가야 한다 — 설명만 머리줄로(2026-10-29, 예전 「편지 본문 실패」 시험을 대신함)."""
     telegram, calls = _send_env(monkeypatch, tmp_path, cfg)
+    from notify import letter_plain
 
     def boom(*a, **k):
         raise KeyError("x")
 
-    monkeypatch.setattr(telegram, "letter_message", boom)
-    texts = []
-    real = telegram.requests.post
-
-    def post(url, data=None, files=None, timeout=None):
-        if url.endswith("sendMessage"):
-            texts.append(data["text"])
-        return real(url, data=data, files=files, timeout=timeout)
-
-    monkeypatch.setattr(telegram.requests, "post", post)
+    monkeypatch.setattr(letter_plain, "caption_line", boom)
     s, _ = _send_summary(tmp_path, "2026-10-27")
     telegram.send_briefing("본문", s, cfg)
-    assert [m for m, _ in calls] == ["sendMessage", "sendDocument"]
-    assert "편지 본문을 만들지 못했습니다" in texts[0]
-
-
-def test_chart_photo_error_is_none(cfg):
-    from notify import telegram
-
-    assert telegram.chart_photo({"curve_chart": {"personal": object()}, "letter_today_kst": pd.Timestamp("2026-10-26")}, cfg) is None
+    assert calls == [("sendDocument", "[오빠의 아침 편지] 10/27(화)")]
 
 
 def test_safe_step_marks_problem_line_and_continues():

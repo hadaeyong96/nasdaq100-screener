@@ -165,10 +165,10 @@ def test_personal_letter_new_order_no_books_no_stock_folds(cfg, tmp_path):
     s = _summary(cfg)
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
     body = html[html.index("<header>"):html.index("<script>")]
-    keys = ("<header>", 'id="sec-summary"', 'id="sec-market"', "■ 미국 증시 마감", 'id="sec-thermometer"', 'id="sec-todo"',
+    keys = ("<header>", 'id="sec-summary"', 'id="sec-thermometer"', "■ 시장 온도", "<h3>지수·금리·환율</h3>", 'id="sec-todo"',
             'id="sec-money"', "■ 내 돈",
             'id="sec-lab"', "「변동성 맞춤 레버리지 전략」 시험 결과는 탈락입니다.", "종가 기준입니다.",
-            "※ 뉴스는 제목 모음입니다.", '<details class="fold"')  # 첨부 보고서 칸 순서(2026-10-28)
+            "※ 뉴스는 제목 모음입니다.", '<details class="fold"')  # 보고서 칸 순서(2026-10-29)
     i = [body.index(x) for x in keys]
     assert i == sorted(i)
     todo = body[body.index('id="sec-todo"'):body.index('id="sec-money"')]
@@ -178,7 +178,7 @@ def test_personal_letter_new_order_no_books_no_stock_folds(cfg, tmp_path):
     assert "시트 노란 칸을 채우면 표시됩니다." in body and "<h1>[오빠의 아침 편지] " in body
     for x in ("가상 장부", "[3 가상", "QQQ 대비 누적", "전략 표로 보기", "강한 종목", "돈이 몰리는", "월간 성적표", "상승장 RSI"):
         assert x not in body, x
-    assert _folds(body) == ["▶ 그래프로 보기", "▶ 용어 풀이", "▶ 이 편지에 대해"]
+    assert _folds(body) == ["▶ 용어 풀이", "▶ 이 편지에 대해"]  # 2026-10-29: 「그래프로 보기」(시장 지표 타일) 접기 없음
     tue = report_html.render_report(_summary(cfg, monday=False), cfg, tmp_path).read_text(encoding="utf-8")
     assert "시험 결과는" not in tue and "■ 가상 실험" not in tue
 
@@ -191,13 +191,13 @@ def test_group_letter_excludes_check_and_money(cfg, tmp_path):
     body = html[html.index("<header>"):html.index("<script>")]
     for x in ("점검:", "내 돈", "2,800,000", "280만", "가상 장부", "QQQ 대비 누적", "강한 종목", "돈이 몰리는"):
         assert x not in body, x
-    i = [body.index(x) for x in ("■ 미국 증시 마감", "■ 오늘 할 일", "■ 가상 실험 (실제 돈 아님)", "「변동성 맞춤 레버리지 전략」")]
+    i = [body.index(x) for x in ("■ 시장 온도", "■ 오늘 할 일", "■ 가상 실험 (실제 돈 아님)", "「변동성 맞춤 레버리지 전략」")]
     assert i == sorted(i)
-    msg = briefing.letter_message(s, cfg).split("\n")  # 문자 = 요약 쪽지(2026-10-28)
-    assert "▶ 내 돈: 합계 280만 원, 1.0% 올랐습니다." in msg and msg[-1].startswith("자세한 내용은 첨부 보고서에 있습니다")
-    assert briefing.build_report_caption(s, cfg) == msg[0]  # 첨부 설명은 머리줄만
-    group_msg = briefing.letter_message(s, cfg, edition="group")
-    assert "점검" not in group_msg and "내 돈" not in group_msg and "280만" not in group_msg
+    personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
+    assert "▶ 내 돈: 합계 280만 원, 1.0% 올랐습니다." in personal  # ① 오늘 요약(개인판만)
+    cap, gcap = briefing.build_report_caption(s, cfg), briefing.build_report_caption(s, cfg, edition="group")
+    assert "\n" not in cap and cap.startswith("[오빠의 아침 편지] ")  # 설명 한 줄(2026-10-29)
+    assert "점검" not in gcap and "내 돈" not in gcap and "280만" not in gcap
 
 
 def test_attach_letter_v3_lag_money_research(cfg):
@@ -286,8 +286,11 @@ def test_crash_warning_both_editions_below_todo(cfg, tmp_path):
             body = body[body.index("<header>"):body.index("<script>")]
             crash = "시장이 크게 빠졌습니다. 팔지 않습니다. 적립만 이어갑니다."
             assert (crash in body) is shown, (kind, ed)
-            if shown:
-                assert body.index("■ 미국 증시 마감") < body.index("■ 오늘 할 일") < body.index(crash)
+            if shown:  # 급락장 경고는 ④ 오늘 할 일 칸에만(2026-10-29)
+                todo = body[body.index('id="sec-todo"'):]
+                todo = todo[:todo.index('<div class="rsec"', 1)] if '<div class="rsec"' in todo[1:] else todo
+                assert body.count(crash) == 1 and crash in todo, (kind, ed)
+                assert "크게 빠졌습니다" not in body.replace(crash, ""), (kind, ed)  # 요약·다른 칸에 같은 경고 없음
 
 
 def test_savings_day_weekend_holiday_and_blank(cfg):

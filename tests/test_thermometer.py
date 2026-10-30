@@ -19,6 +19,7 @@ from thermometer.message import build_message, change_text
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = load_config()
+CFG_ON = {**CFG, "telegram": {"enabled": True}}  # 독립 메시지 켠 설정(2026-10-29부터 기본은 꺼짐) — 발송 경로 시험용
 KST = tmain.KST
 
 
@@ -202,7 +203,7 @@ def test_block_true_false():
 
 
 def test_same_value_telegram_letter_block(tmp_path, monkeypatch):
-    """같은 기준일: 텔레그램 메시지 · 편지 줄(get_temperature 직접 호출) · 블록이 같은 값."""
+    """같은 기준일: 텔레그램 메시지(켰을 때) · 보고서 온도(get_temperature 직접 호출) · 블록이 같은 값."""
     from engine import daily
     from notify import letter_plain
 
@@ -210,13 +211,13 @@ def test_same_value_telegram_letter_block(tmp_path, monkeypatch):
     monkeypatch.setenv(CFG["history"]["drive_env"], "x")
     sent = []
     r = tmain.run(now=datetime(2026, 10, 28, 7, 50, tzinfo=KST), prices=p, send=sent.append, history_path=tmp_path / "vb.db",
-                  cfg=CFG, schedule_cron="50 22 * * *", real_send=True, on_date="2026-10-27")
+                  cfg=CFG_ON, schedule_cron="50 22 * * *", real_send=True, on_date="2026-10-27")
     assert r["status"] == "sent"
     temp, zone = r["result"]["temp"], r["result"]["zone"]
     assert f"■ 오늘 온도: {temp}도 · {zone}" in sent[0]
     s = {"as_of": pd.Timestamp("2026-10-27")}
     daily._attach_thermometer(s, temp_fn=lambda d: get_temperature(d, prices=p, cfg=CFG))
-    assert letter_plain._thermometer_line(s) == f"시장 온도계 {temp}도 · {zone}."
+    assert letter_plain.market_summary(s, letter_plain.load_phrases()) == f"시장 온도 {temp}도({zone})"
     assert blocks.market_temperature("2026-10-27", temp, temp, prices=p, cfg=CFG) is True
 
 
@@ -226,25 +227,42 @@ def test_letter_line_omitted_on_failure():
 
     s = {"as_of": pd.Timestamp("2026-10-27")}
     daily._attach_thermometer(s)  # 테스트에서는 오늘 자료 받기가 막혀 있음(conftest) → 실패
-    assert s["thermometer"] is None and letter_plain._thermometer_line(s) is None
+    assert s["thermometer"] is None and letter_plain.thermometer_result(s) is None
     assert "letter_check" not in s  # 자료 문제 줄도 남기지 않는다
     daily._attach_thermometer(s, temp_fn=lambda d: (_ for _ in ()).throw(ValueError("x")))
-    assert letter_plain._thermometer_line(s) is None
+    assert letter_plain.thermometer_result(s) is None
     old = get_temperature("2026-10-27", prices=make_prices(end="2026-10-26"), cfg=CFG)  # 기준일 자료가 아직 없음
-    assert letter_plain._thermometer_line({**s, "thermometer": old}) is None
-    assert letter_plain._thermometer_line({}) is None and letter_plain._thermometer_line({"thermometer": "이상한 값"}) is None
+    assert letter_plain.thermometer_result({**s, "thermometer": old}) is None
+    assert letter_plain.thermometer_result({}) is None and letter_plain.thermometer_result({"thermometer": "이상한 값"}) is None
 
 
-def test_letter_market_section_ends_with_thermometer_line(monkeypatch):
-    from notify import letter_plain
+def test_daily_records_history_once_per_base_date(tmp_path):
+    """2026-10-29: 독립 메시지를 끈 뒤 기록은 아침 편지 실행(_attach_thermometer record=True)이 남긴다 — 같은 기준일 한 번만,
+    기준일 자료가 아직 없거나 record=False면 남기지 않는다."""
+    from engine import daily
 
-    monkeypatch.setattr(letter_plain, "headline", lambda *a, **k: (None, None))
-    monkeypatch.setattr(letter_plain, "market_state", lambda s: None)
-    s = {"as_of": pd.Timestamp("2026-10-27"), "thermometer": get_temperature("2026-10-27", prices=make_prices(), cfg=CFG)}
-    lines = letter_plain.market_lines(s, {}, letter_plain.load_phrases(), "personal")
-    assert lines[-1].startswith("시장 온도계 ") and lines[-1].endswith(".")
-    lines2 = letter_plain.market_lines({**s, "thermometer": None}, {}, letter_plain.load_phrases(), "personal")
-    assert not any(ln.startswith("시장 온도계") for ln in lines2 if isinstance(ln, str))
+    db = tmp_path / "vb.db"
+    p = make_prices()
+    fn = lambda d: get_temperature(d, prices=p, cfg=CFG)  # noqa: E731
+    daily._attach_thermometer({"as_of": pd.Timestamp("2026-10-27")}, temp_fn=fn, history_path=db)
+    assert history.load(db) == []
+    for _ in range(2):
+        daily._attach_thermometer({"as_of": pd.Timestamp("2026-10-27")}, temp_fn=fn, record=True, history_path=db)
+    rows = history.load(db)
+    assert [r["date"] for r in rows] == ["2026-10-27"] and rows[0]["temp"] == str(fn("2026-10-27")["temp"])
+    old = make_prices(end="2026-10-26")
+    daily._attach_thermometer({"as_of": pd.Timestamp("2026-10-27")}, record=True, history_path=tmp_path / "x.db",
+                              temp_fn=lambda d: get_temperature(d, prices=old, cfg=CFG))
+    assert history.load(tmp_path / "x.db") == []
+
+
+def test_standalone_message_off_by_default(tmp_path, monkeypatch):
+    """2026-10-29: 독립 메시지 기본 꺼짐(config telegram.enabled false) — 실제 발송 환경이어도 보내지 않고 기록도 없음."""
+    monkeypatch.setenv(CFG["history"]["drive_env"], "x")
+    assert CFG["telegram"]["enabled"] is False
+    r, sent = _run(tmp_path, monkeypatch, datetime(2026, 10, 28, 7, 50, tzinfo=KST), cfg=CFG)
+    assert r["status"] == "disabled" and not sent and not (tmp_path / "vb.db").exists()
+    assert r["text"].startswith("[시장 온도계] 10/28(수)")
 
 
 def test_history_in_virtual_books_db(tmp_path):
@@ -274,7 +292,7 @@ def _run(tmp_path, monkeypatch, now, prices=None, cron="50 22 * * *", base="2026
     monkeypatch.setattr(tmain, "base_date_for", lambda now_kst: pd.Timestamp(base).date())
     sent = kw.pop("sent", [])
     r = tmain.run(now=now, prices=prices or make_prices(), send=sent.append, history_path=tmp_path / "vb.db",
-                  cfg=CFG, schedule_cron=cron, real_send=kw.pop("real_send", True), **kw)
+                  cfg=kw.pop("cfg", CFG_ON), schedule_cron=cron, real_send=kw.pop("real_send", True), **kw)
     return r, sent
 
 
@@ -332,15 +350,18 @@ def test_main_returns_nonzero_on_failure(monkeypatch):
     assert tmain.main([]) == 1
 
 
-def test_schedule_matches_workflow():
+def test_workflow_manual_only_and_shares_concurrency():
+    """2026-10-29: thermometer.yml 예약 끔(수동 실행만). 예전 예약 값은 config schedule에 남긴다(다시 켤 때 같게)."""
     wf = yaml.safe_load((ROOT / ".github" / "workflows" / "thermometer.yml").read_text(encoding="utf-8"))
     on = wf.get("on", wf.get(True))
-    assert [c["cron"] for c in on["schedule"]] == CFG["schedule"]["crons"]
+    assert "schedule" not in on and "workflow_dispatch" in on
     assert CFG["schedule"]["final_cron"] == CFG["schedule"]["crons"][-1]
     daily = yaml.safe_load((ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8"))
     assert wf["concurrency"]["group"] == daily["concurrency"]["group"]  # 같은 가상 장부 DB를 쓰므로 한 번에 하나만(2026-10-28)
     steps = {st.get("name"): st for st in wf["jobs"]["thermometer"]["steps"]}
     up = steps["Upload virtual books state to Google Drive"]
     assert "steps.download.outcome == 'success'" in up["if"]  # 못 받은 DB를 올려 장부를 지우지 않게
+    dsteps = [st.get("run", "") for st in daily["jobs"][next(iter(daily["jobs"]))]["steps"]]
+    assert any("upload --mode vbooks" in r for r in dsteps)  # 편지 실행이 남긴 온도 기록이 드라이브에 올라간다
     text = (ROOT / ".github" / "workflows" / "thermometer.yml").read_text(encoding="utf-8")
     assert "THERMO" not in text and "THERMO" not in (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")

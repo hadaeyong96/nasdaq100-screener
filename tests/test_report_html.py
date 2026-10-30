@@ -612,7 +612,7 @@ def test_top_block_comes_before_all_folds_and_folds_are_closed(tmp_path, cfg):
     folds = re.findall(r"<details class=\"fold\"[^>]*>\s*<summary>([^<]+)</summary>", body)
     # 짧은 판(2026-10-17): 돈이 몰리는 종목은 자료가 있을 때만, 가상 장부 현황 접기는 숨김(실험 중인 전략 칸 안 표)
     assert folds == ["▶ 전체 후보 목록 (오늘의 스크리닝)", "▶ 매수·매도 상세 · 보유 현황 · 경고 · 규칙",
-                     "▶ 그래프로 보기", "▶ 용어 풀이", "▶ 이 편지에 대해"]
+                     "▶ 용어 풀이", "▶ 이 편지에 대해"]  # 「그래프로 보기」는 2026-10-29 보고서판에서 뺐다(시장 온도 칸)
     assert not re.search(r"<details class=\"fold\"[^>]*\bopen\b", body)  # 기본 닫힘
 
 

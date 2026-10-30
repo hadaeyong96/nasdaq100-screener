@@ -85,7 +85,9 @@ def test_build_context_includes_macro_rows_with_sparkline_scale_and_explain():
 
 
 def _render(tmp_path, rows):
-    return report_html.render_report(_empty_summary(rows), _CFG, tmp_path).read_text(encoding="utf-8")
+    """시장 지표 타일(「그래프로 보기」 접기)은 예전 판(letter.show_books true)에만 있다 — 2026-10-29 보고서판은 시장 온도 칸이 대신한다."""
+    legacy = {**_CFG, "letter": {"show_books": True}}
+    return report_html.render_report(_empty_summary(rows), legacy, tmp_path).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("rows", [_SAMPLE_MACRO_ROWS, [_VIX_ROW] + _SAMPLE_MACRO_ROWS[1:]], ids=["cnn", "vix-fallback"])
