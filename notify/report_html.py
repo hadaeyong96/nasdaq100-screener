@@ -437,6 +437,30 @@ def _weekly_rs_ctx(summary: dict, cfg: dict) -> dict | None:
     }
 
 
+def _therm_guide() -> dict | None:
+    """용어 풀이 「시장 온도」 표 — config/thermometer.yaml의 기준값 그대로 {item_max, names, rows[{name, how}], zones[{name, range, desc}]}.
+    읽지 못하면 None(그 접기 안 표만 빠진다)."""
+    try:
+        from thermometer.core import load_config
+
+        t = load_config()
+        n, mx, sma, vix = t["names"], t["item_max"], t["sma"], t["vix"]
+        items = [
+            {"name": n["sma_fast"], "how": f"QQQ가 {sma['fast_days']}일선보다 {sma['gap_high_pct']:g}% 이상 위 ({sma['gap_low_pct']:g}% 이하면 0도)"},
+            {"name": n["sma_slow"], "how": f"QQQ가 {sma['slow_days']}일선보다 {sma['gap_high_pct']:g}% 이상 위 ({sma['gap_low_pct']:g}% 이하면 0도)"},
+            {"name": n["breadth"], "how": f"나스닥100 중 {t['breadth']['sma_days']}일선 위 종목 100% (비율 ÷ {100 // mx})"},
+            {"name": n["vix"], "how": f"{vix['low']:g} 이하 ({vix['high']:g} 이상이면 0도)"},
+            {"name": n["fear_greed"], "how": f"100 (값 ÷ {100 // mx})"},
+        ]
+        zones, lo = [], 0
+        for z in t["zones"]:
+            zones.append({"name": z["name"], "range": f"{lo}~{z['max']}도", "desc": z["desc"]})
+            lo = int(z["max"]) + 1
+        return {"item_max": mx, "names": list(n.values()), "rows": items, "zones": zones}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
     """아침 편지 v2.1(2026-10-21) 맨 위 칸들 — 표시 전용(notify.letter).
 
@@ -458,6 +482,7 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
         "plain": None if show_books else letter_plain.build(summary, cfg, edition),  # 2026-10-23 쉬운 문장판
         # 2026-10-28 첨부 보고서 = 전부(칸 순서·바로가기·제목 옆 한 줄 요약) — 문자는 요약 쪽지
         "report": None if show_books else letter_plain.report_sections(summary, cfg, edition),
+        "therm_guide": None if show_books else _therm_guide(),  # 용어 풀이 「시장 온도」(2026-10-29)
         "personal": personal,
         "check": letter.check_line(info) if (personal and info) else "",
         "todo": letter.todo_line(summary, cfg, edition),

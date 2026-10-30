@@ -38,7 +38,7 @@ def setup(tmp_path, monkeypatch):
 
 
 def _capture(monkeypatch, fail_for=None):
-    """가짜 전송: 파일은 sent에, 편지 본문 문자 메시지(아침 편지 v3, 2026-10-24 — 파일보다 먼저)는 sent.texts에 기록.
+    """가짜 전송: 파일은 sent에, 문자 메시지(보고서가 없을 때만 — 2026-10-29부터 보고서가 있으면 없어야 함)는 sent.texts에 기록.
     sent.order에는 ("text"|"file", chat) 순서."""
     class Sent(list):
         texts: list
@@ -68,20 +68,17 @@ def _capture(monkeypatch, fail_for=None):
 
 
 def test_group_gets_given_file_and_group_caption(setup, monkeypatch, cfg):
-    """아침 편지 v3(2026-10-24): 두 방 모두 편지 본문 문자 메시지 → 보고서 파일 순서. 첨부 설명은 머리줄만.
-    단체방 글에는 티커·개인 항목이 없다. 파일은 호출부가 넘긴 경로 그대로(engine.daily가 단체방판 보고서를 넘긴다)."""
+    """2026-10-29: 두 방 모두 보고서 파일(sendDocument) 하나만 — 본문 문자 메시지 없음. 설명은 한 줄(티커·개인 항목 없음).
+    파일은 호출부가 넘긴 경로 그대로(engine.daily가 단체방판 보고서를 넘긴다)."""
     _, report, summary = setup
     sent = _capture(monkeypatch)
     telegram.send_briefing("본문", summary, cfg)
     res = telegram.send_group_briefing("본문", report, summary, cfg)
-    assert res["ok"] and sent.order == [("text", "personal"), ("file", "personal"), ("text", "group"), ("file", "group")]
+    assert res["ok"] and sent.order == [("file", "personal"), ("file", "group")] and sent.texts == []
     p, g = sent
     assert p["path"] == g["path"] == report and p["filename"] == g["filename"] == "오빠의 아침 편지_2026-10-14.html"
     assert p["caption"] == g["caption"] == "[오빠의 아침 편지] 10/14(수)"
-    pt, gt = sent.texts[0]["text"], sent.texts[1]["text"]
-    assert pt.startswith("[오빠의 아침 편지] 10/14(수)\n▶ 할 일: 투자 포지션 변경 없습니다.")  # 문자 = 요약 쪽지(2026-10-28)
-    assert "내 돈" not in gt and "NVDA" not in gt  # 요약 쪽지: 내 돈은 개인판만(빈칸이면 개인판도 생략)
-    assert gt.endswith("자세한 내용은 첨부 보고서에 있습니다.")  # 유의 줄은 첨부 보고서에
+    assert "\n" not in g["caption"] and "NVDA" not in g["caption"]
     conn = db.connect(db.db_path_for_mode("live"))
     assert db.has_notified(conn, "2026-10-14") and db.has_notified(conn, "2026-10-14:group")
     conn.close()

@@ -1,8 +1,9 @@
 """텔레그램 발송 (P3, 4번).
 
-텔레그램에는 HTML 보고서 파일 한 통만 보낸다 — 본문 글(브리핑 텍스트)은 보내지
-않고, 제목 줄(+정정본·경고 줄)만 첨부 설명(caption)으로 붙인다(2026-10-01 사용자
-확정, `report_caption`). 보고서 파일이 없을 때만 본문 글을 대신 보낸다.
+텔레그램에는 HTML 보고서 파일 한 통만 보낸다(sendDocument) — 본문 문자 메시지·그래프 그림은
+보내지 않고, 설명 한 줄만 첨부 설명(caption)으로 붙인다(2026-10-29 사용자 확정,
+notify.letter_plain.caption_line: "[오빠의 아침 편지] M/D(요일) · 시장 온도 {T}도"). 보고서 파일이
+없을 때만 본문 글을 대신 보낸다. 실패 알림 한 줄(개인방, notify_ops_error)은 따로다.
 
 토큰(.env의 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)이 없으면 보내지 않고
 outputs/telegram_{모드}_YYYY-MM-DD.txt에 본문을 저장만 한다. 에러로 멈추지 않는다.
@@ -39,7 +40,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-from notify.briefing import CHECK_PREFIX, REBUILT_PREFIX, REGIME_LINE_PREFIX, build_report_caption, letter_message, report_titles, title_line
+from notify.briefing import CHECK_PREFIX, REBUILT_PREFIX, REGIME_LINE_PREFIX, build_report_caption, report_titles, title_line
 from store import db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +51,6 @@ load_dotenv(ENV_PATH, override=True)
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 MAX_LEN = 4096
-PHOTO_CAPTION = "가상 실험 성적 그래프입니다."  # 월요일 수익곡선 그림 설명(notify/curve_chart)
 MAX_CAPTION_LEN = 1024  # 텔레그램 sendDocument caption 한도
 MAX_RETRIES = 3
 
@@ -165,32 +165,6 @@ def _send_document(
     return _request_with_retry(_do, "sendDocument")
 
 
-def _photo_post(url: str, chat_id: str, path: Path, caption: str | None):
-    with open(path, "rb") as f:
-        return requests.post(url, data=_document_data(chat_id, caption), files={"photo": (path.name, f)}, timeout=60)
-
-
-def _send_photo(token: str, chat_id: str, path: Path, caption: str | None = None) -> bool:
-    url = TELEGRAM_API.format(token=token, method="sendPhoto")
-    return _request_with_retry(lambda: _photo_post(url, chat_id, path, caption), "sendPhoto")
-
-
-def chart_photo(summary: dict, cfg: dict, edition: str = "personal") -> Path | None:
-    """월요일(chart.weekday, 한국 날짜) 편지에 넣을 수익곡선 그림(notify/curve_chart) 경로. 그날이 아니거나 그림이 없으면 None.
-    어떤 오류든 None(그림만 빠지고 편지는 나간다)."""
-    try:
-        from notify import curve_chart
-
-        ch = summary.get("curve_chart") or {}
-        p = ch.get(edition)
-        if not p or not Path(p).exists() or not curve_chart.is_chart_day(summary.get("letter_today_kst"), cfg):
-            return None
-        return Path(p)
-    except Exception as exc:  # noqa: BLE001
-        _log(f"[telegram] 그래프 그림을 찾지 못했습니다(편지는 그대로): {type(exc).__name__}")
-        return None
-
-
 def notify_key(as_of_str: str, summary: dict, cfg: dict, group: bool = False) -> str:
     """중복 발송 방지 키(2026-10-26): 보통은 미국 기준일("YYYY-MM-DD", 단체방 "…:group") — 기준일마다 한 번.
     주간 편지 요일(chart.weekday, 기본 월 — 한국 날짜)에는 기준일이 토요일 편지와 같아도(미국 금요일) 한 번 더 보낸다:
@@ -206,13 +180,18 @@ def notify_key(as_of_str: str, summary: dict, cfg: dict, group: bool = False) ->
     return f"{key}:weekly:{today.date() if hasattr(today, 'date') else today}" if weekly else key
 
 
-def _safe_letter_message(summary: dict, cfg: dict, edition: str = "personal") -> str | None:
-    """편지 본문 — 만들다 실패하면 제목 한 줄과 안내(편지는 반드시 나간다). 쉬운 문장판이 아니면 None."""
+def _safe_caption(summary: dict, cfg: dict, edition: str = "personal") -> str:
+    """첨부 설명(build_report_caption) — 만들다 실패하면 머리줄만(파일은 반드시 나간다, 2026-10-29)."""
     try:
-        return letter_message(summary, cfg, edition=edition)
+        return _limit_caption(build_report_caption(summary, cfg, edition=edition))
     except Exception as exc:  # noqa: BLE001
-        _log(f"[telegram] 편지 본문을 만들지 못했습니다: {type(exc).__name__}")
-        return f"{title_line(summary, cfg)}\n▶ 자료 문제: 편지 본문을 만들지 못했습니다. 첨부 파일을 봐 주십시오."
+        _log(f"[telegram] 첨부 설명을 만들지 못해 머리줄만 붙입니다: {type(exc).__name__}")
+    try:
+        from notify import letter_plain
+
+        return letter_plain.title(summary, cfg, letter_plain.load_phrases())
+    except Exception:  # noqa: BLE001
+        return title_line(summary, cfg)
 
 
 def _extract_migrate_id(resp) -> int | None:
@@ -359,9 +338,8 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
          as_of, mode, report_path 포함), cfg, force_no_send(--no-send 플래그)
     출력: 저장한 txt 파일 경로
 
-    본문 글은 따로 보내지 않고, notify.briefing.build_report_caption(제목 + 국면 줄 + "매수 n · 매도 n"
-    + 티커)을 첨부 설명으로만 붙인다(2026-10-14 브리핑 다이어트, 사용자 확정). 보고서 파일이 없을 때만 본문 글을 대신
-    보낸다 — 아무것도 못 받는 날이 없게 하기 위해서다.
+    본문 문자 메시지·그래프 그림은 보내지 않고, notify.briefing.build_report_caption(설명 한 줄, 2026-10-29)을
+    첨부 설명으로만 붙인다. 보고서 파일이 없을 때만 본문 글을 대신 보낸다 — 아무것도 못 받는 날이 없게 하기 위해서다.
 
     모의(paper) 모드는 --no-send 여부와 관계없이 절대 텔레그램을 보내지 않는다(하드
     가드) — 모의 모드를 실전과 매일 나란히 돌리기 시작하면서, 플래그를 깜빡해도
@@ -395,18 +373,11 @@ def send_briefing(text: str, summary: dict, cfg: dict, force_no_send: bool = Fal
             return out_path
 
         report_path = summary.get("report_path")
-        if report_path and Path(report_path).exists():
-            ok = True
-            msg = _safe_letter_message(summary, cfg)  # 아침 편지 v3(2026-10-24): 본문 문자 메시지 먼저, 보고서 파일은 바로 뒤
-            if msg:
-                ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(msg))
-            photo = chart_photo(summary, cfg)  # 2026-10-26: 월요일만 본문 → 그래프 그림 → 보고서 파일
-            if photo and not _send_photo(token, chat_id, photo, PHOTO_CAPTION):
-                _log("[telegram] 그래프 그림을 보내지 못했습니다(편지·파일은 그대로 보냅니다).")
+        if report_path and Path(report_path).exists():  # 2026-10-29: 보고서 파일 하나 + 설명 한 줄만(문자·그림 없음)
             ok = _send_document(
                 token, chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
-                caption=_limit_caption(build_report_caption(summary, cfg)),
-            ) and ok
+                caption=_safe_caption(summary, cfg),
+            )
         else:
             _log("[telegram] 보고서 파일이 없어 본문 글을 대신 보냅니다.")
             ok = all(_send_text(token, chat_id, chunk) for chunk in split_message(text))
@@ -547,25 +518,11 @@ def send_group_briefing(
         ok = True
         migrate_id: int | None = None
         error: str | None = None
-        if report_path and Path(report_path).exists():
-            msg = _safe_letter_message(summary, cfg, edition="group")  # 아침 편지 v3: 본문 문자 메시지 먼저, 파일은 바로 뒤
-            for chunk in split_message(msg) if msg else []:
-                c_ok, c_migrate, c_err = _send_text_checked(token, group_chat_id, chunk)
-                ok, migrate_id, error = ok and c_ok, migrate_id or c_migrate, error or c_err
-                if not c_ok:
-                    break
-            photo = chart_photo(summary, cfg, edition="group")  # 2026-10-26: 월요일만, 종목명 없는 그림
-            if photo and migrate_id is None:
-                url = TELEGRAM_API.format(token=token, method="sendPhoto")
-                p_ok, _, p_err = _post_checked(lambda: _photo_post(url, group_chat_id, photo, PHOTO_CAPTION), "sendPhoto")
-                if not p_ok:
-                    _log(f"[telegram] 단체방 그래프 그림을 보내지 못했습니다(편지·파일은 그대로): {p_err}")
-            if migrate_id is None:  # 슈퍼그룹 전환이면 파일도 실패한다 — 호출부가 새 id로 다시 보낸다
-                d_ok, d_migrate, d_err = _send_document_checked(
-                    token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
-                    caption=_limit_caption(build_report_caption(summary, cfg, edition="group")),
-                )
-                ok, migrate_id, error = ok and d_ok, migrate_id or d_migrate, error or d_err
+        if report_path and Path(report_path).exists():  # 2026-10-29: 단체방판 보고서 파일 하나 + 설명 한 줄만
+            ok, migrate_id, error = _send_document_checked(
+                token, group_chat_id, Path(report_path), report_attachment_name(as_of_str, cfg),
+                caption=_safe_caption(summary, cfg, edition="group"),
+            )
         else:
             _log("[telegram] 보고서 파일이 없어 단체방에 본문 글을 대신 보냅니다.")
             for chunk in split_message(text):

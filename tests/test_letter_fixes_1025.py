@@ -135,12 +135,3 @@ def test_lab_one_line_per_ledger_no_duplicates():
         assert lab == ["웅덩이 v3.1: QQQ와 같습니다. QQQ만 들고 있습니다.",
                        "웅덩이 반등 확인: QQQ와 같습니다. QQQ만 들고 있습니다."]
         assert len(lab) == len(set(lab))
-
-
-def test_crash_headline_uses_drawdown_not_day(monkeypatch):
-    from factory import regimes
-
-    monkeypatch.setattr(lp, "market_state", lambda s: {"regime": regimes.CRASH, "drawdown": -23.44, "gap": -12.0, "day": -4.1})
-    head, kind = lp.headline({}, {}, PH, lp.GROUP)
-    assert kind == "crash" and head == "시장이 고점보다 23.4% 무너졌습니다. 팔지 않는 것이 할 일입니다."
-    assert "4.1" not in head  # 하루 하락은 지수 줄에만

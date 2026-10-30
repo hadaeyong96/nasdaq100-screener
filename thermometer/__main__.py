@@ -6,6 +6,9 @@
 실제 발송은 GitHub Actions(또는 SCREENER_REAL_SEND=1)에서만 — 로컬·--dry-run은 글만 보여 주고 기록도 남기지 않는다.
 실패하면 0이 아닌 종료 코드 → workflow가 개인방에 "시장 온도계 실패" 한 줄을 보낸다(.github/workflows/thermometer.yml).
 아침 편지와 따로 돈다(실패해도 편지는 그대로).
+
+2026-10-29: 독립 메시지 중단 — config telegram.enabled(기본 false)가 false면 실제 발송 환경에서도 보내지 않고 견본만 보여 준다
+(status "disabled", 기록 없음 — 기록은 아침 편지 실행 engine.daily._attach_thermometer가 남긴다). thermometer.yml 예약도 꺼져 있다.
 """
 
 from __future__ import annotations
@@ -70,7 +73,7 @@ def run(dry_run: bool = False, now: datetime | None = None, prices: dict | None 
         on_date: str | None = None) -> dict:
     """한 번 실행 → {"status", "base_date", "result"?, "text"?}. 실패할 상황이면 예외.
 
-    status: skip_weekday | already_sent | not_ready | no_storage | dry_run | sent
+    status: skip_weekday | already_sent | not_ready | no_storage | disabled | dry_run | sent
     """
     from notify.telegram import real_send_allowed
 
@@ -79,6 +82,8 @@ def run(dry_run: bool = False, now: datetime | None = None, prices: dict | None 
     hpath = history_path or cfg["history"]["path"]
     real = real_send_allowed() if real_send is None else real_send
     real = real and not dry_run
+    disabled = real and not (cfg.get("telegram") or {}).get("enabled", False)
+    real = real and not disabled
     final = is_final_slot(cfg, schedule_cron)
 
     if on_date is None and skip_weekday(now_kst, cfg):
@@ -109,6 +114,9 @@ def run(dry_run: bool = False, now: datetime | None = None, prices: dict | None 
 
     text = build_message(result, cfg, now_kst.date())
     out["text"] = text
+    if disabled:
+        print("[thermometer] 독립 메시지가 꺼져 있습니다(config telegram.enabled false — 온도는 아침 편지 보고서에) — 견본:\n" + text)
+        return {**out, "status": "disabled"}
     if not real:
         print("[thermometer] dry-run(전송 없음, 기록 없음) — 견본:\n" + text)
         return {**out, "status": "dry_run"}

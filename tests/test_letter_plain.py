@@ -43,12 +43,6 @@ def test_phrase_rotation_differs_from_previous_day():
     ph = {"x": ["가입니다.", "나입니다."]}
     d = pd.Timestamp("2026-10-24")
     assert lp.phrase(ph, "x", d) != lp.phrase(ph, "x", d - pd.Timedelta(days=1))
-    big = _summary()
-    big["qqq_close"] = big["qqq_close"].copy()
-    big["qqq_close"].iloc[-1] = big["qqq_close"].iloc[-2] * 1.03
-    a = lp.headline(big, CFG, PH, lp.PERSONAL)
-    b = lp.headline({**big, "letter_today_kst": pd.Timestamp("2026-10-23")}, CFG, PH, lp.PERSONAL)
-    assert a[1] == b[1] == "big_up" and a[0] != b[0]
 
 
 def test_section_order_and_format():
@@ -56,28 +50,24 @@ def test_section_order_and_format():
                           puddle_v31={"personal": ["웅덩이 v3.1: QQQ와 같습니다."], "group": ["웅덩이 v3.1: QQQ와 같습니다."]}),
                  CFG, lp.PERSONAL)
     heads = [s["header"] for s in d["sections"]]
-    assert heads == ["■ 오늘의 핵심", "■ 국제정세", "■ 미국 증시 마감", "■ 오늘 할 일", "■ 내 돈", "■ 가상 실험 (실제 돈 아님)"]
-    t = lp.to_text(d)
-    lines = t.split("\n")
-    assert lines[0] == "[오빠의 아침 편지] 10/24(토)"
+    assert heads == ["■ 오늘의 핵심", "■ 국제정세", "■ 지수·금리·환율", "■ 오늘 할 일", "■ 내 돈", "■ 가상 실험 (실제 돈 아님)"]
+    assert d["title"] == "[오빠의 아침 편지] 10/24(토)"
+    lines = [lp.line_text(x) for s in d["sections"] for x in s["lines"]]
     assert all(not x.startswith((" ", "\t")) for x in lines)  # 들여쓰기 없음
-    body = [x for x in lines[1:] if x and not x.startswith("■")]
-    numbers = ("▶ 나스닥100(QQQ) ", "▶ 미국 10년 금리 ")  # 숫자 줄(문장 아님)
-    assert all(x.endswith("다.") or x.endswith(")") or x.startswith(numbers) for x in body), body  # 경어체(뉴스 줄은 "(언론사)")
-    assert all(x.startswith("▶ ") for x in body[:-2])
-    assert lines[-2] == "미국 10/23 종가 기준입니다." and lines[-1] == "※ 뉴스는 제목 모음입니다. 매매 신호가 아닙니다."
+    numbers = ("▶ 미국 10년 금리 ",)  # 숫자 줄(문장 아님)
+    assert all(x.endswith("다.") or x.endswith(")") or x.startswith(numbers) for x in lines), lines  # 경어체(뉴스 줄은 "(언론사)")
+    assert d["footer"] == "미국 10/23 종가 기준입니다." and d["cautions"] == ["※ 뉴스는 제목 모음입니다. 매매 신호가 아닙니다."]
     assert "▶ 연준 금리 동결 (연합뉴스)" in lines
-    assert not re.search(r"[\U0001F300-\U0001FAFF]", t)
+    assert not re.search(r"[\U0001F300-\U0001FAFF]", "\n".join(lines))
 
 
 def test_market_section():
+    """② 시장 온도 칸 아래 「지수·금리·환율」 글 줄 — 금리·환율, 주의 한 줄만. 오늘의 한 줄·장기 평균선·투자 심리·지수 줄 없음(2026-10-29)."""
     m = lp.market_lines(_summary(index_close={"spx": pd.Series([100.0, 101.0], index=pd.to_datetime(["2026-10-22", "2026-10-23"]))}),
                         CFG, PH, lp.PERSONAL)
-    assert m[0] == "시장이 +0.3% 움직이며 조용합니다."
-    assert m[1] == "나스닥100(QQQ) +0.3% · S&P500 +1.0%"  # SOXX 못 받으면 그 부분만 빠진다
-    assert m[2] == "미국 10년 금리 4.1% · 환율 1,325원"
-    assert m[3].startswith("장기 평균선보다 ") and m[3].endswith("큰 흐름은 상승입니다.")
-    assert m[4] == "투자 심리 28. 조금 겁먹은 분위기입니다." and m[5] == "기준금리 인상은 조심해서 봅니다."
+    assert m == ["미국 10년 금리 4.1% · 환율 1,325원", "기준금리 인상은 조심해서 봅니다."]
+    hol = lp.market_lines(_summary(as_of=pd.Timestamp("2026-11-26"), letter_today_kst=pd.Timestamp("2026-11-28")), CFG, PH, lp.PERSONAL)
+    assert hol[0] == "미국 장이 쉬었습니다. 숫자는 지난 거래일 그대로입니다."  # 추수감사절 다음 날(휴장 안내만 남김)
 
 
 def test_todo_savings_moved_dec_tax_and_crash():
@@ -90,7 +80,6 @@ def test_todo_savings_moved_dec_tax_and_crash():
     assert lp.todo_lines(s, CFG, PH, lp.GROUP) == ["투자 포지션 변경 없습니다."]
     crash = _summary(qqq_close=pd.Series(np.linspace(130, 80, 260), index=pd.bdate_range("2025-10-01", periods=260)))
     assert lp.todo_lines(crash, CFG, PH, lp.GROUP) == ["시장이 크게 빠졌습니다. 팔지 않습니다. 적립만 이어갑니다."]
-    assert lp.headline(crash, CFG, PH, lp.GROUP)[1] == "crash"
 
 
 def test_money_lines_and_empty():
@@ -110,30 +99,15 @@ def test_problem_line_under_title():
     p, g = lp.build(lag, CFG, lp.PERSONAL), lp.build(lag, CFG, lp.GROUP)
     assert p["problem"].startswith("▶ 자료 문제: 미국 자료가 2일 늦었습니다. 오늘 시장과 다를 수 있습니다.")
     assert "AMD" in p["problem"] and "AMD" not in g["problem"]
-    assert lp.to_text(p).split("\n")[1] == p["problem"]
 
 
 def test_news_failure_line():
     d = lp.build(_summary(news={"status": "fail", "top": [], "topics": {}}), CFG, lp.GROUP)
     assert d["sections"][0] == {"header": "■ 오늘의 핵심", "lines": ["뉴스를 불러오지 못했습니다."]}
-    assert "▶ 뉴스를 불러오지 못했습니다." in lp.to_text(d)
 
 
 def test_group_has_no_money_or_tickers():
     s = _summary(my_money={"value_krw": 12_345_678, "pnl_pct": 5.2, "remaining_krw": 2_500_000})
-    g = lp.to_text(lp.build(s, CFG, lp.GROUP))
+    d = lp.build(s, CFG, lp.GROUP)
+    g = "\n".join([s["header"] for s in d["sections"]] + [lp.line_text(x) for s in d["sections"] for x in s["lines"]])
     assert "■ 내 돈" not in g and "1,235만" not in g and "만 원" not in g
-
-
-def test_length_limit_drops_topic_news_first():
-    s = _summary()
-    many = [{"title": "가" * 58, "source": "연합뉴스", "url": ""}] * 3
-    s["news"] = {"status": "ok", "top": [{"title": "나" * 58, "source": "KBS", "url": ""}] * 10,
-                 "topics": {"국제정세": many, "전쟁·지정학": many, "미국 경제·금리": many}}
-    d = lp.build(s, CFG, lp.PERSONAL)
-    full = lp.to_text(d, limit=100_000)
-    assert "■ 미국 경제·금리" in full
-    t = lp.to_text(d, limit=len(full) - 10)
-    assert len(t) <= len(full) - 10 and "■ 미국 경제·금리" not in t and "■ 국제정세" in t
-    assert "▶ 나머지는 첨부 파일에 있습니다." in t and "■ 오늘 할 일" in t and t.endswith("매매 신호가 아닙니다.")
-    assert len(lp.to_text(d)) <= lp.MESSAGE_LIMIT

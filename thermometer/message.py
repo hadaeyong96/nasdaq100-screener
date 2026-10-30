@@ -57,12 +57,17 @@ def build_message(result: dict, cfg: dict, day: date) -> str:
 
 
 def report_detail(result: dict | None, cfg: dict) -> dict | None:
-    """첨부 보고서 「시장 온도계」 칸 → {temp, zone, rows[{key, name, raw, deg}], note, missing[이름]}. 온도가 없으면 None."""
+    """보고서 ② 시장 온도 칸 → {temp, zone, head("오늘 온도 60도 · 미지근함 · 어제보다 1도 ↑"), rows[{key, name, raw, deg}],
+    note, missing[이름], footer}. 온도가 없으면 None."""
     if not result or result.get("temp") is None:
         return None
     fmt = {"sma_fast": lambda v: f"{v:+.1f}%", "sma_slow": lambda v: f"{v:+.1f}%", "breadth": lambda v: f"{v:.0f}%",
            "vix": lambda v: f"{v:.1f}", "fear_greed": lambda v: f"{v:.0f}"}
     rows = [{"key": k, "name": cfg["names"][k], "raw": fmt[k](p["raw"]), "deg": _deg(p["deg"])}
             for k, p in result["parts"].items() if p["deg"] is not None]
-    return {"temp": result["temp"], "zone": result["zone"], "rows": rows, "note": result.get("note"),
-            "missing": [cfg["names"][k] for k in result["missing"]]}
+    head = [f"오늘 온도 {result['temp']}도", result["zone"]]
+    ch = change_text(result.get("delta"))
+    if ch:
+        head.append(ch)
+    return {"temp": result["temp"], "zone": result["zone"], "head": " · ".join(head), "rows": rows, "note": result.get("note"),
+            "missing": [cfg["names"][k] for k in result["missing"]], "footer": cfg.get("footer", "")}

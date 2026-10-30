@@ -152,7 +152,7 @@ def test_report_html_embeds_edition_chart(tmp_path, cfg):
     assert ctx_p["curve_chart_src"].startswith("data:image/png;base64,")
     assert ctx_p["curve_chart_src"] != ctx_g["curve_chart_src"]  # 판마다 자기 그림
     html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    lab = html[html.index('id="sec-lab"'):html.index("▶ 그래프로 보기")]  # 2026-10-28: 성적 그래프는 ■ 가상 실험 칸에
+    lab = html[html.index('id="sec-lab"'):html.index("▶ 용어 풀이")]  # 2026-10-28: 성적 그래프는 ■ 가상 실험 칸에
     assert 'class="curve-chart"' in lab and html.count('aria-label="가상 실험 성적 그래프"') == 1
     s.pop("curve_chart")
     assert report_html.build_context(s, cfg, "personal")["curve_chart_src"] is None
@@ -182,7 +182,6 @@ def _send_env(monkeypatch, tmp_path, cfg):
     monkeypatch.setenv("TELEGRAM_GROUP_CHAT_ID", "2")
     monkeypatch.setattr(telegram, "ROOT", tmp_path)
     monkeypatch.setattr(telegram.db, "db_path_for_mode", lambda m: tmp_path / "s.db")
-    monkeypatch.setattr(telegram, "letter_message", lambda s, c, edition="personal": "편지 본문")
     return telegram, calls
 
 
@@ -198,20 +197,16 @@ def _send_summary(tmp_path, today, chart=True):
     return s, rep
 
 
-@pytest.mark.parametrize("today, photo", [("2026-11-02", True), ("2026-11-03", False)])
-def test_send_photo_only_on_monday(tmp_path, monkeypatch, cfg, today, photo):
+@pytest.mark.parametrize("today", ["2026-11-02", "2026-11-03"])
+def test_only_report_file_sent_even_on_monday(tmp_path, monkeypatch, cfg, today):
+    """2026-10-29: 월요일 성적 그래프 sendPhoto 중단(그래프는 보고서 안에) — 요일과 관계없이 두 방 모두 sendDocument 하나만."""
     telegram, calls = _send_env(monkeypatch, tmp_path, cfg)
     s, rep = _send_summary(tmp_path, today)
     telegram.send_briefing("본문", s, cfg)
-    methods = [m for m, _ in calls]
-    if photo:
-        assert methods == ["sendMessage", "sendPhoto", "sendDocument"]
-        assert calls[1][1] == "가상 실험 성적 그래프입니다."
-    else:
-        assert methods == ["sendMessage", "sendDocument"]
+    assert [m for m, _ in calls] == ["sendDocument"]
     calls.clear()
     telegram.send_group_briefing("본문", rep, s, cfg)
-    assert [m for m, _ in calls] == (["sendMessage", "sendPhoto", "sendDocument"] if photo else ["sendMessage", "sendDocument"])
+    assert [m for m, _ in calls] == ["sendDocument"]
 
 
 def test_letter_still_sent_when_chart_failed(tmp_path, monkeypatch, cfg):
@@ -219,7 +214,8 @@ def test_letter_still_sent_when_chart_failed(tmp_path, monkeypatch, cfg):
     s, rep = _send_summary(tmp_path, "2026-11-02", chart=False)
     s["curve_chart"] = {"error": "RuntimeError"}
     telegram.send_briefing("본문", s, cfg)
-    assert [m for m, _ in calls] == ["sendMessage", "sendDocument"]
+    assert [m for m, _ in calls] == ["sendDocument"]
+    assert calls[0][1].endswith(" · 자료 문제 있음")  # 「자료 문제: 그래프를 만들지 못했습니다.」
 
 
 # ── 웅덩이 후보 종목 차트 (notify/candidate_chart, 개인판 HTML 전용) ─────────

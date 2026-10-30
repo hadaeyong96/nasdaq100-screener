@@ -118,15 +118,21 @@ def test_signal_summary_md_title_uses_short_title(tmp_path, monkeypatch, cfg, ti
 # ── 4. 공개용 시장 온도 칸 아래 상태 표시 제거 ──────────────────────────────
 
 
+def _legacy_html(tmp_path, cfg):
+    """시장 지표 타일은 예전 판(letter.show_books true)에만 — 2026-10-29 보고서판은 시장 온도 칸이 대신한다."""
+    shown = {**cfg, "letter": {**(cfg.get("letter") or {}), "show_books": True}}
+    return report_html.render_report(_summary(cfg), shown, tmp_path).read_text(encoding="utf-8")
+
+
 def test_private_macro_tile_keeps_status_badge(tmp_path, cfg):
-    assert 'class="stb st-' in _private_html(tmp_path, cfg)
+    assert 'class="stb st-' in _legacy_html(tmp_path, cfg)
 
 
 # ── 5. 🟢🟡🔴 -> CSS 원 ────────────────────────────────────────────────────
 
 
 def test_macro_scale_and_header_use_css_dots(tmp_path, cfg):
-    html = _private_html(tmp_path, cfg)
+    html = _legacy_html(tmp_path, cfg)
     head = re.search(r'<div class="mhead">.*?</div>', html, re.S).group(0)
     scale = re.search(r'<ol class="mscale".*?</ol>', html, re.S).group(0)
     for part in (head, scale):

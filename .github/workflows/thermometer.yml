@@ -1,15 +1,14 @@
 name: Market thermometer
 
 # 시장 온도계(0~100도) 독립 실행 — python -m thermometer (config/thermometer.yaml, 2026-10-28).
-# 예약 KST 07:50 · 08:50 (UTC 22:50 · 23:50). config/thermometer.yaml schedule.crons와 같아야 한다(tests/test_thermometer.py).
+# 예전 예약 KST 07:50 · 08:50 (UTC 22:50 · 23:50) = config/thermometer.yaml schedule.crons.
 # 같은 기준일은 한 번만 보낸다(가상 장부 DB data/virtual_books.db의 thermometer_history 표 확인). 한국 일·월요일은 보내지 않는다.
 # 실패하면 개인방에 "시장 온도계 실패" 한 줄만.
 # 2026-10-28: 기록을 아침 편지와 같은 가상 장부 DB에 두므로 concurrency 그룹을 daily.yml과 같게(daily-screener) — 둘이 동시에
 # 받고 올려 서로의 기록을 덮어쓰지 않게 한 번에 하나만 돈다. 편지 실행은 2~4분이라 기다림은 짧다.
+# 2026-10-29: 독립 메시지 중단 — 예약을 끄고 수동 실행만 남긴다. 온도는 아침 편지 보고서 「시장 온도」 칸에, 기록은 daily.yml 실행이
+# 남긴다. 텔레그램 전송은 config/thermometer.yaml telegram.enabled(기본 false)가 true일 때만.
 on:
-  schedule:
-    - cron: "50 22 * * *"
-    - cron: "50 23 * * *"
   workflow_dispatch: {}
 
 concurrency:

@@ -203,7 +203,7 @@ run_schedule:
   final_cron: "7 0 * * *"   # daily.yml의 마지막 cron과 같아야 한다(tests/test_run_schedule.py)
 
 chart:
-  weekday: 월   # 편지에 그림을 넣는 요일(월·화·수·목·금·토·일)
+  weekday: 월   # 주간 편지 요일(월·화·수·목·금·토·일) — 기준일이 전날 편지와 같아도 한 번 더 보낸다(notify.telegram.notify_key). 그림 따로 보내기는 2026-10-29 중단
   min_days: 5   # 기록이 이 거래일 수보다 적으면 그래프 대신 "기록이 쌓이는 중입니다(○일째)."
 
 # ── 사용자 시트 「전략공장」의 「QQQM 모으기」 탭 (2026-10-22, 읽기 전용 — data/holdings.py) ─────────────

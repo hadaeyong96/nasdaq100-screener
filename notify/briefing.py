@@ -135,22 +135,13 @@ def title_line(summary: dict, cfg: dict) -> str:
     return line + " · 모의" if summary.get("mode") == "paper" else line
 
 
-def letter_message(summary: dict, cfg: dict, edition: str = "personal") -> str | None:
-    """아침 편지 본문 문자 메시지 = 요약 쪽지(2026-10-28, 최대 12줄·700자 — letter_plain.summary_text). 자세한 내용은 첨부 HTML.
-    보고서 파일보다 먼저 보낸다. 쉬운 문장판(letter.show_books false, 개인판은 report.show_screening false)이 아니면 None."""
-    from notify import letter, letter_plain
-
-    if (cfg.get("letter") or {}).get("show_books", False):
-        return None
-    if edition != letter.GROUP and (cfg.get("report") or {}).get("show_screening", False):
-        return None
-    return letter_plain.summary_text(summary, cfg, edition)
-
-
 def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") -> str:
     """보고서 첨부 설명.
 
-    짧은 판(2026-10-17, report.show_screening이 false — 기본): 제목 + "오늘 할 일: …"(notify.letter). 개인판만
+    쉬운 문장판(기본, 2026-10-29): 설명 한 줄 "[오빠의 아침 편지] M/D(요일) · 시장 온도 {T}도[ · 오늘 할 일 있음][ · 자료 문제 있음]"
+    (notify.letter_plain.caption_line) — 텔레그램은 파일 하나와 이 한 줄만. 아래는 예전 판(letter.show_books true 등)일 때만.
+
+    짧은 판(2026-10-17, report.show_screening이 false): 제목 + "오늘 할 일: …"(notify.letter). 개인판만
     정정본·확인할 것 줄을 덧붙인다. 단체방판(edition="group")은 제목 + 단체방 할 일만(티커·개인 항목 없음).
     show_screening이 true인 개인판은 아래 예전 형식(브리핑 다이어트)을 그대로 쓴다.
 
@@ -165,11 +156,11 @@ def build_report_caption(summary: dict, cfg: dict, edition: str = "personal") ->
 
     plain = not (cfg.get("letter") or {}).get("show_books", False)  # 2026-10-23 쉬운 문장판(새 출발 편지)
     if edition == letter.GROUP:
-        if plain:  # 아침 편지 v3(2026-10-24): 본문은 문자 메시지로 먼저(letter_message), 첨부 설명은 머리줄만
-            return letter_plain.build(summary, cfg, letter.GROUP)["title"]
+        if plain:
+            return letter_plain.caption_line(summary, cfg, letter.GROUP)
         return "\n".join([title_line(summary, cfg), letter.todo_line(summary, cfg, letter.GROUP)])
     if plain and not (cfg.get("report") or {}).get("show_screening", False):
-        return letter_plain.build(summary, cfg, letter.PERSONAL)["title"]
+        return letter_plain.caption_line(summary, cfg, letter.PERSONAL)
     if not (cfg.get("report") or {}).get("show_screening", False):
         lines = [title_line(summary, cfg)]
         if summary.get("letter_check"):  # 아침 편지 v2.1: 머리말 → 점검 → 할 일 (개인판만)
