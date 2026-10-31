@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from notify import briefing
-from tests.test_letter_summary import _body, _sec, rich, temp  # noqa: F401 — 픽스처 재사용
+from tests.test_letter_summary import _body, rich, temp  # noqa: F401 — 픽스처 재사용
 from tests.test_thermometer import _cut, make_prices
 from thermometer.core import load_config
 from thermometer.fear_board import board, caption_suffix, get_fear_board, qqq_frame, zone_of
@@ -143,6 +143,12 @@ def test_short_history_and_holiday():
 # ── 보고서 ─────────────────────────────────────────────────────────────────
 
 
+def _sec(body, _key="thermometer"):
+    """「자세히 보기」 접기 안 시장 온도~지수 부분(2026-10-31 보고서 다이어트로 공포 매수판 표는 접기 안)."""
+    i = body.index('id="fold-details"')
+    return body[i:body.index('id="guide"', i)]
+
+
 def _fb(zone_count: int, day="2026-09-30"):
     vals = dict(CALM)
     for upd in [{"vix": 40}, {"rsi": 20}, {"fear_greed": 10}, {"bb_lower": 101}, {"sma_long": 100, "sma_short": 97}][:zone_count]:
@@ -164,9 +170,9 @@ def test_report_table_and_line(rich, temp, cfg, tmp_path, n, zone, edition):  # 
 
 
 def test_report_omits_board_when_missing_or_stale(rich, temp, cfg, tmp_path):  # noqa: F811
-    assert "공포 매수판" not in _sec(_body(rich, cfg, tmp_path), "thermometer")
+    assert "공포 매수판" not in _body(rich, cfg, tmp_path)
     rich["fear_board"] = _fb(3, day="2026-09-29")  # 기준일과 자료 날짜가 다름
-    assert "공포 매수판" not in _sec(_body(rich, cfg, tmp_path), "thermometer")
+    assert "공포 매수판" not in _body(rich, cfg, tmp_path)
 
 
 def test_report_shows_missing_condition(rich, temp, cfg, tmp_path):  # noqa: F811

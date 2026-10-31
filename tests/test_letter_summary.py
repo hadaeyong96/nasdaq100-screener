@@ -89,52 +89,7 @@ def test_has_todo_condition(rich, cfg):
     assert letter_plain.has_todo(dec, cfg) and not letter_plain.has_todo(dec, cfg, "group")
 
 
-# ── 2. 보고서 칸 순서 ────────────────────────────────────────────────────────
-
-
-def test_report_order_toc_and_folds(rich, temp, cfg, tmp_path):
-    body = _body(rich, cfg, tmp_path)
-    ids = re.findall(r'<div class="rsec" id="(sec-[a-z]+)"', body)
-    assert ids == ["sec-summary", "sec-thermometer", "sec-news", "sec-todo", "sec-money", "sec-candidates", "sec-lab"]
-    nav = body[body.index('<nav class="toc'):body.index("</nav>")]
-    assert re.findall(r'href="#(sec-[a-z]+)"', nav) == ids
-    folds = re.findall(r"<details class=\"fold\"[^>]*>\s*<summary>([^<]+)</summary>", body)
-    assert folds == ["▶ 용어 풀이", "▶ 이 편지에 대해"]
-    assert '<span class="rsub">— 6건</span>' in body and '<span class="rsub">— 2종목</span>' in body
-    news = _sec(body, "news")
-    heads = re.findall(r"<h3>([^<]+)</h3>", news)
-    assert heads == ["■ 오늘의 핵심", "■ 국제정세"] and 'href="https://example.com/9"' in news
-    group = _body(rich, cfg, tmp_path, "group")
-    assert re.findall(r'<div class="rsec" id="(sec-[a-z]+)"', group) == [x for x in ids if x != "sec-money"]
-
-
-def test_summary_at_most_five_lines(rich, temp, cfg, tmp_path):
-    secs = {s["key"]: s for s in letter_plain.report_sections(rich, cfg)}
-    lines = secs["summary"]["lines"]
-    assert lines == [f"시장 온도 {temp['temp']}도({temp['zone']}) · QQQ +0.1%", "할 일: 투자 포지션 변경 없습니다.",
-                     "내 돈: 합계 280만 원, 1.0% 올랐습니다.", "가상 실험: 웅덩이 v3.2 QQQ보다 0.4%p 앞섭니다 · 오늘 가상 매수 1건."]
-    s = copy.deepcopy(rich)
-    s["fred_missing"] = ["DGS10", "T10Y2Y"]
-    lines = {x["key"]: x for x in letter_plain.report_sections(s, cfg)}["summary"]["lines"]
-    assert len(lines) <= 5 and lines[0].startswith("자료 문제: ")
-    g = {x["key"]: x for x in letter_plain.report_sections(rich, cfg, "group")}["summary"]["lines"]
-    assert not any(x.startswith("내 돈") for x in g)
-    rich["thermometer"] = None
-    assert {x["key"]: x for x in letter_plain.report_sections(rich, cfg)}["summary"]["lines"][0] == "QQQ +0.1%"
-
-
-def test_thermometer_section_with_index_rates(rich, temp, cfg, tmp_path):
-    sec = _sec(_body(rich, cfg, tmp_path), "thermometer")
-    assert "■ 시장 온도" in sec and f"<b>오늘 온도 {temp['temp']}도 · {temp['zone']}" in sec
-    for name in ("150일선", "200일선", "시장 폭", "공포 지수 VIX", "공포·탐욕"):
-        assert f'<td class="l">{name}</td>' in sec, name
-    assert f"▶ {temp['note']}" in sec
-    sub = sec[sec.index("<h3>지수·금리·환율</h3>"):]
-    assert '<td class="l">나스닥100(QQQ)</td>' in sub and '<td class="l">S&P500</td>' in sub
-    assert "▶ 미국 10년 금리 4.1% · 환율 1,325원" in sub
-    rich["thermometer"] = None
-    none = _sec(_body(rich, cfg, tmp_path), "thermometer")
-    assert "오늘 시장 온도를 구하지 못했습니다." in none and "<h3>지수·금리·환율</h3>" in none
+# ── 2. 보고서 칸 순서 — 2026-10-31 보고서 다이어트로 tests/test_report_diet.py가 맡는다 ──────────
 
 
 # ── 3. 중복 문구 없음 ────────────────────────────────────────────────────────
@@ -159,7 +114,6 @@ def test_crash_warning_only_in_todo(rich, temp, cfg, tmp_path):
         text = re.sub(r"<[^>]+>", " ", body)
         assert text.count("크게 빠졌습니다") == 1 and "크게 빠졌습니다" in _sec(body, "todo"), ed
         assert "폭락" not in text and "무너졌습니다" not in text
-        assert "할 일: 오늘 할 일 칸을 꼭 봐 주십시오." in _sec(body, "summary")
 
 
 # ── 4. 단체방판 ──────────────────────────────────────────────────────────────
@@ -182,8 +136,8 @@ def test_phrases_yaml_caption_and_retired_keys():
     ph = letter_plain.load_phrases()
     assert ph["caption"] == {"temp": "시장 온도 {T}도", "todo": "오늘 할 일 있음", "problem": "자료 문제 있음",
                              "fear_board": "공포 매수판 {n}/5"}  # 2026-10-31 공포 구간만
-    for k in ("temp", "market", "todo", "todo_crash", "money", "lab"):
-        assert k in ph["summary"]
+    assert "summary" not in ph and "toc" not in ph["report"]  # 2026-10-31 「오늘 요약」·바로가기 없앰(주석 처리)
+    assert ph["report"]["details"] == "▶ 자세히 보기" and ph["report"]["news"] == "■ 오늘의 뉴스"
     assert "headline" not in ph and "regime" not in ph["market"] and "mood" not in ph["market"]  # 주석 처리(삭제 아님)
     raw = letter_plain.PHRASES_PATH.read_text(encoding="utf-8")
-    assert "# headline:" in raw and "#   mood:" in raw and "#   regime:" in raw
+    assert "# headline:" in raw and "#   mood:" in raw and "#   regime:" in raw and "# summary:" in raw

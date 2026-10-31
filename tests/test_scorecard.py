@@ -283,7 +283,8 @@ def test_report_renders_scorecard_fold(tmp_path):
     summary = _summary(cfg)
     summary["scorecard"] = {"month": "2026-10", "lines": ["1. QQQ 그냥 보유 · 누적 QQQ 대비 +0.0%p · 이긴 달 0/1 · 기록 짧음"]}
     html = report_html.render_report(summary, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "▶ 이번 달 가상 성적표" in html and "기록 짧음" in html
+    fold = html[html.index('id="fold-details"'):]  # 2026-10-31: 「자세히 보기」 접기 안
+    assert "이번 달 가상 성적표" in fold and "기록 짧음" in fold
     group = report_html.render_report(summary, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
     assert "월간 성적표" not in group and "기록 짧음" not in group  # 단체방판에는 없음
     summary.pop("scorecard")

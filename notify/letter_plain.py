@@ -1,14 +1,15 @@
 """아침 편지 v3 (2026-10-24) — 찌라시형 뉴스 브리핑 + 경어체. 2026-10-29부터 텔레그램은 HTML 보고서 파일 하나와
-설명 한 줄(caption_line)만 보내고, 내용은 모두 보고서(report_sections)에 있다.
+설명 한 줄(caption_line)만 보내고, 내용은 모두 보고서(report_view)에 있다.
 
 표시 전용 순수 함수: 이미 계산된 summary를 읽어 문장만 만든다(계산·판단 로직은 notify.letter·engine 그대로).
 문장은 config/letter_phrases.yaml(사용자 수정용, 경어체). 같은 상황 문장이 여럿이면 날짜로 돌려 쓴다(전날과 다른 문장).
 머리줄 "[오빠의 아침 편지] M/D(요일)"(편지 받는 한국 날짜), 섹션 "■ 이름", 항목 "▶ 한 줄". 이모지·들여쓰기 없음.
 단체방판(edition="group")은 ■ 내 돈·종목명·개인 금액 없음(뉴스는 같다).
 
-보고서 칸 순서(REPORT_ORDER): ① 오늘 요약 → ② 시장 온도(+ 지수·금리·환율) → ③ 뉴스 → ④ 오늘 할 일 → ⑤ 내 돈(개인판)
-→ ⑥ 웅덩이 후보 → ⑦ 가상 실험 → 기준 줄 → ※ 유의 줄. 시장 상태 문장(장기 평균선·투자 심리·오늘의 한 줄)은 없고
-시장 온도 칸이 대신한다. 폭락장·급락장 경고는 ④ 오늘 할 일에만(2026-10-29).
+보고서 다이어트(2026-10-31, report_view): (자료 문제) → ■ 오늘 할 일 → ■ 내 돈(개인판, 빈칸이면 생략) → ■ 시장(온도·지수 두 줄,
+공포 매수판 「공포」면 한 줄 더) → ■ 오늘의 뉴스(점수 상위 3) → 조건부 줄(가상 매매·월요일 성적·연구 소식) → 기준 줄
+→ 맨 아래 접기 「자세히 보기」(시장 온도 표·공포 매수판 표·지수 표·웅덩이 후보·가상 실험 상세·용어 풀이).
+폭락장·급락장 경고는 ■ 오늘 할 일에만(2026-10-29).
 """
 
 from __future__ import annotations
@@ -145,16 +146,16 @@ def _is_holiday_after(summary: dict) -> bool:
     return us_day.dayofweek < 5 and pd.Timestamp(as_of).normalize() < us_day
 
 
-def market_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
-    """② 시장 온도 칸 아래 「지수·금리·환율」 글 줄 — (휴장 다음 날만) 휴장 안내, 미국 10년 금리·환율, (위험 단계 지표가 있으면)
-    주의 한 줄. 지수 등락은 표(index_rows)에만 있다. 시장 상태 문장(오늘의 한 줄·장기 평균선·투자 심리)은 없다(2026-10-29)."""
+def market_lines(summary: dict, cfg: dict, ph: dict, edition: str, rates: bool = True) -> list[str]:
+    """「지수·금리·환율」 글 줄 — (휴장 다음 날만) 휴장 안내, 미국 10년 금리·환율(rates=False면 뺌 — 보고서는 ■ 시장 본문에 있음),
+    (위험 단계 지표가 있으면) 주의 한 줄. 시장 상태 문장(오늘의 한 줄·장기 평균선·투자 심리)은 없다(2026-10-29)."""
     day = _day(summary)
     lines = []
     if _is_holiday_after(summary):
         lines.append(phrase(ph, "market.holiday", day))
     by = {r.get("slug"): r for r in summary.get("macro_rows") or []}
     rate, fx = by.get("dgs10"), by.get("fx")
-    if rate or fx:
+    if rates and (rate or fx):
         tpl = phrase(ph, "market.rates", day)
         segs = [seg for seg in tpl.split(" · ") if ("{r}" not in seg or rate) and ("{fx}" not in seg or fx)]
         lines.append(fill(" · ".join(segs), r=f"{rate['value']:.1f}" if rate else "", fx=f"{fx['value']:,.0f}" if fx else ""))
@@ -415,11 +416,10 @@ def line_text(line) -> str:
     return BULLET + (line["text"] if isinstance(line, dict) else str(line))
 
 
-# ── 텔레그램 설명 한 줄 · 보고서 칸 (2026-10-29) ───────────────────────────────
-# 텔레그램 = 보고서 파일 하나 + 설명 한 줄(caption_line). 보고서 맨 위 「오늘 요약」(최대 5줄)부터. 표시 전용 — 계산은 읽기만.
+# ── 텔레그램 설명 한 줄 · 보고서 (2026-10-29, 다이어트 2026-10-31) ──────────────────
+# 텔레그램 = 보고서 파일 하나 + 설명 한 줄(caption_line). 표시 전용 — 계산은 읽기만.
 
-REPORT_ORDER = ("summary", "thermometer", "news", "todo", "money", "candidates", "lab")
-SUMMARY_MAX_LINES = 5  # ① 오늘 요약 최대 줄 수(자료 문제 줄 포함)
+NEWS_TOP_N = 3  # ■ 오늘의 뉴스: 점수 상위 몇 개 (수집·점수는 그대로, 보여 주는 개수만)
 
 
 def has_todo(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> bool:
@@ -446,42 +446,6 @@ def caption_line(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dic
     if fb:
         out.append(fb)
     return " · ".join(out)
-
-
-def first_sentence(text: str) -> str:
-    """문장 첫 개("…니다." 까지). 마침표가 없으면 그대로."""
-    m = re.match(r"(.+?[.!?])(\s|$)", str(text).strip())
-    return m.group(1) if m else str(text).strip()
-
-
-def summary_todo(summary: dict, cfg: dict, ph: dict, edition: str) -> str:
-    """① 오늘 요약 할 일 — ④ 오늘 할 일 첫 줄의 첫 문장(저축일 → 12월 공제 → 성적표 순, 개인판만). 급락장 경고 문장은
-    ④에만 두므로(2026-10-29) 급락장 줄만 있는 날은 summary.todo_crash("오늘 할 일 칸을 꼭 봐 주십시오.")."""
-    day = _day(summary)
-    crash = phrase(ph, "todo.crash", day)
-    lines = todo_lines(summary, cfg, ph, edition)
-    rest = [x for x in lines if x != crash]
-    if rest:
-        return first_sentence(rest[0])
-    return phrase(ph, "summary.todo_crash", day)
-
-
-def money_summary(summary: dict, ph: dict) -> str | None:
-    """요약 쪽지 내 돈(개인판) — 가격이 있는 QQQM·ISA 합계와 합계 손익률. 빈칸이면 None."""
-    day = _day(summary)
-    w = summary.get("wallet") or {}
-    q = summary.get("my_money")
-    q_state = w.get("qqqm_state") or ("ok" if q else "empty")
-    ok = [m for m, st in ((q, q_state), (w.get("isa"), w.get("isa_state") or "empty")) if st == "ok" and m]
-    if not ok:
-        return None
-    total = sum(m["value_krw"] for m in ok)
-    # 원가 = 편지가 종목별로 보여 주는 손익률(pnl_pct)에서 되짚은 값 — 그 값이 없으면 cost_krw
-    costs = [m["value_krw"] / (1 + m["pnl_pct"] / 100) if m.get("pnl_pct") is not None else m.get("cost_krw") for m in ok]
-    pct = (total / sum(costs) - 1) * 100 if all(c and c > 0 for c in costs) else None
-    if pct is None or round(pct, 1) == 0:
-        return phrase(ph, "summary.money_flat", day, 합계=man(total))
-    return phrase(ph, "summary.money", day, 합계=man(total), 률=f"{abs(pct):.1f}", 방향="올랐습니다" if pct > 0 else "내렸습니다")
 
 
 def _as_of_day(summary: dict) -> str | None:
@@ -536,73 +500,6 @@ def thermometer_detail(summary: dict) -> dict | None:
         return None
 
 
-def market_summary(summary: dict, ph: dict) -> str | None:
-    """① 오늘 요약 첫 줄 — "시장 온도 60도(미지근함) · QQQ +0.4%"(둘 중 없는 쪽은 생략). 둘 다 없으면 None."""
-    day = _day(summary)
-    parts = []
-    t = thermometer_result(summary)
-    if t:
-        parts.append(phrase(ph, "summary.temp", day, T=t["temp"], 구간=t["zone"]))
-    m = market_state(summary)
-    if m is not None:
-        parts.append(phrase(ph, "summary.market", day, q=signed(m["day"])))
-    return " · ".join(parts) or None
-
-
-def lab_summary(summary: dict, ph: dict) -> str | None:
-    """요약 쪽지 가상 실험 — "가상 실험: 웅덩이 v3.2 QQQ보다 0.4%p 앞섭니다 · 오늘 가상 매수 1건." 장부 값이 없으면 None."""
-    day = _day(summary)
-    pv = summary.get("puddle_v31") or {}
-    if pv.get("vs_qqq_pp") is None:
-        return None
-    key, d = vs_qqq_parts(pv["vs_qqq_pp"])
-    parts = [phrase(ph, "summary.lab", day, 비교=phrase(ph, f"lab.{key}", day, d=d).rstrip("."))]
-    if pv.get("buys_today"):
-        parts.append(phrase(ph, "summary.lab_buys", day, n=pv["buys_today"]))
-    if pv.get("sells_today"):
-        parts.append(phrase(ph, "summary.lab_sells", day, n=pv["sells_today"]))
-    return " · ".join(parts) + "."
-
-
-def news_count(summary: dict) -> int:
-    """보고서 뉴스 전체 건수(핵심 + 주제 칸, 서로 겹치지 않음)."""
-    nw = summary.get("news") or {}
-    if nw.get("status") == "fail":
-        return 0
-    return len(nw.get("top") or []) + sum(len(v) for v in (nw.get("topics") or {}).values())
-
-
-def candidate_count(summary: dict) -> int | None:
-    """웅덩이 후보 종목 수(반등 확인 장부가 없으면 None)."""
-    rb = summary.get("puddle_rebound") or {}
-    if not (rb.get("cand_personal") or rb.get("cand_group")):
-        return None
-    return int(rb.get("cand_count") or 0)
-
-
-def summary_items(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> dict:
-    """① 오늘 요약 재료 → {title, problem(▶ 포함|None), lines(머리표 없는 글, 순서대로)}.
-    줄 = 시장 온도·QQQ / 할 일 / 내 돈 합계(개인판) / 가상 실험 — 자료 문제 줄까지 최대 SUMMARY_MAX_LINES줄."""
-    ph = phrases if phrases is not None else load_phrases()
-    day = _day(summary)
-    probs = problems(summary, ph, edition)
-    lines = []
-    mk = market_summary(summary, ph)
-    if mk:
-        lines.append(mk)
-    lines.append(phrase(ph, "summary.todo", day, 할일=summary_todo(summary, cfg, ph, edition)))
-    if edition == PERSONAL:
-        mo = money_summary(summary, ph)
-        if mo:
-            lines.append(mo)
-    lb = lab_summary(summary, ph)
-    if lb:
-        lines.append(lb)
-    return {"title": title(summary, cfg, ph),
-            "problem": (BULLET + phrase(ph, "problem.prefix", day) + " ".join(probs)) if probs else None,
-            "lines": lines[:SUMMARY_MAX_LINES - (1 if probs else 0)]}
-
-
 def index_rows(summary: dict) -> list[dict]:
     """보고서 ② 「지수·금리·환율」 지수 표 — [{name, close, day}] (QQQ·S&P500·반도체, 자료 있는 것만)."""
     ix = summary.get("index_close") or {}
@@ -619,36 +516,154 @@ def index_rows(summary: dict) -> list[dict]:
     return out
 
 
-def report_sections(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> list[dict]:
-    """보고서 칸(REPORT_ORDER 순서) — [{id, key, toc, title, sub(제목 옆 짧은 표시: 건수·종목 수만), lines, …}].
-    ② 시장 온도 = 온도계 자료(detail) + 「지수·금리·환율」(rows 표 + market 줄). 내 돈은 개인판만, 웅덩이 후보는 장부가 있을 때만.
-    단체방판은 금액·종목명 없음. 같은 문장·숫자가 두 칸에 나오지 않게 제목 옆 요약은 건수만(① 오늘 요약은 요약이라 예외)."""
+def _is_monday(summary: dict) -> bool:
+    today = summary.get("letter_today_kst")
+    return today is not None and pd.Timestamp(today).dayofweek == 0
+
+
+def _fear_zone() -> str:
+    from thermometer.core import load_config
+
+    return load_config()["fear_board"]["caption_zone"]
+
+
+def market_main_lines(summary: dict, cfg: dict, ph: dict) -> list[str]:
+    """■ 시장 — "시장 온도 60도 · 미지근함 (어제보다 1도 ↑)" + "QQQ +0.4% · 미국 10년 금리 4.1% · 환율 1,325원"
+    + 공포 매수판이 「공포」인 날만 "공포 매수판 3/5 · …". 없는 숫자는 그 조각만 뺀다(온도가 없으면 "구하지 못했습니다")."""
+    from thermometer.message import change_text
+
+    day = _day(summary)
+    lines = []
+    t = thermometer_result(summary)
+    if t:
+        head = phrase(ph, "market.temp", day, T=t["temp"], 구간=t["zone"])
+        ch = change_text(t.get("delta"))
+        lines.append(f"{head} ({ch})" if ch else head)
+    else:
+        lines.append(phrase(ph, "report.thermometer_none", day))
+    m = market_state(summary)
+    by = {r.get("slug"): r for r in summary.get("macro_rows") or []}
+    rate, fx = by.get("dgs10"), by.get("fx")
+    have = {"{q}": m is not None, "{r}": bool(rate), "{fx}": bool(fx)}
+    segs = [seg for seg in phrase(ph, "market.indices", day).split(" · ") if all(ok or k not in seg for k, ok in have.items())]
+    if segs:
+        lines.append(fill(" · ".join(segs), q=signed(m["day"]) if m is not None else "",
+                          r=f"{rate['value']:.1f}" if rate else "", fx=f"{fx['value']:,.0f}" if fx else ""))
+    fb = fear_board_result(summary)
+    if fb and fb.get("zone") == _fear_zone():
+        lines.append(phrase(ph, "market.fear", day, n=fb["count"], 문장=fb["line"]))
+    return lines
+
+
+def money_main_lines(summary: dict, ph: dict) -> list[str]:
+    """■ 내 돈(개인판) — "합계 512만 원, 1.2% 올랐습니다." + 공제·ISA 비과세 남은 금액 한 줄. 가격 있는 보유가 없으면 빈 목록(칸 생략)."""
+    day = _day(summary)
+    w = summary.get("wallet") or {}
+    q, isa = summary.get("my_money"), w.get("isa")
+    q_ok = (w.get("qqqm_state") or ("ok" if q else "empty")) == "ok" and bool(q)
+    i_ok = (w.get("isa_state") or "empty") == "ok" and bool(isa)
+    ok = [m for m, good in ((q, q_ok), (isa, i_ok)) if good]
+    if not ok:
+        return []
+    total = sum(m["value_krw"] for m in ok)
+    # 원가 = 종목별 손익률(pnl_pct)에서 되짚은 값 — 그 값이 없으면 cost_krw
+    costs = [m["value_krw"] / (1 + m["pnl_pct"] / 100) if m.get("pnl_pct") is not None else m.get("cost_krw") for m in ok]
+    pct = (total / sum(costs) - 1) * 100 if all(c and c > 0 for c in costs) else None
+    if pct is None or round(pct, 1) == 0:
+        lines = [phrase(ph, "money.total_flat", day, 합계=man(total))]
+    else:
+        lines = [phrase(ph, "money.total_pnl", day, 합계=man(total), 률=f"{abs(pct):.1f}", 방향="올랐습니다" if pct > 0 else "내렸습니다")]
+    has_q = q_ok and q.get("remaining_krw") is not None
+    has_i = i_ok and isa.get("tax_free_left_krw") is not None
+    if has_q and has_i:
+        lines.append(phrase(ph, "money.room", day, 남은=man(q["remaining_krw"]), isa남은=man(isa["tax_free_left_krw"])))
+    elif has_q:
+        lines.append(phrase(ph, "money.room_qqqm", day, 남은=man(q["remaining_krw"])))
+    elif has_i:
+        lines.append(phrase(ph, "money.room_isa", day, isa남은=man(isa["tax_free_left_krw"])))
+    return lines
+
+
+def news_top_lines(summary: dict, ph: dict, n: int = NEWS_TOP_N) -> list:
+    """■ 오늘의 뉴스 — 점수 상위 n개(core.news.select의 top이 점수순) 줄 {text, title, source, url}. 못 받으면 실패 한 줄,
+    뉴스를 받으려 하지 않은 날(None)은 빈 목록."""
+    day = _day(summary)
+    nw = summary.get("news")
+    if nw is None:
+        return []
+    if nw.get("status") == "fail" or not nw.get("top"):
+        return [phrase(ph, "news.failed", day)]
+    out = []
+    for a in nw["top"][:n]:
+        t = _shorten(a["title"])
+        out.append({"text": phrase(ph, "news.line", day, 제목=t, 언론사=a["source"]), "title": t, "source": a["source"],
+                    "url": a.get("url", "")})
+    return out
+
+
+LEDGERS = (("puddle_v31", "v32"), ("puddle_rebound", "rebound_v2"))  # (summary 칸, lab.names 키) — 지금 장부
+
+
+def extra_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
+    """조건부 줄 — 가상 매매가 있는 장부마다 "가상 실험: {장부} {매매 문장}(실제 돈 아님)."(단체방판은 종목명 없이),
+    월요일만 "가상 실험: 웅덩이 v3.2 QQQ 대비 …", 판정 다음 날·월요일 연구 소식 한 줄."""
+    day = _day(summary)
+    out = []
+    key = "trades_personal" if edition == PERSONAL else "trades_group"
+    for slot, name in LEDGERS:
+        tr = (summary.get(slot) or {}).get(key) or []
+        if tr:
+            out.append(phrase(ph, "lab.trade_line", day, 이름=phrase(ph, f"lab.names.{name}", day), 매매=" ".join(tr).rstrip(".")))
+    if _is_monday(summary):
+        pv, rb = summary.get("puddle_v31") or {}, summary.get("puddle_rebound") or {}
+        if pv.get("vs_qqq_pp") is not None and rb.get("vs_qqq_pp") is not None:
+            out.append(phrase(ph, "lab.monday", day, a=signed(pv["vs_qqq_pp"]), b=signed(rb["vs_qqq_pp"])))
+    rs = research_lines(cfg, ph, summary.get("letter_today_kst"))
+    if rs:
+        out.append(rs[0])
+    return out
+
+
+def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> dict:
+    """보고서 화면 → {title, problem(글|None), sections[{key, title, lines}], extras[글], monday_chart(bool), base(기준 줄), details{…}}.
+    본문 = 할 일·내 돈(개인판, 빈칸이면 생략)·시장·뉴스 + 조건부 줄 + 기준 줄. 상세는 맨 아래 접기 「자세히 보기」 하나에 모은다
+    (시장 온도 표·공포 매수판 표·지수 표와 휴장·주의 줄·웅덩이 후보·가상 실험 상세·뉴스 유의 줄)."""
     ph = phrases if phrases is not None else load_phrases()
     rp = ph.get("report") or {}
     day = _day(summary)
-    items = summary_items(summary, cfg, edition, ph)
-    secs = {"summary": {"title": rp.get("summary", "■ 오늘 요약"), "sub": "",
-                        "lines": ([items["problem"][len(BULLET):]] if items.get("problem") else []) + items["lines"]}}
-    td = thermometer_detail(summary)
-    none_text = rp.get("thermometer_none", "")
-    secs["thermometer"] = {"title": rp.get("thermometer", "■ 시장 온도"), "sub": "", "detail": td,
-                           "lines": [] if td else [none_text], "fear_board": fear_board_result(summary),
-                           "market_title": rp.get("market", "지수·금리·환율"), "rows": index_rows(summary),
-                           "market_lines": market_lines(summary, cfg, ph, edition)}
-    n = news_count(summary)
-    if summary.get("news") is not None:  # 뉴스를 받으려 한 날만(못 받았으면 실패 한 줄)
-        secs["news"] = {"title": rp.get("news", "■ 뉴스"), "sub": f"{n}건" if n else "",
-                        "groups": news_sections(summary, ph), "lines": []}
-    secs["todo"] = {"title": rp.get("todo", "■ 오늘 할 일"), "sub": "", "lines": todo_lines(summary, cfg, ph, edition)}
+    probs = problems(summary, ph, edition)
+    secs = [{"key": "todo", "title": rp.get("todo", "■ 오늘 할 일"), "lines": todo_lines(summary, cfg, ph, edition)}]
     if edition == PERSONAL:
-        secs["money"] = {"title": rp.get("money", "■ 내 돈"), "sub": "", "lines": money_lines(summary, cfg, ph)}
-    cand = candidate_lines(summary, edition)
-    if cand or (edition == PERSONAL and summary.get("candidate_charts")):
-        c = candidate_count(summary) or (len(summary.get("candidate_charts") or []) if edition == PERSONAL else 0)
-        secs["candidates"] = {"title": rp.get("candidates", "■ 웅덩이 후보"), "sub": f"{c}종목" if c else "없음",
-                              "lines": cand, "caution": phrase(ph, "candidates.caution", day)}
-    lab = lab_lines(summary, cfg, ph, edition)
-    if lab or (summary.get("curve_chart") or {}).get("group" if edition == GROUP else "personal"):
-        secs["lab"] = {"title": rp.get("lab", "■ 가상 실험 (실제 돈 아님)"), "sub": "", "lines": lab}
-    return [{"id": f"sec-{k}", "key": k, "toc": secs[k]["title"].removeprefix(SECTION).split(" (")[0], **secs[k]}
-            for k in REPORT_ORDER if k in secs]
+        mo = money_main_lines(summary, ph)
+        if mo:
+            secs.append({"key": "money", "title": rp.get("money", "■ 내 돈"), "lines": mo})
+    secs.append({"key": "market", "title": rp.get("market_main", "■ 시장"), "lines": market_main_lines(summary, cfg, ph)})
+    news = news_top_lines(summary, ph)
+    if news:
+        secs.append({"key": "news", "title": rp.get("news", "■ 오늘의 뉴스"), "lines": news})
+    as_of = summary.get("as_of")
+    base = f"{pd.Timestamp(as_of).month}/{pd.Timestamp(as_of).day}" if as_of is not None else "?"
+    return {
+        "title": title(summary, cfg, ph),
+        "problem": phrase(ph, "problem.prefix", day) + " ".join(probs) if probs else None,
+        "sections": secs,
+        "extras": extra_lines(summary, cfg, ph, edition),
+        "monday_chart": _is_monday(summary),
+        "base": phrase(ph, "footer.base", day, 날짜=base),
+        "details": {
+            "title": rp.get("details", "▶ 자세히 보기"),
+            "thermometer_title": rp.get("thermometer", "시장 온도"),
+            "thermometer": thermometer_detail(summary),
+            "fear_board": fear_board_result(summary),
+            "market_title": rp.get("market", "지수·금리·환율"),
+            "index_rows": index_rows(summary),
+            "market_lines": market_lines(summary, cfg, ph, edition, rates=False),  # 금리·환율은 ■ 시장 본문에만
+            "candidates_title": rp.get("candidates", "웅덩이 후보 (가상 실험 신호, 실제 매수 권유 아님)"),
+            "candidates": candidate_lines(summary, edition),
+            "candidates_caution": phrase(ph, "candidates.caution", day),
+            "lab_title": rp.get("lab", "가상 실험 (실제 돈 아님)"),
+            "lab": lab_lines(summary, cfg, ph, edition),
+            "guide_title": rp.get("guide", "용어 풀이"),
+            "caution": phrase(ph, "footer.caution", day),
+        },
+    }

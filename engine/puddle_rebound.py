@@ -202,7 +202,8 @@ def letter_lines(rows: list[dict], book: RBook = BOOK) -> dict:
     """진행한 날들 → {personal, group(■ 가상 실험 줄), cand_personal, cand_group(■ 웅덩이 후보), vs_v31_pp(비교 B 대비), b_label, check_*, shares_*}."""
     if not rows:
         return {"personal": [], "group": [], "cand_personal": [], "cand_group": [], "vs_v31_pp": None, "b_label": book.b_label,
-                "check_personal": None, "check_group": None, "shares_personal": None, "shares_group": None}
+                "check_personal": None, "check_group": None, "shares_personal": None, "shares_group": None,
+                "vs_qqq_pp": None, "trades_personal": [], "trades_group": []}
     last = rows[-1]
     failed = sorted({t for r in rows for t in r["failed"]})
     return {"personal": lab_lines(rows, True, book=book), "group": lab_lines(rows, False, book=book),
@@ -210,7 +211,10 @@ def letter_lines(rows: list[dict], book: RBook = BOOK) -> dict:
             "vs_v31_pp": (last["value"] - last["v31"]) / 1_000_000 if last.get("v31") is not None else None, "b_label": book.b_label,
             "check_personal": f"실적 확인 실패({', '.join(failed)})" if failed else None,
             "check_group": f"실적 확인 실패({len(failed)}종목)" if failed else None, **e31.shares_checks(rows),
-            "cand_count": candidate_count(last)}  # 표시 전용(2026-10-28 편지 요약 쪽지)
+            "cand_count": candidate_count(last),  # 표시 전용(2026-10-28 편지 요약 쪽지)
+            # 표시 전용(2026-10-31 보고서 다이어트): QQQ 대비 %p(월요일 줄), 가상 매매 문장(매매가 있는 날만 본문 한 줄)
+            "vs_qqq_pp": (last["value"] - last["qqq"]) / 1_000_000,
+            "trades_personal": e31.trade_sentences(rows, True), "trades_group": e31.trade_sentences(rows, False)}
 
 
 def candidate_count(r: dict) -> int:

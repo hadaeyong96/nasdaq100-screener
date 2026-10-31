@@ -376,24 +376,33 @@ def _plain_lines(rows: list[dict], personal: bool, phrases: dict | None = None) 
         lines.append(lp.phrase(ph, "lab.hold", day, 종목=tk, w=f"{items[-1][1] * 100:.0f}"))
     else:
         lines.append(lp.phrase(ph, "lab.hold_group", day, n=len(w), w=f"{sum(w.values()) * 100:.0f}"))
-    fills = [f for r in rows for f in r["fills"]]
-    sells = [s for r in rows for s in r["sells"]]
+    lines += trade_sentences(rows, personal, ph)
     skipped = [s for r in rows for s in r["skipped"]]
     if personal:
-        for f in fills:
-            lines.append(lp.phrase(ph, "lab.buy1" if f["tranche"] == 1 else "lab.buy2", day, 종목=f["tk"]))
-        for s in sells:
-            lines.append(lp.phrase(ph, f"lab.sell_{_REASON_KEY.get(s['reason'], 'gone')}", day, 종목=s["tk"]))
         for s in skipped:
             lines.append(lp.phrase(ph, "lab.skip_earnings", day, 종목=s["tk"]))
-    else:
-        if fills:
-            lines.append(lp.phrase(ph, "lab.group_buy", day, n=len({f["tk"] for f in fills})))
-        if sells:
-            lines.append(lp.phrase(ph, "lab.group_sell", day, n=len(sells)))
-        if skipped:
-            lines.append(lp.phrase(ph, "lab.skip_earnings_group", day, n=len({s["tk"] for s in skipped})))
+    elif skipped:
+        lines.append(lp.phrase(ph, "lab.skip_earnings_group", day, n=len({s["tk"] for s in skipped})))
     return lines
+
+
+def trade_sentences(rows: list[dict], personal: bool, phrases: dict | None = None) -> list[str]:
+    """그날 가상 매수·매도 문장(편지 장부 줄과 같은 문구) — 개인판은 종목별, 단체방판은 개수만. 매매가 없으면 빈 목록."""
+    from notify import letter_plain as lp
+
+    ph = phrases if phrases is not None else lp.load_phrases()
+    day = rows[-1].get("date") if rows else None
+    fills = [f for r in rows for f in r["fills"]]
+    sells = [s for r in rows for s in r["sells"]]
+    if personal:
+        return ([lp.phrase(ph, "lab.buy1" if f["tranche"] == 1 else "lab.buy2", day, 종목=f["tk"]) for f in fills]
+                + [lp.phrase(ph, f"lab.sell_{_REASON_KEY.get(s['reason'], 'gone')}", day, 종목=s["tk"]) for s in sells])
+    out = []
+    if fills:
+        out.append(lp.phrase(ph, "lab.group_buy", day, n=len({f["tk"] for f in fills})))
+    if sells:
+        out.append(lp.phrase(ph, "lab.group_sell", day, n=len(sells)))
+    return out
 
 
 _REASON_KEY = {v: k for k, v in pv.REASONS.items()}  # 매도 이유 글 → 문구 키(high·rank·max_hold·gone)
@@ -408,7 +417,8 @@ def shares_checks(rows: list[dict]) -> dict:
 def letter_lines(rows: list[dict], book: Book = BOOK) -> dict:
     """이번 실행에서 진행한 날들의 기록 → 편지 줄 {personal: [...], group: [...], check_personal, check_group, shares_*}."""
     if not rows:
-        return {"personal": [], "group": [], "check_personal": None, "check_group": None, "shares_personal": None, "shares_group": None}
+        return {"personal": [], "group": [], "check_personal": None, "check_group": None, "shares_personal": None, "shares_group": None,
+                "trades_personal": [], "trades_group": []}
     from notify import letter_plain as lp
 
     ph = lp.load_phrases()
@@ -425,6 +435,9 @@ def letter_lines(rows: list[dict], book: Book = BOOK) -> dict:
     out["vs_qqq_pp"] = (last["v31"] - last["qqq"]) / 1_000_000
     out["buys_today"] = sum(len(r["fills"]) for r in rows)
     out["sells_today"] = sum(len(r["sells"]) for r in rows)
+    # 표시 전용(2026-10-31 보고서 다이어트): 가상 매매가 있는 날만 본문 한 줄 — 장부 줄과 같은 매매 문장
+    out["trades_personal"] = trade_sentences(rows, True, ph)
+    out["trades_group"] = trade_sentences(rows, False, ph)
     return out
 
 

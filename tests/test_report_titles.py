@@ -94,12 +94,10 @@ def test_private_report_title_h1_and_subtitle(tmp_path, cfg, titles):
     header = re.search(r"<header>(.*?)</header>", html, re.S).group(1)
     assert re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", header)).strip() == "오빠의 아침 편지 · 9/30(수)"  # 날짜 한 줄만
     assert "마감" not in header and "📊" not in html.split("<body", 1)[1].split("</header>", 1)[0]
-    # 지운 머리말 정보는 맨 아래 「보고서 정보」 접기(기본 닫힘) 안으로
-    info = html.split('<details class="fold" id="fold-info">', 1)[1].split("</details>", 1)[0]
-    assert "▶ 이 편지에 대해" in info and f'<div class="subtitle">{titles["subtitle"]}</div>' in info
-    assert "MACD 중심 1:2:6 분할 전략 · 미국 종가 확정 기준" in info
-    assert "기준일 <b>2026-09-30 종가</b>" in info and "주문 가능일" in info and "환율" in info and "생성" in info
-    assert html.index('id="fold-guide"') < html.index('id="fold-info"') < html.index("<footer>")
+    # 2026-10-31 보고서 다이어트: 「이 편지에 대해」 접기 삭제 — 기준일은 본문 기준 줄, 용어 풀이는 「자세히 보기」 안
+    assert 'id="fold-info"' not in html and titles["subtitle"] not in html
+    assert "미국 9/30 종가 기준입니다." in html
+    assert html.index('id="fold-details"') < html.index('id="guide"') < html.index("<footer>")
 
 
 def test_signal_summary_md_title_uses_short_title(tmp_path, monkeypatch, cfg, titles):
