@@ -430,7 +430,8 @@ def has_todo(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | 
 
 def caption_line(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> str:
     """텔레그램 파일 설명 한 줄: "[오빠의 아침 편지] 10/29(목) · 시장 온도 60도"(온도가 없으면 뒷부분 생략)
-    + 할 일이 기본 문장이 아니면 " · 오늘 할 일 있음" + 자료 문제가 있으면 " · 자료 문제 있음"."""
+    + 할 일이 기본 문장이 아니면 " · 오늘 할 일 있음" + 자료 문제가 있으면 " · 자료 문제 있음"
+    + 공포 매수판이 공포 구간이면 맨 끝 " · 공포 매수판 {n}/5"(2026-10-31)."""
     ph = phrases if phrases is not None else load_phrases()
     cp = ph.get("caption") or {}
     out = [title(summary, cfg, ph)]
@@ -441,6 +442,9 @@ def caption_line(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dic
         out.append(str(cp.get("todo", "오늘 할 일 있음")))
     if problems(summary, ph, edition):
         out.append(str(cp.get("problem", "자료 문제 있음")))
+    fb = fear_board_suffix(summary, ph)
+    if fb:
+        out.append(fb)
     return " · ".join(out)
 
 
@@ -493,6 +497,30 @@ def thermometer_result(summary: dict) -> dict | None:
         if not t or t.get("temp") is None or t.get("data_date") != _as_of_day(summary):
             return None
         return t
+    except Exception:
+        return None
+
+
+def fear_board_result(summary: dict) -> dict | None:
+    """그 기준일 공포 매수판(engine.daily._attach_fear_board가 thermometer.fear_board.get_fear_board(기준일)로 붙인 값).
+    없거나·기준일과 자료 날짜가 다르거나·모양이 이상하면 None(표·덧붙임만 생략)."""
+    b = summary.get("fear_board")
+    try:
+        if not b or b.get("data_date") != _as_of_day(summary) or len(b["items"]) != 5:
+            return None
+        return b
+    except Exception:
+        return None
+
+
+def fear_board_suffix(summary: dict, ph: dict) -> str | None:
+    """설명 한 줄 끝 " · 공포 매수판 {n}/5" — 공포 구간인 날만(개인판·단체방판 같음), 아니면 None."""
+    try:
+        from thermometer.core import load_config
+        from thermometer.fear_board import caption_suffix
+
+        tpl = str((ph.get("caption") or {}).get("fear_board", "공포 매수판 {n}/5"))
+        return caption_suffix(fear_board_result(summary), load_config(), tpl)
     except Exception:
         return None
 
@@ -604,7 +632,7 @@ def report_sections(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: 
     td = thermometer_detail(summary)
     none_text = rp.get("thermometer_none", "")
     secs["thermometer"] = {"title": rp.get("thermometer", "■ 시장 온도"), "sub": "", "detail": td,
-                           "lines": [] if td else [none_text],
+                           "lines": [] if td else [none_text], "fear_board": fear_board_result(summary),
                            "market_title": rp.get("market", "지수·금리·환율"), "rows": index_rows(summary),
                            "market_lines": market_lines(summary, cfg, ph, edition)}
     n = news_count(summary)

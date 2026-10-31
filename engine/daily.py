@@ -2321,6 +2321,7 @@ def main() -> None:
         _safe_step(summary, "국면 줄", lambda: _attach_regime_line(summary, vb_result, cfg))
         _safe_step(summary, "시장 지수", lambda: _attach_market_glance(summary, cfg))
         _safe_step(summary, "시장 온도계", lambda: _attach_thermometer(summary, record=True))
+        _safe_step(summary, "공포 매수판", lambda: _attach_fear_board(summary))
         if (cfg.get("letter") or {}).get("show_books", False):  # 예전(가상 장부 있던 때) 편지
             _safe_step(summary, "12월 공제 안내", lambda: _attach_dec_tax(summary, cfg))
             _safe_step(summary, "편지", lambda: _attach_letter_v2(summary, vb_result, cfg))
@@ -2459,6 +2460,21 @@ def _attach_thermometer(summary: dict, temp_fn=None, record: bool = False, histo
         history.append(t, history_path or load_config()["history"]["path"])
     except Exception as exc:  # noqa: BLE001
         print(f"[daily] 시장 온도 기록을 남기지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
+
+
+def _attach_fear_board(summary: dict, board_fn=None) -> None:
+    """보고서 「시장 온도」 칸 아래 「공포 매수판」(2026-10-31): thermometer.fear_board.get_fear_board(기준일) 그대로 →
+    summary["fear_board"]. 실패하면 그 표와 설명 한 줄 덧붙임만 빠지고 편지는 그대로."""
+    summary["fear_board"] = None
+    if summary.get("as_of") is None:
+        return
+    day = pd.Timestamp(summary["as_of"]).date().isoformat()
+    try:
+        from thermometer.fear_board import get_fear_board
+
+        summary["fear_board"] = (board_fn or get_fear_board)(day)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] 공포 매수판을 구하지 못해 그 표를 뺍니다: {type(exc).__name__}: {exc}")
 
 
 def _attach_news(summary: dict, cfg: dict, news_fn=None) -> None:

@@ -22,8 +22,9 @@ def _main_config() -> dict:
         return yaml.safe_load(f)
 
 
-def load_live(as_of: date, cfg: dict) -> dict:
-    """오늘(as_of 기준) 온도계 자료 → core.get_temperature의 prices dict (+ "errors": [str], "failed": {티커: 이유})."""
+def load_live(as_of: date, cfg: dict, breadth: bool = True) -> dict:
+    """오늘(as_of 기준) 온도계 자료 → core.get_temperature의 prices dict (+ "errors": [str], "failed": {티커: 이유}).
+    breadth=False면 구성 종목 가격은 받지 않는다(공포 매수판 — QQQ·VIX·공포·탐욕만 쓴다)."""
     from data import macro
     from data.prices import fetch_one, fetch_universe_prices
     from data.universe import get_universe
@@ -33,16 +34,17 @@ def load_live(as_of: date, cfg: dict) -> dict:
     out: dict = {"errors": errors, "failed": {}}
     out["qqq"] = fetch_one(cfg["sma"]["ticker"], main_cfg)["close"].astype(float)
 
-    try:
-        tickers = list(get_universe()["ticker"])
-        res = fetch_universe_prices(tickers, main_cfg)
-        out["failed"] = dict(res.failed)
-        if res.failed:
-            errors.append(f"구성 종목 가격 실패 {len(res.failed)}개: {', '.join(sorted(res.failed))}")
-        out["stocks"] = pd.DataFrame({t: df["close"].astype(float) for t, df in res.prices.items()}).sort_index()
-        out["members"] = set(tickers)  # 실패 종목도 명단에는 남긴다(확보율이 낮으면 시장 폭 자료 없음)
-    except Exception as exc:
-        errors.append(f"시장 폭 자료 실패: {exc}")
+    if breadth:
+        try:
+            tickers = list(get_universe()["ticker"])
+            res = fetch_universe_prices(tickers, main_cfg)
+            out["failed"] = dict(res.failed)
+            if res.failed:
+                errors.append(f"구성 종목 가격 실패 {len(res.failed)}개: {', '.join(sorted(res.failed))}")
+            out["stocks"] = pd.DataFrame({t: df["close"].astype(float) for t, df in res.prices.items()}).sort_index()
+            out["members"] = set(tickers)  # 실패 종목도 명단에는 남긴다(확보율이 낮으면 시장 폭 자료 없음)
+        except Exception as exc:
+            errors.append(f"시장 폭 자료 실패: {exc}")
 
     try:
         vdf = fetch_one(cfg["vix"]["ticker"], main_cfg)
