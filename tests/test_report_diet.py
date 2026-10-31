@@ -226,3 +226,11 @@ def test_group_has_no_amounts_or_tickers_anywhere(wk, cfg, tmp_path):
     for x in ("만 원", "280", "250", "NVDA", "AAPL", "MSFT", "내 돈", "비과세", "세금 없이"):
         assert x not in body, x
         assert x not in cap, x
+
+
+def test_footer_polite_form(wk, cfg, tmp_path):
+    html = report_html.render_report(wk, cfg, tmp_path).read_text(encoding="utf-8")
+    foot = html[html.index("<footer>"):html.index("</footer>")]
+    assert "자료는 yfinance 하루 종가(주식 분할 반영), 환율은 yfinance 원/달러입니다." in foot
+    assert "규칙대로 계산한 결과라 투자 권유가 아닙니다. 주문은 직접 확인한 뒤 하십시오." in foot
+    assert "예요" not in foot and "세요" not in foot
