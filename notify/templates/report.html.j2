@@ -398,6 +398,12 @@ nav.toc{line-height:1.9;margin:0 0 10px}
   {% if s.detail.missing %}<div class="ln">▶ 자료 없음: {{ s.detail.missing|join(', ') }}. 나머지로 환산했습니다.</div>{% endif %}
   {% if s.detail.footer %}<div class="ln mini">{{ s.detail.footer }}</div>{% endif %}
   {% endif %}
+  {% if s.key == 'thermometer' and s.fear_board %}
+  <h3>공포 매수판 · {{ s.fear_board.count }}/5 · {{ s.fear_board.zone }}</h3>
+  <div class="sheet"><table class="fit"><thead><tr><th class="nosort l">조건</th><th class="nosort">켜짐</th><th class="nosort">값</th></tr></thead>
+  <tbody>{% for it in s.fear_board["items"] %}<tr><td class="l">{{ it.name }}</td><td class="num">{% if it.ok is none %}자료 없음{% elif it.ok %}✓{% else %}✗{% endif %}</td><td class="num">{{ it.value if it.value is not none else '-' }}</td></tr>{% endfor %}</tbody></table></div>
+  <div class="ln">▶ {{ s.fear_board.line }}</div>
+  {% endif %}
   {% for line in s.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}
   {% if s.key == 'thermometer' and (s.rows or s.market_lines) %}
   <h3>{{ s.market_title }}</h3>

@@ -180,7 +180,8 @@ def test_group_has_no_amounts_or_tickers(rich, temp, cfg, tmp_path):
 
 def test_phrases_yaml_caption_and_retired_keys():
     ph = letter_plain.load_phrases()
-    assert ph["caption"] == {"temp": "시장 온도 {T}도", "todo": "오늘 할 일 있음", "problem": "자료 문제 있음"}
+    assert ph["caption"] == {"temp": "시장 온도 {T}도", "todo": "오늘 할 일 있음", "problem": "자료 문제 있음",
+                             "fear_board": "공포 매수판 {n}/5"}  # 2026-10-31 공포 구간만
     for k in ("temp", "market", "todo", "todo_crash", "money", "lab"):
         assert k in ph["summary"]
     assert "headline" not in ph and "regime" not in ph["market"] and "mood" not in ph["market"]  # 주석 처리(삭제 아님)

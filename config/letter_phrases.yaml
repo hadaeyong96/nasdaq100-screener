@@ -146,6 +146,7 @@ footer:
 # 할 일이 todo.none이 아니면 끝에 " · {todo}", 자료 문제가 있으면 " · {problem}".
 caption:
   temp: "시장 온도 {T}도"   # 그 기준일 온도가 없으면 생략
+  fear_board: "공포 매수판 {n}/5"   # 공포 매수판이 공포 구간(config/thermometer.yaml fear_board.caption_zone)인 날만, 맨 끝
   todo: 오늘 할 일 있음
   problem: 자료 문제 있음
 

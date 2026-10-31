@@ -79,3 +79,32 @@ history:
   backfill_end: "2021-12-31" # 2022-01-01 이후 과거 시계열은 계산 금지(봉인)
 
 footer: ※ 시장 상태를 보는 온도계입니다. 매매 신호가 아닙니다.
+
+# 「공포 매수판」 (2026-10-31) — thermometer/fear_board.py. 조건 5개 중 켜진 수(count)로 구간을 나눈다. 보고서 「시장 온도」 칸 아래 표.
+# 정보용 안내판이다. 가상 장부에는 연결하지 않는다.
+fear_board:
+  fear_greed_max: 25 # ① 공포·탐욕 ≤ 25 (온도계 ⑤와 같은 값·같은 stale_days)
+  rsi_days: 14 # ② QQQ RSI(14, Wilder) ≤ rsi_max
+  rsi_max: 30
+  bollinger: {period: 20, std_mult: 2, ddof: 0} # ③ QQQ 종가 < 볼린저 하단(20일, 2σ, 모집단 표준편차 — 트레이딩뷰와 같게)
+  sma_long: 60 # ④ QQQ 종가 ≤ SMA60 그리고
+  sma_short: 20 #    SMA20 < sma_lag거래일 전 SMA20
+  sma_lag: 21
+  vix_min: 30 # ⑤ VIX 종가 ≥ 30
+  zones: # count가 max 이하인 첫 구간
+    - {max: 1, name: 평소, line: 적립만 그대로입니다.}
+    - {max: 2, name: 눌림, line: 눌림 구간입니다. 저축일에 그대로 삽니다.}
+    - {max: 5, name: 공포, line: 공포 구간입니다. 여윳돈이 있으면 추가 매수해도 좋은 구간입니다. 가진 주식은 팔지 않습니다.}
+  caption_zone: 공포 # 이 구간이면 텔레그램 설명 한 줄 끝에 " · 공포 매수판 {n}/5" (letter_phrases.yaml caption.fear_board)
+  names:
+    fear_greed: 공포·탐욕 ≤ 25
+    rsi: QQQ RSI(14) ≤ 30
+    bollinger: QQQ 종가 < 볼린저 하단(20일, 2σ)
+    trend: QQQ 종가 ≤ 60일선 · 20일선 하락(21거래일 전보다 낮음)
+    vix: VIX ≥ 30
+  # 참고 통계(docs/fear_board_notes.md, scripts/fear_board_notes.py) — 정보용, 판정 아님. 2022-01-01 이후 계산 금지(봉인 ⓑ)
+  notes:
+    start: "1999-01-01"
+    end: "2021-12-31"
+    horizons: [63, 126, 252] # 다음 n거래일 수익
+    episode_gap_days: 21 # 공포 구간 묶음: 앞 공포일과 이 거래일 수 이내로 떨어진 날은 같은 하락으로 본다
