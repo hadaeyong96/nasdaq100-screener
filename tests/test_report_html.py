@@ -69,7 +69,7 @@ def test_render_report_succeeds_when_all_sections_empty(tmp_path, cfg):
     assert path.exists()
     html = path.read_text(encoding="utf-8")
     assert html.count("오늘 해당 종목 없음") >= 5  # 신규 매수 4탭 + 매도 등
-    assert "실전" in html
+    assert "모의" not in html.split("</header>", 1)[0]
 
 
 def test_render_report_paper_mode_label(tmp_path, cfg):
@@ -321,12 +321,12 @@ def test_live_mode_hides_total_krw_in_header(tmp_path, cfg):
     assert "총자금" not in header
 
 
-def test_paper_mode_still_shows_total_krw_in_header(tmp_path, cfg):
-    """머리말 정보는 2026-10-15부터 맨 아래 「보고서 정보」 접기 안에 있다 — 모의는 거기 총자금을 보인다."""
+def test_paper_mode_marked_in_title_without_info_fold(tmp_path, cfg):
+    """2026-10-31 보고서 다이어트: 「이 편지에 대해」(총자금·운용 모드) 접기는 지웠다 — 모의는 머리줄 " · 모의"로만 표시."""
     path = report_html.render_report(_empty_summary(mode="paper"), cfg, tmp_path)
     html = path.read_text(encoding="utf-8")
-    info = html.split('id="fold-info"', 1)[1]
-    assert "총자금" in info
+    assert 'id="fold-info"' not in html and "이 편지에 대해" not in html
+    assert " · 모의" in html.split("</header>", 1)[0]
 
 
 def test_live_mode_renders_judgment_table_row(cfg):
@@ -612,7 +612,7 @@ def test_top_block_comes_before_all_folds_and_folds_are_closed(tmp_path, cfg):
     folds = re.findall(r"<details class=\"fold\"[^>]*>\s*<summary>([^<]+)</summary>", body)
     # 짧은 판(2026-10-17): 돈이 몰리는 종목은 자료가 있을 때만, 가상 장부 현황 접기는 숨김(실험 중인 전략 칸 안 표)
     assert folds == ["▶ 전체 후보 목록 (오늘의 스크리닝)", "▶ 매수·매도 상세 · 보유 현황 · 경고 · 규칙",
-                     "▶ 용어 풀이", "▶ 이 편지에 대해"]  # 「그래프로 보기」는 2026-10-29 보고서판에서 뺐다(시장 온도 칸)
+                     "▶ 자세히 보기"]  # 2026-10-31: 용어 풀이는 「자세히 보기」 안, 「이 편지에 대해」 삭제
     assert not re.search(r"<details class=\"fold\"[^>]*\bopen\b", body)  # 기본 닫힘
 
 

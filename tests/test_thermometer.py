@@ -217,7 +217,7 @@ def test_same_value_telegram_letter_block(tmp_path, monkeypatch):
     assert f"■ 오늘 온도: {temp}도 · {zone}" in sent[0]
     s = {"as_of": pd.Timestamp("2026-10-27")}
     daily._attach_thermometer(s, temp_fn=lambda d: get_temperature(d, prices=p, cfg=CFG))
-    assert letter_plain.market_summary(s, letter_plain.load_phrases()) == f"시장 온도 {temp}도({zone})"
+    assert letter_plain.market_main_lines(s, {}, letter_plain.load_phrases())[0].startswith(f"시장 온도 {temp}도 · {zone}")
     assert blocks.market_temperature("2026-10-27", temp, temp, prices=p, cfg=CFG) is True
 
 

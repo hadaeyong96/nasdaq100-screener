@@ -324,7 +324,7 @@ def test_report_group_edition_has_no_tickers(cfg, tmp_path):
     s = _summary(copy.deepcopy(cfg))
     s["puddle_v31"] = eng.letter_lines([_row()])
     personal = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    assert "■ 가상 실험 (실제 돈 아님)" in personal and "웅덩이 v3.1: QQQ보다 1.0%p 앞섭니다." in personal
+    assert "가상 실험 (실제 돈 아님)" in personal and "웅덩이 v3.1: QQQ보다 1.0%p 앞섭니다." in personal
     assert "AAPL을 처음 샀습니다." in personal
     group = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
     body = group[group.index("<header>"):group.index("<script>")]

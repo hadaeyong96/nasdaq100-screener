@@ -151,9 +151,13 @@ def test_report_html_embeds_edition_chart(tmp_path, cfg):
     ctx_g = report_html.build_context(s, cfg, "group")
     assert ctx_p["curve_chart_src"].startswith("data:image/png;base64,")
     assert ctx_p["curve_chart_src"] != ctx_g["curve_chart_src"]  # 판마다 자기 그림
-    html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")
-    lab = html[html.index('id="sec-lab"'):html.index("▶ 용어 풀이")]  # 2026-10-28: 성적 그래프는 ■ 가상 실험 칸에
-    assert 'class="curve-chart"' in lab and html.count('aria-label="가상 실험 성적 그래프"') == 1
+    html = report_html.render_report(s, cfg, tmp_path).read_text(encoding="utf-8")  # 월요일 편지 — 그래프는 본문 조건부 줄 아래
+    extras = html[html.index('id="sec-extras"'):html.index('id="fold-details"')]
+    assert 'class="curve-chart"' in extras and html.count('aria-label="가상 실험 성적 그래프"') == 1
+    tue = report_html.render_report({**s, "letter_today_kst": s["letter_today_kst"] + pd.Timedelta(days=1)}, cfg,
+                                    tmp_path).read_text(encoding="utf-8")  # 평일 — 「자세히 보기」 가상 실험 상세 안(2026-10-31)
+    lab = tue[tue.index('id="sec-lab"'):tue.index('id="guide"')]
+    assert 'class="curve-chart"' in lab and tue.count('aria-label="가상 실험 성적 그래프"') == 1
     s.pop("curve_chart")
     assert report_html.build_context(s, cfg, "personal")["curve_chart_src"] is None
 

@@ -396,8 +396,8 @@ def test_letter_section_order_caution_and_monday_line():
     lab = d["sections"][-1]["lines"]
     assert lab[0] == "웅덩이 v3.1: QQQ와 같습니다." and lab[1].startswith("웅덩이 반등 확인: ")
     assert "웅덩이 v3.1보다 0.3%p 앞섭니다." in lab  # 월요일
-    cand = {s["key"]: s for s in lp.report_sections(base, {"research_news": {}}, lp.PERSONAL)}["candidates"]
-    assert cand["caution"] == "※ 웅덩이 후보는 12개월 시험 중인 가상 전략의 신호입니다. 검증 전이라 실제 매수 권유가 아닙니다."
+    cand = lp.report_view(base, {"research_news": {}}, lp.PERSONAL)["details"]
+    assert cand["candidates_caution"] == "※ 웅덩이 후보는 12개월 시험 중인 가상 전략의 신호입니다. 검증 전이라 실제 매수 권유가 아닙니다."
     tue = lp.build({**base, "letter_today_kst": pd.Timestamp("2026-11-10")}, {"research_news": {}}, lp.PERSONAL)
     assert not any("v3.1보다" in x for x in tue["sections"][-1]["lines"])
     gd = lp.build(base, {"research_news": {}}, lp.GROUP)

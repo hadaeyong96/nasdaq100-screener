@@ -379,49 +379,25 @@ nav.toc{line-height:1.9;margin:0 0 10px}
 </header>
 
 {% if letter and letter.report %}
-{# 보고서 = 전부 (2026-10-29, notify/letter_plain.report_sections) — 텔레그램은 이 파일과 설명 한 줄만. 칸 순서: 오늘 요약 → 시장 온도(+ 지수·금리·환율) → 뉴스 → 할 일 → 내 돈(개인판) → 웅덩이 후보 → 가상 실험 → 접기(용어 풀이·이 편지에 대해) #}
-<nav class="toc letter plain" aria-label="칸 바로가기"><b>바로가기</b> {% for s in letter.report %}<a href="#{{ s.id }}">{{ s.toc }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</nav>
+{# 보고서 다이어트 (2026-10-31, notify/letter_plain.report_view) — 텔레그램은 이 파일과 설명 한 줄만.
+   본문: (자료 문제) → 할 일 → 내 돈(개인판) → 시장 → 오늘의 뉴스 3 → 조건부 줄(가상 매매·월요일 성적+그래프·연구 소식) → 기준 줄.
+   상세(시장 온도 표·공포 매수판 표·지수·웅덩이 후보·가상 실험·용어 풀이)는 맨 아래 접기 「자세히 보기」 하나에. #}
+{% set rv = letter.report %}
 <section class="letter plain" aria-label="아침 편지">
-{% for s in letter.report %}
-<div class="rsec" id="{{ s.id }}">
-  <h2>{{ s.title }}{% if s.sub %} <span class="rsub">— {{ s.sub }}</span>{% endif %}</h2>
-  {% if s.key == 'news' %}
-  {% for g in s.groups %}<h3>{{ g.header }}</h3>
-  {% for line in g.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}{% endfor %}
-  {% endfor %}
-  {% endif %}
-  {% if s.key == 'thermometer' and s.detail %}
-  <div class="ln"><b>{{ s.detail.head }}</b></div>
-  <div class="sheet"><table class="fit"><thead><tr><th class="nosort l">항목</th><th class="nosort">원값</th><th class="nosort">도수(20도 만점)</th></tr></thead>
-  <tbody>{% for r in s.detail.rows %}<tr><td class="l">{{ r.name }}</td><td class="num">{{ r.raw }}</td><td class="num">{{ r.deg }}</td></tr>{% endfor %}</tbody></table></div>
-  {% if s.detail.note %}<div class="ln">▶ {{ s.detail.note }}</div>{% endif %}
-  {% if s.detail.missing %}<div class="ln">▶ 자료 없음: {{ s.detail.missing|join(', ') }}. 나머지로 환산했습니다.</div>{% endif %}
-  {% if s.detail.footer %}<div class="ln mini">{{ s.detail.footer }}</div>{% endif %}
-  {% endif %}
-  {% if s.key == 'thermometer' and s.fear_board %}
-  <h3>공포 매수판 · {{ s.fear_board.count }}/5 · {{ s.fear_board.zone }}</h3>
-  <div class="sheet"><table class="fit"><thead><tr><th class="nosort l">조건</th><th class="nosort">켜짐</th><th class="nosort">값</th></tr></thead>
-  <tbody>{% for it in s.fear_board["items"] %}<tr><td class="l">{{ it.name }}</td><td class="num">{% if it.ok is none %}자료 없음{% elif it.ok %}✓{% else %}✗{% endif %}</td><td class="num">{{ it.value if it.value is not none else '-' }}</td></tr>{% endfor %}</tbody></table></div>
-  <div class="ln">▶ {{ s.fear_board.line }}</div>
-  {% endif %}
-  {% for line in s.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}
-  {% if s.key == 'thermometer' and (s.rows or s.market_lines) %}
-  <h3>{{ s.market_title }}</h3>
-  {% if s.rows %}<div class="sheet"><table class="fit"><thead><tr><th class="nosort l">지수</th><th class="nosort">종가</th><th class="nosort">하루</th></tr></thead>
-  <tbody>{% for r in s.rows %}<tr><td class="l">{{ r.name }}</td><td class="num">{{ r.close }}</td><td class="num">{{ r.day }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
-  {% for line in s.market_lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}
-  {% endif %}
-  {% if s.key == 'candidates' %}
-  {% if candidate_chart_srcs and not is_group %}{% for c in candidate_chart_srcs %}<figure class="curve-chart cand-chart"><img src="{{ c.src }}" alt="{{ c.title }}" width="1200" height="900"></figure>{% endfor %}{% endif %}
-  <div class="ln mini">{{ s.caution }}</div>
-  {% endif %}
-  {% if s.key == 'lab' and curve_chart_src %}
-  <figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>
-  {% endif %}
+{% if rv.problem %}<div class="ln crash">▶ {{ rv.problem }}</div>{% endif %}
+{% for s in rv.sections %}
+<div class="rsec" id="sec-{{ s.key }}">
+  <h2>{{ s.title }}</h2>
+  {% for line in s.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}{% endfor %}
 </div>
 {% endfor %}
-  <div class="ln mini foot">{{ letter.plain.footer }}</div>
-  {% for c in (letter.plain.cautions or [letter.plain.caution]) %}<div class="ln mini">{{ c }}</div>{% endfor %}
+{% if rv.extras or (rv.monday_chart and curve_chart_src) %}
+<div class="rsec" id="sec-extras">
+  {% for line in rv.extras %}<div class="ln">▶ {{ line }}</div>{% endfor %}
+  {% if rv.monday_chart and curve_chart_src %}<figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>{% endif %}
+</div>
+{% endif %}
+  <div class="ln mini foot">{{ rv.base }}</div>
 </section>
 {% elif letter and letter.plain %}
 {# 아침 편지 v3 (2026-10-24, notify/letter_plain.py + config/letter_phrases.yaml) — 텔레그램 첨부 설명과 같은 문장, 왼쪽 정렬 #}
@@ -1110,17 +1086,7 @@ nav.toc{line-height:1.9;margin:0 0 10px}
 {% endif %}
 
 
-{% if scorecard %}
-<details class="fold" id="fold-scorecard">
-<summary>▶ 이번 달 가상 성적표</summary>
-<div class="fold-body">
-<section class="vb" aria-label="가상 장부 월간 성적표">
-  <p class="mini">{{ scorecard.month }} 성적 · 관찰 전용 가상 장부(실제 주문 아님) · 전략 · 누적 QQQ 대비 · QQQ를 이긴 달</p>
-  <ul class="mini">{% for line in scorecard.lines %}<li>{{ line }}</li>{% endfor %}</ul>
-</section>
-</div>
-</details>
-{% endif %}
+{# 이번 달 가상 성적표 — 아래 「자세히 보기」/예전 접기 자리로 옮김(2026-10-31) #}
 
 
 {% if show_vbooks_fold %}
@@ -1139,17 +1105,9 @@ nav.toc{line-height:1.9;margin:0 0 10px}
 </details>
 {% endif %}
 
-{% if dec_tax and not is_group %}
-<!-- 12월 공제 안내 자리 (다음 작업에서 연결) -->
-<details class="fold" id="fold-dec-tax">
-<summary>▶ 올해 세금 없이 팔 수 있는 이익</summary>
-<div class="fold-body">{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}</div>
-</details>
-{% endif %}
+{# 12월 공제 안내 — 아래 「자세히 보기」/예전 접기 자리로 옮김(2026-10-31) #}
 
-<details class="fold" id="fold-guide">
-<summary>▶ 용어 풀이</summary>
-<div class="fold-body">
+{% set guide_html %}
 <!-- 읽는 법 (초보자 안내) -->
 <section class="gd" id="guide">
   {% if show_screening %}
@@ -1262,6 +1220,77 @@ nav.toc{line-height:1.9;margin:0 0 10px}
   </details>
   {% endif %}
 </section>
+{% endset %}
+{% if letter and letter.report %}
+{% set d = letter.report.details %}
+<details class="fold" id="fold-details">
+<summary>{{ d.title }}</summary>
+<div class="fold-body letter plain">
+  <div class="ln mini"><a href="#guide">{{ d.guide_title }} ↓</a></div>
+  <h3>{{ d.thermometer_title }}</h3>
+  {% if d.thermometer %}
+  <div class="ln"><b>{{ d.thermometer.head }}</b></div>
+  <div class="sheet"><table class="fit"><thead><tr><th class="nosort l">항목</th><th class="nosort">원값</th><th class="nosort">도수(20도 만점)</th></tr></thead>
+  <tbody>{% for r in d.thermometer.rows %}<tr><td class="l">{{ r.name }}</td><td class="num">{{ r.raw }}</td><td class="num">{{ r.deg }}</td></tr>{% endfor %}</tbody></table></div>
+  {% if d.thermometer.note %}<div class="ln">▶ {{ d.thermometer.note }}</div>{% endif %}
+  {% if d.thermometer.missing %}<div class="ln">▶ 자료 없음: {{ d.thermometer.missing|join(', ') }}. 나머지로 환산했습니다.</div>{% endif %}
+  {% if d.thermometer.footer %}<div class="ln mini">{{ d.thermometer.footer }}</div>{% endif %}
+  {% else %}<div class="ln">▶ 자료 없음</div>{% endif %}
+  {% if d.fear_board %}
+  <h3>공포 매수판 · {{ d.fear_board.count }}/5 · {{ d.fear_board.zone }}</h3>
+  <div class="sheet"><table class="fit"><thead><tr><th class="nosort l">조건</th><th class="nosort">켜짐</th><th class="nosort">값</th></tr></thead>
+  <tbody>{% for it in d.fear_board["items"] %}<tr><td class="l">{{ it.name }}</td><td class="num">{% if it.ok is none %}자료 없음{% elif it.ok %}✓{% else %}✗{% endif %}</td><td class="num">{{ it.value if it.value is not none else '-' }}</td></tr>{% endfor %}</tbody></table></div>
+  <div class="ln">▶ {{ d.fear_board.line }}</div>
+  {% endif %}
+  {% if d.index_rows or d.market_lines %}
+  <h3>{{ d.market_title }}</h3>
+  {% if d.index_rows %}<div class="sheet"><table class="fit"><thead><tr><th class="nosort l">지수</th><th class="nosort">종가</th><th class="nosort">하루</th></tr></thead>
+  <tbody>{% for r in d.index_rows %}<tr><td class="l">{{ r.name }}</td><td class="num">{{ r.close }}</td><td class="num">{{ r.day }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+  {% for line in d.market_lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}
+  {% endif %}
+  {% if d.candidates or (candidate_chart_srcs and not is_group) %}
+  <h3 id="sec-candidates">{{ d.candidates_title }}</h3>
+  {% for line in d.candidates %}<div class="ln">▶ {{ line }}</div>{% endfor %}
+  {% if candidate_chart_srcs and not is_group %}{% for c in candidate_chart_srcs %}<figure class="curve-chart cand-chart"><img src="{{ c.src }}" alt="{{ c.title }}" width="1200" height="900"></figure>{% endfor %}{% endif %}
+  <div class="ln mini">{{ d.candidates_caution }}</div>
+  {% endif %}
+  {% if d.lab or (curve_chart_src and not letter.report.monday_chart) %}
+  <h3 id="sec-lab">{{ d.lab_title }}</h3>
+  {% for line in d.lab %}<div class="ln">▶ {{ line }}</div>{% endfor %}
+  {% if curve_chart_src and not letter.report.monday_chart %}<figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>{% endif %}
+  {% endif %}
+  {% if scorecard %}<h3>이번 달 가상 성적표</h3>{% for line in scorecard.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}{% endif %}
+  {% if dec_tax and not is_group %}<h3>올해 세금 없이 팔 수 있는 이익</h3>{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}{% endif %}
+  <div class="ln mini">{{ d.caution }}</div>
+  <h3>{{ d.guide_title }}</h3>
+  {{ guide_html }}
+</div>
+</details>
+{% else %}
+{% if scorecard %}
+<details class="fold" id="fold-scorecard">
+<summary>▶ 이번 달 가상 성적표</summary>
+<div class="fold-body">
+<section class="vb" aria-label="가상 장부 월간 성적표">
+  <p class="mini">{{ scorecard.month }} 성적 · 관찰 전용 가상 장부(실제 주문 아님) · 전략 · 누적 QQQ 대비 · QQQ를 이긴 달</p>
+  <ul class="mini">{% for line in scorecard.lines %}<li>{{ line }}</li>{% endfor %}</ul>
+</section>
+</div>
+</details>
+{% endif %}
+
+{% if dec_tax and not is_group %}
+<!-- 12월 공제 안내 자리 (다음 작업에서 연결) -->
+<details class="fold" id="fold-dec-tax">
+<summary>▶ 올해 세금 없이 팔 수 있는 이익</summary>
+<div class="fold-body">{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}</div>
+</details>
+{% endif %}
+
+<details class="fold" id="fold-guide">
+<summary>▶ 용어 풀이</summary>
+<div class="fold-body">
+{{ guide_html }}
 </div>
 </details>
 
@@ -1279,6 +1308,7 @@ nav.toc{line-height:1.9;margin:0 0 10px}
 </section>
 </div>
 </details>
+{% endif %}
 
 <footer>
 {% if letter and letter.plain %}

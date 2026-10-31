@@ -481,7 +481,7 @@ def _letter_ctx(summary: dict, cfg: dict, edition: str) -> dict:
     return {
         "plain": None if show_books else letter_plain.build(summary, cfg, edition),  # 2026-10-23 쉬운 문장판
         # 2026-10-28 첨부 보고서 = 전부(칸 순서·바로가기·제목 옆 한 줄 요약) — 문자는 요약 쪽지
-        "report": None if show_books else letter_plain.report_sections(summary, cfg, edition),
+        "report": None if show_books else letter_plain.report_view(summary, cfg, edition),  # 2026-10-31 보고서 다이어트
         "therm_guide": None if show_books else _therm_guide(),  # 용어 풀이 「시장 온도」(2026-10-29)
         "personal": personal,
         "check": letter.check_line(info) if (personal and info) else "",
