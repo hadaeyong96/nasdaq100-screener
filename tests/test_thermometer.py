@@ -365,3 +365,53 @@ def test_workflow_manual_only_and_shares_concurrency():
     assert any("upload --mode vbooks" in r for r in dsteps)  # 편지 실행이 남긴 온도 기록이 드라이브에 올라간다
     text = (ROOT / ".github" / "workflows" / "thermometer.yml").read_text(encoding="utf-8")
     assert "THERMO" not in text and "THERMO" not in (ROOT / ".github" / "workflows" / "daily.yml").read_text(encoding="utf-8")
+
+
+def test_report_uses_first_recorded_value_without_recompute(tmp_path):
+    """2026-10-31: 그 기준일 기록이 있으면 처음 기록된 값 그대로(다시 계산 안 함), 어제 대비는 앞선 기록 행과 비교.
+    기록이 없을 때만 계산해서 기록한다."""
+    from engine import daily
+    from notify import letter_plain
+
+    db = tmp_path / "vb.db"
+    p = make_prices()
+    first = get_temperature("2026-10-27", prices=p, cfg=CFG)
+    history.append({**first, "temp": 48, "zone": "미지근함"}, db)  # 처음 기록된 값(예: 아침 7시 실행)
+    prev = get_temperature("2026-10-26", prices=p, cfg=CFG)
+    history.append({**prev, "temp": 57, "zone": "미지근함"}, db)
+
+    def boom(d):
+        raise AssertionError("기록이 있으면 다시 계산하지 않는다")
+
+    s = {"as_of": pd.Timestamp("2026-10-27")}
+    daily._attach_thermometer(s, temp_fn=boom, record=True, history_path=db)
+    t = s["thermometer"]
+    assert t["temp"] == 48 and t["zone"] == "미지근함" and t["data_date"] == "2026-10-27"
+    assert t["prev_temp"] == 57 and t["delta"] == -9 and t["source"] == "history"
+    assert t["parts"]["vix"]["raw"] == pytest.approx(first["parts"]["vix"]["raw"], abs=1e-4)
+    assert letter_plain.thermometer_result(s) is t
+    ph = letter_plain.load_phrases()
+    assert letter_plain.market_main_lines(s, {}, ph)[0] == "시장 온도 48도 · 미지근함 (어제보다 9도 ↓)"
+    assert letter_plain.caption_line({**s, "letter_today_kst": pd.Timestamp("2026-10-28")}, {}).endswith("· 시장 온도 48도")
+    assert len(history.load(db)) == 2  # 새 줄 없음
+
+    # 기록이 없는 기준일: 계산해서 기록 → 다음 실행은 (자료가 바뀌어도) 그 기록 그대로
+    s2 = {"as_of": pd.Timestamp("2026-10-28")}
+    p2 = make_prices(end="2026-10-28")
+    daily._attach_thermometer(s2, temp_fn=lambda d: get_temperature(d, prices=p2, cfg=CFG), record=True, history_path=db)
+    rec = history.find("2026-10-28", db)
+    assert rec is not None and s2["thermometer"]["temp"] == int(rec["temp"]) and s2["thermometer"]["prev_temp"] == 48
+    s3 = {"as_of": pd.Timestamp("2026-10-28")}
+    daily._attach_thermometer(s3, temp_fn=boom, record=True, history_path=db)
+    assert s3["thermometer"]["temp"] == int(rec["temp"]) and len(history.load(db)) == 3
+
+
+def test_history_reads_do_not_create_file_or_table(tmp_path):
+    import sqlite3
+
+    assert history.find("2026-10-27", tmp_path / "none.db") is None and not (tmp_path / "none.db").exists()
+    db = tmp_path / "other.db"
+    sqlite3.connect(db).execute("CREATE TABLE t (x)").connection.close()
+    assert history.find("2026-10-27", db) is None and history.previous("2026-10-27", db) is None
+    tables = {r[0] for r in sqlite3.connect(db).execute("SELECT name FROM sqlite_master")}
+    assert tables == {"t"}

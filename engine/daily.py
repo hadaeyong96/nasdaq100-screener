@@ -2436,13 +2436,27 @@ def _fetch_index_closes(cfg: dict) -> dict:
 
 
 def _attach_thermometer(summary: dict, temp_fn=None, record: bool = False, history_path=None) -> None:
-    """보고서 「시장 온도」 칸(2026-10-28·10-29): thermometer.core.get_temperature(기준일) 그대로 → summary["thermometer"].
-    record=True(라이브 실행)이면 그 기준일 온도를 가상 장부 DB thermometer_history 표에 한 줄 남긴다(같은 기준일은 처음 한 번만,
-    독립 온도계 메시지를 끈 뒤 기록은 여기서 — thermometer.history.append). 계산·기록 실패는 그 칸만 빠지고 편지는 그대로."""
+    """보고서 「시장 온도」 칸·설명 한 줄의 온도 → summary["thermometer"] (2026-10-28·10-29, 2026-10-31 기록 우선).
+    그 기준일이 가상 장부 DB thermometer_history 표에 이미 있으면 처음 기록된 값을 그대로 쓰고 다시 계산하지 않는다
+    (thermometer.history.result_of, 어제 대비 = 앞선 기록 행). 기록이 없을 때만 thermometer.core.get_temperature(기준일)로 계산하고,
+    record=True(라이브 실행)이면 그 값을 한 줄 남긴다. 계산·기록 실패는 그 칸만 빠지고 편지는 그대로."""
     summary["thermometer"] = None
     if summary.get("as_of") is None:
         return
     day = pd.Timestamp(summary["as_of"]).date().isoformat()
+    from thermometer import history
+    from thermometer.core import load_config
+
+    tcfg = load_config()
+    path = history_path or tcfg["history"]["path"]
+    try:
+        row, prev = history.find(day, path), history.previous(day, path)
+    except Exception as exc:  # noqa: BLE001 — 기록을 못 읽으면 계산으로
+        print(f"[daily] 시장 온도 기록을 읽지 못해 새로 계산합니다: {type(exc).__name__}: {exc}")
+        row = prev = None
+    if row is not None and row.get("temp"):
+        summary["thermometer"] = history.result_of(row, tcfg, prev)
+        return
     try:
         from thermometer.core import get_temperature
 
@@ -2451,13 +2465,12 @@ def _attach_thermometer(summary: dict, temp_fn=None, record: bool = False, histo
         print(f"[daily] 시장 온도계를 구하지 못해 편지 온도 줄을 뺍니다: {type(exc).__name__}: {exc}")
         return
     t = summary["thermometer"]
+    if prev is not None and t and t.get("temp") is not None and prev.get("temp"):  # 어제 대비도 기록된 값과 비교
+        t.update(prev_date=prev["date"], prev_temp=int(prev["temp"]), delta=t["temp"] - int(prev["temp"]))
     if not record or not t or t.get("temp") is None or t.get("data_date") != day:
         return
     try:
-        from thermometer import history
-        from thermometer.core import load_config
-
-        history.append(t, history_path or load_config()["history"]["path"])
+        history.append(t, path)
     except Exception as exc:  # noqa: BLE001
         print(f"[daily] 시장 온도 기록을 남기지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
 
