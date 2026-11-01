@@ -1,0 +1,74 @@
+name: Search forecast (weekly)
+
+# 검색량 실적 예고 — 주 1회 수집·점수 잠금·시즌 예측 잠금·채점 (docs/prereg/search_forecast.md, engine/search_forecast.py).
+# 일요일 KST 10:30 = UTC 일요일 01:30. 아침 편지(daily.yml, 매일 KST 07:37~09:07 예약)와 시간이 겹치지 않게 둔다.
+# concurrency 그룹은 daily-screener와 다르게(사전 등록 2장) — 이 실행이 길어져도(트렌드 요청 대기) 편지를 붙잡지 않는다.
+# 주의: 같은 가상 장부 DB(드라이브)를 받고 올리므로, 편지를 손으로 이 시간에 돌리면 서로의 기록을 덮어쓸 수 있다.
+# 실패해도 편지 실행과는 별개 — 개인방에 "검색량 예고 실패" 한 줄만. 잠금 파일(시각·해시만)은 main에 커밋·push.
+on:
+  schedule:
+    - cron: "30 1 * * 0"
+  workflow_dispatch: {}
+
+concurrency:
+  group: search-forecast
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  search-forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # 가상 장부 DB를 받는다. 실패하면 실행하지 않고 올리지도 않는다(장부 DB 보호).
+      - name: Download virtual books state from Google Drive
+        id: download
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
+        run: python scripts/drive_sync.py download --mode vbooks
+
+      - name: Run search forecast
+        id: run
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+        run: python -m engine.search_forecast
+
+      # 받기에 성공했을 때만 올린다 — 못 받은 채(빈 DB) 올려 가상 장부 기록을 지우는 일이 없게.
+      - name: Upload virtual books state to Google Drive
+        if: always() && steps.download.outcome == 'success'
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS: ${{ secrets.GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS }}
+        run: python scripts/drive_sync.py upload --mode vbooks
+
+      # 잠금 파일(시각·SHA-256만, 종목·방향 없음)을 커밋·push. 새 줄이 없으면 건너뛴다.
+      - name: Commit lock files
+        if: steps.run.outcome == 'success'
+        run: |
+          git config user.name "search-forecast-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add docs/forecast_locks
+          if git diff --cached --quiet; then echo "새 잠금 없음"; exit 0; fi
+          git commit -m "검색량 예고 잠금: $(date -u +%Y-%m-%dT%H:%MZ) (시각·해시만)"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/send_ops_alert.py "검색량 예고 실패"
