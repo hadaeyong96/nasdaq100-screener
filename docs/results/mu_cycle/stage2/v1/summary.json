@@ -1,0 +1,27 @@
+{
+ "name": "마이크론 사이클 2단계 (A34SNO 6개월 → MU 10%)",
+ "verdict": "FAIL",
+ "commit": "6965a1e",
+ "version": "v1",
+ "entries": 4,
+ "seed": 20261101,
+ "n_random": 1000,
+ "strategy_cagr": 22.48,
+ "qqq_cagr": 21.59,
+ "mu10_cagr": 23.82,
+ "random_pct": 55.9,
+ "criteria": {
+  "1": false,
+  "2": false,
+  "3": true,
+  "4": false,
+  "5": true
+ },
+ "peers_win": [
+  "AMAT",
+  "KLAC",
+  "TXN",
+  "MCHP"
+ ],
+ "vintage_ratio": 1.0
+}
