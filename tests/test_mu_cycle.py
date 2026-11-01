@@ -117,6 +117,12 @@ def test_quarterly_eps_and_ttm():
     assert np.isclose(mc.ttm_eps(q, pd.Timestamp("2011-02-01")), 0.3 + 0.4 + 0.6 + 0.1)
 
 
+def test_base_hit_rate():
+    idx = pd.date_range("1990-01-31", periods=30, freq="ME")
+    # 평가 달 0~17(뒤 12개월 필요). 바닥 20 → t = 8~17이 적중 → 10/18
+    assert np.isclose(mc.base_hit_rate(idx, [idx[20]], idx[0]), 10 / 18)
+
+
 def test_quarterly_eps_known_date_capped_at_end_plus_60():
     f = pd.DataFrame({"start": pd.to_datetime(["2009-12-04"]), "end": pd.to_datetime(["2010-03-04"]),
                       "filed": pd.to_datetime(["2011-04-12"]), "val": [0.39]})  # 1년 뒤 비교 값으로만 공시

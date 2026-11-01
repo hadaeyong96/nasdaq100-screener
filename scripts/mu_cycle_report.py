@@ -216,6 +216,7 @@ def main() -> None:
 
 
 def write(out, commit, mu, cyc, a_mu, ranked, a_peer, peers, stages, pe_pts, q, top3) -> None:
+    base = mc.base_hit_rate(mu["m"].index, mu["troughs"], mu["start"])
     cyc.to_csv(out / "mu_cycles.csv", index=False, encoding="utf-8-sig")
     a_mu.to_csv(out / "mu_indicators.csv", index=False, encoding="utf-8-sig")
     # 사이클 표
@@ -329,6 +330,8 @@ def write(out, commit, mu, cyc, a_mu, ranked, a_peer, peers, stages, pe_pts, q, 
         "## 1. MU 사이클", "", "### 꼭대기·바닥", "", md(pts), "", "### 사이클별", "", md(c), "", *summary, "",
         "## 2. 선행 지표 (MU)", "",
         "괄호 안 숫자는 사이클 순서(1990년부터). 적중률 = 적중/평가 신호, 놓침 = 놓친 바닥/평가 바닥, 헛신호 = 헛신호/평가 신호.", "",
+        f"**적중률 기준선 {fmt_pct(base, 0)}**: 평가 가능한 아무 달에 신호를 냈어도 12개월 안에 MU 바닥이 있었을 비율(바닥이 자주 와서 높다). "
+        "적중률은 이 값과 비교해 읽는다. 선행 개월 ±12는 찾는 창의 끝이라 \"창 안에 뚜렷한 극값 없음\"에 가깝다.", "",
         md(show), "",
         "## 3. 경기순환주 특징 (MU, 단계별)", "",
         "변동성 = 창 안 일간 종가 수익률 표준편차 × √252. 거래량 변화 = 창 평균 거래량 ÷ 그 앞 6개월 평균 − 1. PER = 월말 종가 ÷ TTM 희석 EPS(흑자 달만), EDGAR 2009~2012 범위.", "",

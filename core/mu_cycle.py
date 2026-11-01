@@ -193,6 +193,16 @@ def signal_stats(ind: pd.Series, price: pd.Series, troughs: list[pd.Timestamp], 
             "놓침 비율": missed / judged if judged else np.nan}
 
 
+def base_hit_rate(idx: pd.DatetimeIndex, troughs: list[pd.Timestamp], start: pd.Timestamp, horizon: int = 12) -> float:
+    """기준선: 평가 가능한 아무 달 t(start 이후, 뒤 horizon개월 있음)에 신호가 났다면 t ~ t+horizon 안에 바닥이 있었을 비율."""
+    pos = {d: i for i, d in enumerate(idx)}
+    tp = [pos[t] for t in troughs if t in pos]
+    months = [i for i, d in enumerate(idx) if d >= start and i + horizon < len(idx)]
+    if not months:
+        return np.nan
+    return float(np.mean([any(i <= b <= i + horizon for b in tp) for i in months]))
+
+
 def forward_return(price: pd.Series, months: int = 12) -> pd.Series:
     """월말 t의 months개월 뒤 수익률(분석 표시용 — 끝 months개월은 NaN). 음수 shift 없이 위치로 계산한다."""
     v = price.to_numpy()
