@@ -618,6 +618,10 @@ def extra_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
         pv, rb = summary.get("puddle_v31") or {}, summary.get("puddle_rebound") or {}
         if pv.get("vs_qqq_pp") is not None and rb.get("vs_qqq_pp") is not None:
             out.append(phrase(ph, "lab.monday", day, a=signed(pv["vs_qqq_pp"]), b=signed(rb["vs_qqq_pp"])))
+        sfc = summary.get("search_forecast")
+        if edition == PERSONAL and sfc:  # 검색량 실적 예고 — 개인판만, 종목 이름 없음(2026-11-01)
+            x = "—" if sfc.get("hit") is None else f"{sfc['hit'] * 100:.0f}%"
+            out.append(phrase(ph, "lab.search_forecast", day, n=sfc["locked"], m=sfc["scored"], x=x))
     rs = research_lines(cfg, ph, summary.get("letter_today_kst"))
     if rs:
         out.append(rs[0])

@@ -2334,6 +2334,7 @@ def main() -> None:
             _safe_step(summary, "그래프", lambda: _attach_curve_chart(summary, cfg))
             _safe_step(summary, "웅덩이 후보 차트", lambda: _attach_candidate_charts(summary))
             _safe_step(summary, "뉴스", lambda: _attach_news(summary, cfg))
+            _attach_search_forecast(summary)  # 실패해도 편지에 흔적 없음(자료 문제 줄도 안 남김)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
         if (cfg.get("report") or {}).get("monthly_scorecard", True):
             try:
@@ -2639,6 +2640,20 @@ def _attach_curve_chart(summary: dict, cfg: dict, out_dir: Path | None = None, d
     except Exception as exc:  # noqa: BLE001 — 그래프만 빠진다
         print(f"[daily] 수익곡선 그래프를 만들지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
         summary["curve_chart"] = {"error": type(exc).__name__}
+
+
+def _attach_search_forecast(summary: dict, counts_fn=None) -> None:
+    """검색량 실적 예고 집계(월요일 개인판 한 줄용, docs/prereg/search_forecast.md 6장) → summary["search_forecast"].
+
+    가상 장부 DB를 읽기만 한다. 표가 없거나 어떤 오류가 나도 None으로 두고 넘어간다 — 편지 본문·「자료 문제」 줄에 영향 없음.
+    """
+    summary["search_forecast"] = None
+    try:
+        if counts_fn is None:
+            from store.search_forecast import letter_counts as counts_fn
+        summary["search_forecast"] = counts_fn()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[daily] 검색량 예고 집계 건너뜀(편지는 그대로): {type(exc).__name__}")
 
 
 def _safe_step(summary: dict, label: str, fn):
