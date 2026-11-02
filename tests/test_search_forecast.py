@@ -23,11 +23,15 @@ def _weekly(seed: int, scale: float = 1.0, growth: float = 0.0) -> pd.Series:
 # ── YoY는 같은 검색어(같은 요청) 안에서만 ──
 
 
-def test_company_yoy_is_mean_of_each_terms_own_yoy():
-    a, b = _weekly(1, 1.0, 0.10), _weekly(2, 10.0, -0.05)  # 크기가 10배 다른 두 검색어
+def test_company_yoy_is_median_of_each_terms_own_yoy():
+    a, b, c = _weekly(1, 1.0, 0.10), _weekly(2, 10.0, -0.05), _weekly(4, 3.0, 0.60)  # 크기가 다른 세 검색어
     s, e = pd.Timestamp("2025-01-01"), pd.Timestamp("2025-03-31")
-    ya, yb = sf.term_yoy(a, s, e), sf.term_yoy(b, s, e)
-    assert np.isclose(sf.company_yoy({"a": a, "b": b}, s, e), (ya + yb) / 2)
+    ya, yb, yc = sf.term_yoy(a, s, e), sf.term_yoy(b, s, e), sf.term_yoy(c, s, e)
+    three = {"a": a, "b": b, "c": c}
+    assert np.isclose(sf.company_yoy(three, s, e), np.median([ya, yb, yc]))  # v1.1 기본 = 중앙값
+    assert np.isclose(sf.company_yoy(three, s, e, agg="mean"), (ya + yb + yc) / 3)  # v1 참고
+    assert not np.isclose(np.median([ya, yb, yc]), (ya + yb + yc) / 3)
+    assert np.isclose(sf.company_yoy({"a": a}, s, e), ya)  # 검색어 1개면 그대로
     mixed = a + b  # 값을 섞어 YoY를 내면 큰 검색어가 지배 → 다른 값
     assert not np.isclose(sf.term_yoy(mixed, s, e), (ya + yb) / 2, atol=1e-3)
 
@@ -49,6 +53,30 @@ def test_score_is_yoy_minus_median_of_previous_8():
     r = sf.company_score({"t": w}, q[-9:])
     base = [sf.term_yoy(w, *x) for x in q[-9:-1]]
     assert r["base_n"] == 8 and np.isclose(r["score"], sf.term_yoy(w, *q[-1]) - np.median(base))
+
+
+def test_score_v1_mean_reference_alongside_median():
+    ws = {"a": _weekly(3, 1.0, 0.10), "b": _weekly(5, 2.0, -0.08), "c": _weekly(6, 1.0, 0.40)}
+    q = sf.quarter_windows(list(pd.date_range("2022-03-31", "2026-09-30", freq="QE")))[-9:]
+    r = sf.company_score(ws, q)
+    y = lambda agg, w: sf.company_yoy(ws, *w, agg=agg)
+    assert np.isclose(r["score"], y("median", q[-1]) - np.median([y("median", w) for w in q[:-1]]))
+    assert np.isclose(r["score_v1"], y("mean", q[-1]) - np.median([y("mean", w) for w in q[:-1]]))
+    assert not np.isclose(r["score"], r["score_v1"])
+
+
+def test_connect_adds_v1_columns_to_old_table(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    old = sqlite3.connect(db)  # v1.1 전 모양의 표
+    old.execute("CREATE TABLE search_predictions (ticker TEXT, fiscal_end TEXT, season TEXT, quarter_start TEXT, yoy REAL, "
+                "baseline REAL, score REAL, base_n INTEGER, computed_at TEXT, score_lock_hash TEXT, prediction TEXT, "
+                "pred_locked_at TEXT, pred_lock_hash TEXT, PRIMARY KEY (ticker, fiscal_end))")
+    old.close()
+    conn = st.connect(db)
+    assert list(st.predictions(conn).columns) == st.PRED_COLS
+    conn.close()
 
 
 # ── 분기·시즌·3등분 ──
@@ -184,7 +212,8 @@ def test_lock_hash_matches_db_rows(tmp_path):
     p = st.predictions(conn)
     conn.close()
     row = p.iloc[0].to_dict()
-    keys = ["ticker", "fiscal_end", "season", "quarter_start", "yoy", "baseline", "score", "base_n", "computed_at"]
+    keys = ["ticker", "fiscal_end", "season", "quarter_start", "yoy", "baseline", "score", "base_n", "computed_at",
+            "yoy_v1", "baseline_v1", "score_v1"]
     digest = sf.lock_hash([{k: row[k] for k in keys}])
     assert row["score_lock_hash"] == digest and digest in (locks / "2026-Q4.txt").read_text(encoding="utf-8")
 
@@ -240,9 +269,11 @@ def test_monday_line_personal_only_without_ticker():
     assert not any("검색량" in x for x in lp.extra_lines({**s, "search_forecast": None}, {}, ph, lp.PERSONAL))
 
 
-def test_workflow_separate_group_and_schedule():
-    wf = yaml.safe_load(open(eng.ROOT / ".github" / "workflows" / "search_forecast.yml", encoding="utf-8"))
-    assert wf["concurrency"]["group"] != "daily-screener"
+def test_workflow_shares_db_group_and_schedule():
+    load = lambda n: yaml.safe_load(open(eng.ROOT / ".github" / "workflows" / n, encoding="utf-8"))
+    wf, daily = load("search_forecast.yml"), load("daily.yml")
+    # v1.1: 같은 가상 장부 DB를 쓰므로 편지와 같은 그룹, 대기만(취소 없음)
+    assert wf["concurrency"] == daily["concurrency"] == {"group": "daily-screener", "cancel-in-progress": False}
     assert wf[True]["schedule"][0]["cron"] == "30 1 * * 0"  # 일요일 KST 10:30 (yaml의 on: → True)
 
 
@@ -250,5 +281,6 @@ def test_config_targets_and_user_agent():
     cfg = eng.load_config()
     assert "CHTR" not in cfg["companies"] and "CHTR" in cfg["excluded"]
     assert len(cfg["companies"]) == 17
+    assert cfg["term_agg"] == "median" and cfg["collect"]["request_delay_sec"] == 40  # v1.1
     assert "@" not in cfg["wiki"]["user_agent"]
     assert cfg["companies"]["PEP"]["terms"] == ["Doritos", "Cheetos", "Lay's", "Gatorade", "Pepsi"]

@@ -23,13 +23,14 @@ SCHEMA = {
     "wiki_views": "ticker TEXT, article TEXT, month TEXT, views INTEGER, collected_at TEXT, PRIMARY KEY (article, collected_at, month)",
     "search_predictions": ("ticker TEXT, fiscal_end TEXT, season TEXT, quarter_start TEXT, yoy REAL, baseline REAL, score REAL, "
                            "base_n INTEGER, computed_at TEXT, score_lock_hash TEXT, prediction TEXT, pred_locked_at TEXT, "
-                           "pred_lock_hash TEXT, PRIMARY KEY (ticker, fiscal_end)"),
+                           "pred_lock_hash TEXT, yoy_v1 REAL, baseline_v1 REAL, score_v1 REAL, PRIMARY KEY (ticker, fiscal_end)"),
     "search_scores": ("ticker TEXT, fiscal_end TEXT, season TEXT, prediction TEXT, announced TEXT, valid INTEGER, "
                       "valid_pred_lock INTEGER, actual_end TEXT, accelerated INTEGER, ex_1d REAL, ex_1m REAL, ex_6m REAL, "
                       "scored_at TEXT, PRIMARY KEY (ticker, fiscal_end)"),
 }
 PRED_COLS = ["ticker", "fiscal_end", "season", "quarter_start", "yoy", "baseline", "score", "base_n", "computed_at",
-             "score_lock_hash", "prediction", "pred_locked_at", "pred_lock_hash"]
+             "score_lock_hash", "prediction", "pred_locked_at", "pred_lock_hash", "yoy_v1", "baseline_v1", "score_v1"]
+V11_COLS = {"yoy_v1": "REAL", "baseline_v1": "REAL", "score_v1": "REAL"}  # v1.1(2026-11-02)에 더한 v1 평균 방식 참고 칸
 SCORE_COLS = ["ticker", "fiscal_end", "season", "prediction", "announced", "valid", "valid_pred_lock", "actual_end",
               "accelerated", "ex_1d", "ex_1m", "ex_6m", "scored_at"]
 
@@ -41,6 +42,10 @@ def connect(path=None) -> sqlite3.Connection:
     conn = sqlite3.connect(p)
     for t, cols in SCHEMA.items():
         conn.execute(f"CREATE TABLE IF NOT EXISTS {t} ({cols})")
+    have = {r[1] for r in conn.execute("PRAGMA table_info(search_predictions)")}
+    for c, typ in V11_COLS.items():  # v1.1 전에 만든 표에도 칸을 더한다
+        if c not in have:
+            conn.execute(f"ALTER TABLE search_predictions ADD COLUMN {c} {typ}")
     return conn
 
 

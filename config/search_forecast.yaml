@@ -1,18 +1,20 @@
 # 검색량 실적 예고 (docs/prereg/search_forecast.md, 태그 search-forecast-prereg) — 앞으로 기록.
 # 시작 뒤 대상·검색어 변경 금지. 지역 US.
 # 2026-11-01 시작 확인: 나스닥 공식 구성 목록(api.nasdaq.com, 101종목)에 CHTR이 없어 제외(사전 등록 1장 "구성에서 빠진 종목은 제외").
+# v1.1(2026-11-02, 첫 잠금 전, 태그 search-forecast-prereg-v1.1): 회사 YoY 중앙값, 요청 간격 40초, 대상 17곳 명시.
 
 geo: US
 timeframe: "today 5-y" # 최근 5년 → 주간 값
 start_season: "2026-Q4" # 이 시즌(달력 분기)부터 잠금
 score_delay_days: 10 # 분기 끝 + 10일에 점수 계산
 baseline_quarters: 8 # 직전 8개 분기 YoY 중앙값
+term_agg: median # 회사 YoY = 검색어 YoY의 중앙값(v1.1). v1 평균 방식은 *_v1 칸에 참고로 같이 기록(판정 제외)
 yoy_shift_days: 364 # 전년 동기 = 52주 전(주간 값이라 같은 요일로 맞춤)
 min_weeks: 8 # 한 분기 창에 주간 값이 이만큼 없으면 그 검색어 YoY 없음
 season_grace_days: 7 # 시즌 마지막 예상 점수일 + 이만큼 지나면 모인 점수로 시즌 예측 잠금
 
 collect:
-  request_delay_sec: 20 # 요청 사이 대기
+  request_delay_sec: 40 # 요청 사이 대기 (v1.1: 20 → 40, 2026-11-02 미리보기에서 429 경고)
   retries: 3 # 실패 시 재시도(대기 30·60·120초)
   backoff_sec: 30
 
@@ -24,7 +26,7 @@ wiki:
 excluded:
   CHTR: "2026-11-01 나스닥100 구성 목록에 없음(api.nasdaq.com) — 시작 전 제외"
 
-companies:
+companies: # 대상 17곳(CHTR 제외) — v1.1에서 명시
   PEP:
     terms: ["Doritos", "Cheetos", "Lay's", "Gatorade", "Pepsi"]
     wiki: ["PepsiCo", "Doritos"]

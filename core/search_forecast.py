@@ -2,7 +2,8 @@
 
 네트워크·파일·DB·현재 시각 접근 없음(시각은 인자로 받는다). 앞으로 기록 전용 — 과거 수익률 계산 없음.
 - YoY는 검색어 하나의 한 번 받은 값(같은 요청의 0~100) 안에서만 계산한다. 서로 다른 검색어·요청 값을 섞지 않는다.
-- 회사 YoY = 검색어 YoY들의 평균. 점수 = 이번 분기 회사 YoY − 직전 8개 분기 회사 YoY 중앙값.
+- 회사 YoY = 검색어 YoY들의 중앙값(v1.1, 2026-11-02 — v1은 평균). 점수 = 이번 분기 회사 YoY − 직전 8개 분기 회사 YoY 중앙값.
+- v1 평균 방식 점수도 같은 값으로 함께 낸다(*_v1, 판정 때 참고 보고만 — 판정 제외).
 """
 
 from __future__ import annotations
@@ -35,22 +36,33 @@ def term_yoy(weekly: pd.Series, start: pd.Timestamp, end: pd.Timestamp, shift_da
     return now / prev - 1.0
 
 
-def company_yoy(terms: dict[str, pd.Series], start: pd.Timestamp, end: pd.Timestamp, shift_days: int = 364, min_weeks: int = 8) -> float:
-    """검색어별 YoY(각자 자기 값 안에서)의 평균. 구할 수 있는 검색어가 없으면 NaN."""
+AGG = {"median": np.median, "mean": np.mean}
+
+
+def company_yoy(terms: dict[str, pd.Series], start: pd.Timestamp, end: pd.Timestamp, shift_days: int = 364, min_weeks: int = 8,
+                agg: str = "median") -> float:
+    """검색어별 YoY(각자 자기 값 안에서)를 agg(중앙값 v1.1 / 평균 v1)로 합친 값. 구할 수 있는 검색어가 없으면 NaN."""
     ys = [term_yoy(s, start, end, shift_days, min_weeks) for s in terms.values()]
     ys = [y for y in ys if not np.isnan(y)]
-    return float(np.mean(ys)) if ys else np.nan
+    return float(AGG[agg](ys)) if ys else np.nan
+
+
+def _score(terms, quarters, n_base, shift_days, min_weeks, agg) -> tuple[float, float, float, int]:
+    *hist, cur = quarters
+    y = company_yoy(terms, *cur, shift_days, min_weeks, agg)
+    base = [company_yoy(terms, *q, shift_days, min_weeks, agg) for q in hist[-n_base:]]
+    base = [b for b in base if not np.isnan(b)]
+    med = float(np.median(base)) if base else np.nan
+    return y, med, (y - med if not (np.isnan(y) or np.isnan(med)) else np.nan), len(base)
 
 
 def company_score(terms: dict[str, pd.Series], quarters: list[tuple[pd.Timestamp, pd.Timestamp]], *, n_base: int = 8,
-                  shift_days: int = 364, min_weeks: int = 8) -> dict:
-    """quarters = 오래된 순 [(시작, 끝)], 마지막이 점수를 낼 분기. 출력: {yoy, baseline, score, base_n}."""
-    *hist, cur = quarters
-    y = company_yoy(terms, *cur, shift_days, min_weeks)
-    base = [company_yoy(terms, *q, shift_days, min_weeks) for q in hist[-n_base:]]
-    base = [b for b in base if not np.isnan(b)]
-    med = float(np.median(base)) if base else np.nan
-    return {"yoy": y, "baseline": med, "score": y - med if not (np.isnan(y) or np.isnan(med)) else np.nan, "base_n": len(base)}
+                  shift_days: int = 364, min_weeks: int = 8, agg: str = "median") -> dict:
+    """quarters = 오래된 순 [(시작, 끝)], 마지막이 점수를 낼 분기.
+    출력: {yoy, baseline, score, base_n} (agg 방식) + {yoy_v1, baseline_v1, score_v1} (v1 평균 방식, 참고용)."""
+    y, med, sc, n = _score(terms, quarters, n_base, shift_days, min_weeks, agg)
+    y1, med1, sc1, _ = _score(terms, quarters, n_base, shift_days, min_weeks, "mean")
+    return {"yoy": y, "baseline": med, "score": sc, "base_n": n, "yoy_v1": y1, "baseline_v1": med1, "score_v1": sc1}
 
 
 # ── 회계 분기 ────────────────────────────────────────────────────────────────

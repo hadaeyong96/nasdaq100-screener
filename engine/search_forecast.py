@@ -107,7 +107,7 @@ def score_one(conn, cfg: dict, tk: str, windows, end: pd.Timestamp) -> dict:
     terms = {t: st.latest_pull(conn, t) for t in cfg["companies"][tk]["terms"]}
     upto = [w for w in windows if w[1] <= end]
     r = sf.company_score(terms, upto[-(cfg["baseline_quarters"] + 1):], n_base=cfg["baseline_quarters"],
-                         shift_days=cfg["yoy_shift_days"], min_weeks=cfg["min_weeks"])
+                         shift_days=cfg["yoy_shift_days"], min_weeks=cfg["min_weeks"], agg=cfg["term_agg"])
     return {"ticker": tk, "fiscal_end": end.date().isoformat(), "season": sf.season_of(end), "quarter_start": upto[-1][0].date().isoformat(),
             **{k: (None if isinstance(v, float) and np.isnan(v) else v) for k, v in r.items()}}
 
