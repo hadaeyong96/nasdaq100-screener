@@ -164,6 +164,24 @@ def test_alfred_response_with_later_vintage_raises(tmp_path, monkeypatch):
     assert not (tmp_path / "alfred_TEST.csv").exists()
 
 
+def test_series_not_in_alfred_falls_back_to_current(tmp_path, monkeypatch):
+    def not_in_alfred(url, params=None):
+        raise dm.NotInAlfred("ALFRED에 없는 시리즈")
+
+    monkeypatch.setattr(dm, "CACHE", tmp_path)
+    monkeypatch.setattr(dm, "_get", not_in_alfred)
+    monkeypatch.setattr(dm, "api_key", lambda: "x" * 32)
+    meta = dm.fetch_alfred("TEST")
+    assert meta["rows"] == 0 and "3순위" in meta["source"]
+    rows = dm.load_alfred("TEST")
+    assert len(rows) == 0
+    judge = months("2000-03-31", "2000-12-31")
+    cur = pd.Series(np.arange(24, dtype=float) + 1, index=months("1999-01-31", "2000-12-31"))
+    rt = lab.realtime_values(rows, cur, judge, (2, 8))
+    assert (rt["level"] == 3.0).all()
+    assert rt.loc[pd.Timestamp("2000-12-31"), "v2"] == cur[pd.Timestamp("2000-10-31")]
+
+
 # 5) 지연: 달 t의 지표는 t+2 전 신호에 쓰이지 않는다 ─────────────────────────────
 
 

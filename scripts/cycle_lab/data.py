@@ -53,8 +53,15 @@ def _write(df, name: str, source: str) -> dict:
     return meta
 
 
+NOT_IN_ALFRED = "does not exist in ALFRED"
+
+
+class NotInAlfred(RuntimeError):
+    """시리즈가 ALFRED에 아예 없음(FRED API 400 + 해당 문구) — 사전 등록 3절 3순위(현재값)로 간다."""
+
+
 def _get(url: str, params: dict | None = None, tries: int = 4):
-    """requests GET + 재시도. 실패 메시지에 URL·키를 넣지 않는다."""
+    """requests GET + 재시도. 실패 메시지에 URL·키를 넣지 않는다. ALFRED에 없는 시리즈는 NotInAlfred."""
     import requests
 
     last = ""
@@ -63,6 +70,8 @@ def _get(url: str, params: dict | None = None, tries: int = 4):
             r = requests.get(url, params=params, timeout=60)
             if r.status_code == 200:
                 return r
+            if r.status_code == 400 and NOT_IN_ALFRED in r.text:
+                raise NotInAlfred("ALFRED에 없는 시리즈")
             last = f"HTTP {r.status_code}"
         except requests.RequestException as exc:
             last = type(exc).__name__
@@ -152,9 +161,14 @@ def fetch_alfred(series_id: str) -> dict:
     """ALFRED 실시간 구간 행(vintage ≤ 2012-12-31)을 받아 저장. 출력: meta."""
     key = api_key()
     obs, off = [], 0
+    source = f"ALFRED {series_id} realtime_end={CUTOFF_STR} output_type=1"
     while True:
         p = alfred_params(series_id, off)
-        js = _get(FRED_OBS_URL, {**p, "api_key": key}).json()
+        try:
+            js = _get(FRED_OBS_URL, {**p, "api_key": key}).json()
+        except NotInAlfred:
+            source += " — ALFRED에 없는 시리즈(빈 표, 모든 달 3순위 현재값)"
+            break
         chunk = js.get("observations", [])
         obs.extend(chunk)
         off += len(chunk)
@@ -170,12 +184,15 @@ def fetch_alfred(series_id: str) -> dict:
         raise RuntimeError(f"{series_id}: 2012-12-31 뒤 vintage가 응답에 있습니다")
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
     df = gate(df.set_index("obs")[["realtime_start", "realtime_end", "value"]], series_id)
-    return _write(df, f"alfred_{series_id}", f"ALFRED {series_id} realtime_end={CUTOFF_STR} output_type=1")
+    return _write(df, f"alfred_{series_id}", source)
 
 
 def load_alfred(series_id: str) -> pd.DataFrame:
     """캐시 ALFRED 행 → 열 obs, realtime_start, realtime_end, value."""
     df = pd.read_csv(CACHE / f"alfred_{series_id}.csv", index_col=0, parse_dates=[0, 1, 2])
+    df.index = pd.DatetimeIndex(df.index, name="obs")  # 빈 표(ALFRED에 없는 시리즈)도 날짜 인덱스로
+    for c in ("realtime_start", "realtime_end"):
+        df[c] = pd.to_datetime(df[c])
     df = gate(df, series_id)
     assert_cutoff(pd.DatetimeIndex(df["realtime_end"]), pd.DatetimeIndex(df["realtime_start"]))
     return df.reset_index().rename(columns={df.index.name or "index": "obs"})
