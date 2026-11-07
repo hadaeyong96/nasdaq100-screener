@@ -1,0 +1,7 @@
+﻿name,source,first,last,rows,sha256,fetched_utc,cutoff,fallback
+alfred_BAA,ALFRED BAA realtime_end=2021-12-31 output_type=1,1919-01-31,2021-11-30,1240,c10aec792303d0dede7d13cefdfec95a9b9cd8f4e3c827c6c924d33687c4cade,2026-11-07T13:48:44+00:00,2021-12-31,전체 1순위 32.7%·2순위 67.3%·3순위 0.0%; 2013-01 이후 판정 1순위 97.2%·2순위 2.8%·3순위 0.0%
+alfred_GS10,ALFRED GS10 realtime_end=2021-12-31 output_type=1,1953-04-30,2021-11-30,824,b9df065246ac3879fa5d8ef12f90cffbb1b2732a72fe3377d136561380773ef4,2026-11-07T13:48:45+00:00,2021-12-31,전체 1순위 36.6%·2순위 63.4%·3순위 0.0%; 2013-01 이후 판정 1순위 100.0%·2순위 0.0%·3순위 0.0%
+fred_DEXKOUS,FRED DEXKOUS 2012-12-01 ~ 2021-12-31,2012-12-03,2021-12-30,2269,c2a232fab0f6dbfceaa8ab11307e0497c239619a5b67f65a2cf53fd431d34502,2026-11-07T13:48:46+00:00,2021-12-31,
+french_ind49,https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/49_Industry_Portfolios_CSV.zip 첫 표(월간) 사이클 17개 열,1926-07-31,2021-12-31,1146,47e5370fae226504acecfa2b94608cc003242eca0704846c20afa1d086f6df2b,2026-11-07T13:48:43+00:00,2021-12-31,
+yf_NDX,yfinance ^NDX auto_adjust=False actions=True start=2012-12-01 end=2022-01-01,2012-12-03,2021-12-31,2287,52ad680de5ace354877e31445185daf2a2738c4744abfc40d5bb30e006eeead2,2026-11-07T13:48:47+00:00,2021-12-31,
+yf_QQQ,yfinance QQQ auto_adjust=False actions=True start=2012-12-01 end=2022-01-01,2012-12-03,2021-12-31,2287,5c1950b1d295f6745dd09642d64b377374f6fc8bd2802f3420ae1f893bf74d16,2026-11-07T13:48:47+00:00,2021-12-31,
