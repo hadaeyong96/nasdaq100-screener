@@ -1,4 +1,4 @@
-"""내부자 집단 매수 — 실행기 (docs/prereg/insider_cluster.md, 태그 insider-cluster-prereg).
+"""내부자 집단 매수 — 실행기 (docs/prereg/insider_cluster.md, 태그 insider-cluster-prereg-r2 — 편차 절 참고).
 
 실행:
   python -m scripts.insider_cluster.run --gap-check             # 태그 전: 공시·메타데이터만으로 2절 점검(가격 본문 없음)
@@ -27,7 +27,7 @@ from scripts.insider_cluster import signals as sg  # noqa: E402
 from scripts.insider_cluster.gate import CUTOFF, assert_cutoff  # noqa: E402
 
 OUT = ROOT / "docs" / "results" / "insider_cluster" / "v1"
-TAG = "insider-cluster-prereg"
+TAG = "insider-cluster-prereg-r2"
 GAP_JSON = dm.CACHE / "gap_check.json"
 START = pd.Timestamp("2017-01-03")
 GAP_LIMIT = 0.10

@@ -1,6 +1,6 @@
 # 내부자 집단 매수 전략 — 사전 등록
 
-- 작성: 2026-11-07, 브랜치 `research/insider-cluster`, 태그 `insider-cluster-prereg`
+- 작성: 2026-11-07, 브랜치 `research/insider-cluster`, 태그 `insider-cluster-prereg` → 코드 오류로 재시작, 계산 태그 `insider-cluster-prereg-r2` (10절 편차)
 - 구역: 검증 ① 중소형 (`docs/validation_zones.md`). 기회 1회 사용(남은 기회 4/5 → 3/5). 시험 1회.
 - 이 문서·실행기(`scripts/insider_cluster/`)·차단 테스트(`tests/test_insider_cluster_gate.py`)를 커밋하고 태그를 push한 **뒤에야** 가격 본문을 받아 1회 계산한다.
 - 연구 작업이며 투자 조언이 아니다. 실제 주문 없음, 유료 데이터 없음. main 병합·PR 없음.
@@ -134,3 +134,14 @@
 ## 9. 산출물
 
 `docs/results/insider_cluster/v1/`: `report.md`, `signals.csv`, `trades.csv`, `equity_curves.csv`, `data_manifest.csv`. 덮어쓰기 금지. 데이터 원본은 git에 넣지 않는다. `docs/factory/trial_ledger.csv`에 1줄. 커밋 후 `research/insider-cluster`만 push.
+
+## 10. 태그 뒤 편차 — 코드 오류 수정 후 재시작 (사용자 승인 2026-11-08)
+
+- **첫 태그:** `insider-cluster-prereg` = 69cca68, 커밋 시각 2026-11-08 00:03:25 KST(2026-11-07T15:03:25Z), push 2026-11-07T15:03:29Z. 지우거나 옮기지 않았다(force push 없음).
+- **오류:** 태그 뒤 첫 `--run`에서 `data.fetch_fx`가 `from scripts.cycle_lab import data`로 FRED 키를 읽으려 했으나 그 모듈은 `research/cycle-lab`에만 있어 ImportError로 멈췄다(BLOCKED). 신호·장부·판정 계산은 시작하지 않았다.
+- **그때 받은 것:** QQQ 본문만(`data/cache/insider_cluster/qqq.csv`, 수신 2026-11-07T15:43:32Z, 1,280행). 값을 출력·열람·계산하지 않았다. 환율(`fx.csv`)과 종목 가격 본문은 받지 않았다. 결과 폴더 없음. r2 실행이 QQQ를 같은 경로로 다시 받아 덮어쓴다.
+- **수정 범위(이것뿐):** ① `fetch_fx`가 이 브랜치의 `fred_key()`(`.env`·환경변수 `FRED_API_KEY`, 값 출력 안 함 — `tiingo_key()`와 같은 방식)로 키를 읽는다. 받는 계열·기간·차단은 그대로다. ② 실행기 `TAG`를 `insider-cluster-prereg-r2`로. ③ `fetch_fx`·`fred_key`·태그 테스트 추가. 신호, 합격 기준, 매개변수, 보수 결과 규칙, 비교 대상, seed는 바꾸지 않았다.
+- **태그 전 실수신 점검(2016-12-30 이전만, 캐시에 저장 안 함):** FRED DEXKOUS 2016-11-01~2016-12-30 41행, Tiingo 본문 경로(`_tiingo_get` → `gate` → `tiingo_adjust`) 1개 티커 2016-06-01~2016-12-30 149행, yfinance QQQ 2016-11 42행. 값은 출력하지 않았다.
+- **실행 환경 메모(코드 아님):** 이 PC의 백신(Avast) HTTPS 검사가 인증서를 다시 서명해 파이썬 `certifi` 검증이 모든 호스트에서 실패했다. 실행 프로세스에만 `REQUESTS_CA_BUNDLE`·`SSL_CERT_FILE`·`CURL_CA_BUNDLE`을 certifi + Windows 루트 저장소 묶음으로 지정했다. 저장소·설정 파일은 바꾸지 않았다.
+- **새 태그:** `insider-cluster-prereg-r2`(이 편차 절을 담은 커밋). 같은 시험의 재시작이라 구역 ① 기회를 더 쓰지 않는다(이 시험 1회로 남은 기회 4/5 → 3/5, 추가 차감 없음).
+- **재시작은 이번 1회만.** r2 태그 뒤 다시 코드 오류가 나면 고치지 않고 BLOCKED로 이 시험을 끝낸다.

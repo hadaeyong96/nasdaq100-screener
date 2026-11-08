@@ -184,6 +184,17 @@ def tiingo_key() -> str:
     return key
 
 
+def fred_key() -> str:
+    """FRED_API_KEY(.env 또는 환경변수). 값은 출력하지 않는다. 없으면 RuntimeError."""
+    from dotenv import load_dotenv
+
+    load_dotenv(ROOT / ".env")
+    key = (os.environ.get("FRED_API_KEY") or "").strip()
+    if not key:
+        raise RuntimeError("FRED_API_KEY가 없습니다")
+    return key
+
+
 def _tiingo_get(url: str, params: dict | None, get, sleep) -> object:
     """Tiingo GET. 429는 다음 정시까지 기다린다. 월 한도·403이면 TiingoLimit. 오류 메시지에 키를 넣지 않는다."""
     import requests
@@ -333,9 +344,7 @@ def fetch_qqq(cache: Path = CACHE) -> dict:
 
 def fetch_fx(cache: Path = CACHE) -> dict:
     """DEXKOUS 일별(2016-12-01 ~ 2021-12-31). 출력: meta."""
-    from scripts.cycle_lab import data as dm
-
-    vals = fetch_fred_series_range("DEXKOUS", "2016-12-01", CUTOFF_STR, dm.api_key())
+    vals = fetch_fred_series_range("DEXKOUS", "2016-12-01", CUTOFF_STR, fred_key())
     if not vals:
         raise RuntimeError("DEXKOUS: 빈 결과")
     s = pd.Series(vals, name="value", dtype=float)

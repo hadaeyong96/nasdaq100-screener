@@ -590,6 +590,46 @@ def test_tiingo_body_saves_same_company_only(tmp_path, monkeypatch):
     assert dm.fetch_tiingo_body(8, row, ["BBB"], "2010-01-01", tmp_path, get=lambda url, **k: FakeResp(200, late, "[]"), sleep=lambda s: None) is None
 
 
+def test_fetch_fx_reads_key_in_branch_and_cuts_2022(tmp_path, monkeypatch):
+    """편차(r2): fetch_fx는 scripts.cycle_lab 없이 이 브랜치의 fred_key()로 키를 읽는다. 2022 값은 저장 전에 버린다."""
+    import builtins
+    import sys
+
+    monkeypatch.setitem(sys.modules, "scripts.cycle_lab", None)  # import하면 ImportError
+    real_import = builtins.__import__
+
+    def no_cycle_lab(name, *a, **k):
+        if name.startswith("scripts.cycle_lab"):
+            raise ImportError(name)
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_cycle_lab)
+    monkeypatch.setenv("FRED_API_KEY", "  secret-k  ")
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
+    calls = []
+
+    def fake(series, start, end, key):
+        calls.append((series, start, end, key))
+        return {"2016-12-01": 1170.0, "2021-12-31": 1185.0, "2022-01-03": 1190.0}
+
+    monkeypatch.setattr(dm, "fetch_fred_series_range", fake)
+    meta = dm.fetch_fx(tmp_path)
+    assert calls == [("DEXKOUS", "2016-12-01", "2021-12-31", "secret-k")]
+    assert meta["last"] == "2021-12-31" and meta["rows"] == 2 and "secret" not in str(meta)
+    assert dm.load_fx(tmp_path).index.max() == pd.Timestamp("2021-12-31")
+
+
+def test_fred_key_missing_raises_without_value(monkeypatch):
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: False)
+    with pytest.raises(RuntimeError, match="FRED_API_KEY가 없습니다"):
+        dm.fred_key()
+
+
+def test_runner_tag_is_r2():
+    assert rn.TAG == "insider-cluster-prereg-r2"
+
+
 def test_read_cached_price_trims_stale_and_2022(tmp_path):
     idx = pd.to_datetime(["2021-12-29", "2021-12-30", "2021-12-31", "2022-01-03"])
     pd.DataFrame({"close": [1.0, 2.0, 3.0, 4.0], "volume": [5.0, 5.0, 5.0, 5.0]}, index=idx).to_csv(tmp_path / "1.csv")
