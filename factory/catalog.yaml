@@ -49,6 +49,7 @@ strategies:
   - {id: x_winter_h1, name: "겨울엔 2배 전략 H1 (11~4월 2배)", status: 탈락 보관, zone: "지수 탐색 (S&P500·나스닥 1977~1998, QQQ 2000~2021, 해외 5곳 ~2021)", result: "2026-11-01 FAIL — QQQ 세후 3.34% vs 1배 6.92%·1.5배 5.66%, 무작위 S&P 89.2·QQQ 48.7, QQQ 낙폭 −95.9%, 견고성 0/4 (해외 5/5)", evidence: "winter2x-prereg, research/winter-2x 7870b44 docs/results/winter_2x/v1/result.md"}
   - {id: x_winter_h2, name: "겨울엔 2배 전략 H2 (+200일선 아래 1배)", status: 탈락 보관, zone: "지수 탐색 (S&P500·나스닥 1977~1998, QQQ 2000~2021, 해외 5곳 ~2021)", result: "2026-11-01 FAIL — QQQ 세후 7.33% vs 1배 6.92%(①·③ 충족)이나 무작위 S&P 87.7·나스닥 84.6, 견고성 0/4 (해외 5/5)", evidence: "winter2x-prereg, research/winter-2x 7870b44 docs/results/winter_2x/v1/result.md"}
   - {id: x_mu_cycle, name: "마이크론 사이클 미리 사기 (신규주문 6개월 신호 → MU 최대 10%·18개월)", status: 탈락 보관, zone: "종목 사건 (MU 2013-01~2021-12)", result: "2026-11-01 FAIL — 세후 22.48% vs QQQ 21.59% vs 항상 MU 10% 23.82%, 무작위 55.9백분위", evidence: "mu-cycle-prereg, research/mu-cycle docs/results/mu_cycle/stage2/v1"}
+  - {id: x_insider_cluster, name: "내부자 집단 매수 (임원·이사 3명 이상 → 종목당 2%·12개월)", status: 탈락 보관, zone: "검증 ① 2/5", result: "2026-11-08 FAIL — 세후 19.50% vs QQQ 22.72%·같은 노출 20.57%, 무작위 p=0.878", evidence: "insider-cluster-prereg-r2, research/insider-cluster docs/results/insider_cluster/v1/report.md"}
 
   # ── 확정 습관 ──────────────────────────────────────────────────────────
   - {id: h_pension_first, name: 연금저축 먼저, status: 확정 습관, zone: 실제 운용, result: "세금 계좌 순서: 연금저축부터 채운다", evidence: ""}
