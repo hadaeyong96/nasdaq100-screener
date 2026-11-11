@@ -290,7 +290,9 @@ def check_forward_books(path: Path, ltd: date | None) -> None:
 
 def check_tests() -> None:
     section("7. 테스트 (pytest)")
-    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", "-W", "ignore"],
+    # --basetemp: 기본 임시 폴더(Temp\pytest-of-user)는 이 PC에서 종료 정리 때 WinError 5가 나 출력이 비었다
+    r = subprocess.run([sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", "-W", "ignore",
+                        "--basetemp", str(ROOT / ".pytest_tmp")],
                        cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
     tail = [l for l in r.stdout.splitlines() if l.startswith("FAILED") or " passed" in l or " failed" in l]
     for l in tail[-12:]:

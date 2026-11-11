@@ -26,6 +26,9 @@ from pathlib import Path
 from data.sheets import load_credentials_info
 
 _SCOPES = ["https://www.googleapis.com/auth/drive"]
+# 5xx·429·연결 오류는 googleapiclient가 지수 대기로 이만큼 다시 시도한다
+# (2026-11-11 Daily paper 업로드가 일시 오류로 실패).
+_RETRIES = 3
 
 
 def get_service():
@@ -50,7 +53,7 @@ def download_from_drive(file_id: str, local_path: Path, service=None) -> None:
         service = get_service()
     local_path = Path(local_path)
 
-    content = service.files().get_media(fileId=file_id).execute()
+    content = service.files().get_media(fileId=file_id).execute(num_retries=_RETRIES)
     if not content:
         return
     if isinstance(content, str):
@@ -74,4 +77,4 @@ def upload_to_drive(file_id: str, local_path: Path, service=None) -> None:
         return
 
     media = MediaFileUpload(str(local_path), resumable=False)
-    service.files().update(fileId=file_id, media_body=media).execute()
+    service.files().update(fileId=file_id, media_body=media).execute(num_retries=_RETRIES)
