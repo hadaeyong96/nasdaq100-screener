@@ -101,7 +101,7 @@ def test_main_wraps_every_letter_step():
     src = inspect.getsource(daily.main)
     for name in ("_attach_market_glance", "_read_holdings", "_attach_dec_tax", "_attach_letter_v3", "_attach_puddle_v31",
                  "_attach_puddle_rebound", "_attach_curve_chart", "_attach_candidate_charts", "_attach_news",
-                 "vbooks.run_safely", "_attach_regime_line"):
+                 "vbooks.run_safely", "_attach_regime_line", "_attach_pead_watch"):
         for line in src.splitlines():
             if name + "(" in line:
                 assert "_safe_step(" in line, line.strip()

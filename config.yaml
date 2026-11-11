@@ -488,3 +488,10 @@ research_news:
       verdict: "탈락"
       reason: "종목 고르기 효과가 무작위로 고른 것과 구별되지 않음"
       date: 2026-10-21
+
+# 실적급등 추천 장부 (2026-11-11, 사전 등록 docs/prereg/pead_watch.md · configs/pead_watch.yaml, 태그 pead-watch-prereg)
+# 앞으로 기록하는 가상 장부(실제 돈 없음). 규칙 수치는 configs/pead_watch.yaml이 정하고 여기서 바꾸지 않는다.
+# start_date: null이면 첫 정규 실행(Actions 예약)의 기준일을 가상 장부 DB(meta pead_watch_start)에 고정한다 — DB 값이 우선.
+pead_watch:
+  enabled: true
+  start_date: null

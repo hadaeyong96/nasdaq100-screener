@@ -515,6 +515,16 @@ def curve_chart_src(summary: dict, edition: str) -> str | None:
     return "data:image/png;base64," + base64.b64encode(Path(p).read_bytes()).decode("ascii")
 
 
+def pead_chart_src(summary: dict, edition: str) -> str | None:
+    """실적급등 추천 비교 그래프(notify/pead_chart, 2026-11-11) → data URI. 개인판만(종목 이름이 있어 단체방판엔 없음)."""
+    import base64
+
+    p = summary.get("pead_chart")
+    if edition == "group" or not p or not Path(p).exists():
+        return None
+    return "data:image/png;base64," + base64.b64encode(Path(p).read_bytes()).decode("ascii")
+
+
 def candidate_chart_srcs(summary: dict) -> list[dict]:
     """웅덩이 후보 종목 차트(notify/candidate_chart) → [{title, src(data URI)}]. 개인판 HTML 전용."""
     import base64
@@ -677,6 +687,7 @@ def build_context(summary: dict, cfg: dict, edition: str = "personal") -> dict:
         "show_vbooks_fold": personal and bool(report_cfg.get("show_vbooks_fold", False)),
         "letter": _letter_ctx(summary, cfg, edition),
         "curve_chart_src": curve_chart_src(summary, edition),
+        "pead_chart_src": pead_chart_src(summary, edition),
         "candidate_chart_srcs": candidate_chart_srcs(summary) if personal else [],  # 개인판만(2026-10-26)  # 「▶ 그래프로 보기」 맨 위 수익곡선(2026-10-26)
         "dec_tax": summary.get("dec_tax") if personal else None,  # 12월 공제 안내 접기(개인판만, 표시일만)
         "stale": bool(summary.get("stale")),

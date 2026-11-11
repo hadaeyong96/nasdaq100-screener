@@ -19,6 +19,7 @@ User-Agent는 비밀이 아니라 "누가 요청했는지 밝히는" 값이라 �
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import date
 from pathlib import Path
@@ -53,14 +54,17 @@ class _RateLimiter:
         self._sleep = sleep_fn
         self._now = time_fn
         self._last_call: float | None = None
+        self._lock = threading.Lock()
 
     def wait(self) -> None:
-        now = self._now()
-        if self._last_call is not None:
-            elapsed = now - self._last_call
-            if elapsed < self.min_interval:
-                self._sleep(self.min_interval - elapsed)
-        self._last_call = now
+        # 여러 스레드가 함께 불러도 요청 간격이 min_interval 이상이 되게, 잠금 안에서 다음 순번 시각을 예약한다
+        # (2026-11-11 실적급등 장부가 접수 목록을 동시에 받는다).
+        with self._lock:
+            now = self._now()
+            slot = now if self._last_call is None else max(now, self._last_call + self.min_interval)
+            self._last_call = slot
+        if slot > now:
+            self._sleep(slot - now)
 
 
 _rate_limiter = _RateLimiter()
