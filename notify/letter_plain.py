@@ -671,7 +671,9 @@ def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict
         # 시장·내 돈·일반 뉴스·가상 실험 소식·급락장 경고는 뺀다. 접기 「자세히 보기」도 없음(2026-11-12 사용자 지시).
         from notify import pead_letter
 
-        if edition != GROUP and pead.get("status") != "error":  # 머리 줄 자리에 성적표(90일) 한 줄 (2026-11-12)
+        if edition == GROUP:  # 단체방판 맨 위 한 줄 (2026-11-12)
+            head = pead_letter.GROUP_HEAD
+        elif pead.get("status") != "error":  # 개인판 머리 줄 자리에 성적표(90일) 한 줄 (2026-11-12)
             head = pead_letter.personal_score_line(pead["letter"])
         secs = pead_letter.sections(pead, edition, summary.get("letter_today_kst"), summary.get("earnings_news"))
         extras = []

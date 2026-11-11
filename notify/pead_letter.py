@@ -14,6 +14,7 @@ from urllib.parse import quote
 import pandas as pd
 
 CARD_OPEN = 4  # 펼쳐 보이는 종목 카드 수 — 이 카드만 기사를 검색하고, 나머지는 접고 검색 링크만 (템플릿 [:4]와 같음)
+GROUP_HEAD = "검증 중 · 실제 돈 아님 · 투자 권유 아님"  # 단체방판 맨 위 한 줄 (2026-11-12)
 WEEKDAY = "월화수목금토일"
 LEDGER_NAMES = {"main": "90일", "compare": "60일"}
 

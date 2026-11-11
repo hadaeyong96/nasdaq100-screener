@@ -1,6 +1,7 @@
 """실적급등 추천 편지 v2 그래프 (개인판 보고서 전용, 2026-11-11 사용자 요청 — 그래프 중심).
 
 render       ① 한눈에 비교: 종목마다 매수일부터 "QQQ보다 얼마나 앞섰나"(QQQ 대비 초과 %p) 선. 가운데 0선 = QQQ.
+             보유 중 종목은 종목마다 다른 색(LINE_COLORS, 빨강·파랑 없음 — 배경이 앞섬/뒤짐), 이름표는 각 선 끝점 바로 오른쪽.
 render_card  ② 종목 카드: QQQ 캔들(왼쪽 축, 달러) + 종목 종가 선(오른쪽 축, 달러). 두 축은 매수일 시가에서 같은 높이.
 입력은 engine.pead_watch.chart_data 결과(lines·cards·qqq_pct). 계산 없음 — 그리기만. 단체방판에는 넣지 않는다(종목 이름).
 """
@@ -16,11 +17,17 @@ CARD_W, CARD_H = 9, 4.3
 INK, SUB, QQQ_C, GRID = "#1F2328", "#6B7280", "#8C95A1", "#EEF0F3"
 UP, DOWN, DONE, PURPLE = "#E5484D", "#3B82F6", "#B8BEC6", "#7C3AED"
 BG_UP, BG_DOWN = "#FDF1F1", "#EEF3FD"
-DOT_EARN, DOT_BUY, DOT_SELL = "#DC2626", "#2563EB", "#FACC15"  # 카드 점: 실적 발표(반응일)·매수일·매도 예정일 (2026-11-12)
+# 그림 ① 보유 중 종목 선 색(순서대로, 8개 넘으면 반복)·끝난 종목 회색 (2026-11-12)
+LINE_COLORS = ["#7C3AED", "#EA580C", "#0D9488", "#DB2777", "#65A30D", "#0284C7", "#A16207", "#4F46E5"]
+CLOSED_C = "#A9AFB7"
+# 카드 점(2026-11-12 v2 보완): 모양으로 구별 — 반응일 검정 ★, 매수일 보라 속 빈 ○, 매도 예정일 주황 ◆
+STAR_C, SELL_C = "#111111", "#F59E0B"
 NAME_MAX = 8  # 이름표 글자 수 — 넘으면 줄인다
-LABEL_GAP = 0.105  # 이름표(두 줄) 세로 최소 간격, 축 높이 비율
-LABEL_SPACE = 0.92  # 이름표가 쓸 수 있는 세로 폭(축 높이 비율) — 넘치면 한 줄 이름표
-AXES_PT = HEIGHT * 72 * (0.80 - 0.08)  # 그림 ①의 축 높이(포인트) — 한 줄 이름표 글자 크기 계산용
+LABEL_PT = 15.0  # 이름표 한 줄 높이(포인트) — 겹침 판정·세로로 미는 간격
+LABEL_SPACE = 0.92  # 한 묶음 이름표가 쓸 수 있는 세로 폭(축 높이 비율) — 넘치면 간격·글자를 줄인다
+LABEL_DAYS = 35  # 이름표 자리: 가로축 오른쪽을 늘리는 날 수(약 5주) = 이름표 가로 폭으로 보는 값
+TOP, BOTTOM = 0.80, 0.08
+AXES_PT = HEIGHT * 72 * (TOP - BOTTOM)  # 그림 ①의 축 높이(포인트)
 
 
 def short_name(name: str, limit: int = NAME_MAX) -> str:
@@ -46,6 +53,18 @@ def spread_labels(ys: list[float], gap: float, lo: float, hi: float) -> list[flo
     for k, i in enumerate(order):
         out[i] = pos[k]
     return out
+
+
+def label_groups(xs: list[float], width: float) -> list[list[int]]:
+    """가로로 겹칠 수 있는 이름표 묶음: 끝점 x(날짜 숫자)가 width 안에 이어지는 것끼리. 출력 = 입력 번호 묶음(x 순)."""
+    order = sorted(range(len(xs)), key=lambda i: xs[i])
+    groups: list[list[int]] = []
+    for i in order:
+        if groups and xs[i] - xs[groups[-1][-1]] < width:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    return groups
 
 
 def _setup():
@@ -105,16 +124,24 @@ def render(chart: dict | None, out_path: Path, as_of: str | None = None) -> Path
 
     _setup()
     fig = Figure(figsize=(WIDTH, HEIGHT), dpi=DPI, facecolor="white")
-    fig.subplots_adjust(left=0.08, right=0.74, top=0.80, bottom=0.08)
+    fig.subplots_adjust(left=0.08, right=0.97, top=TOP, bottom=BOTTOM)
     ax = fig.add_subplot()
     fig.text(0.02, 0.955, "QQQ보다 얼마나 앞섰나", fontsize=17, fontweight="bold", color=INK, va="top")
     fig.text(0.02, 0.885, "가운데 선 = QQQ · 위 = 앞섬 · 아래 = 뒤짐  ○ 매수 ◇ 60일 점검 ● 오늘", fontsize=11, color=SUB, va="top")
     if chart.get("qqq_pct") is not None:
         fig.text(0.98, 0.955, f"같은 기간 QQQ {chart['qqq_pct']:+.1f}%", fontsize=11, color=QQQ_C, fontweight="bold",
                  ha="right", va="top")
-    lines = sorted(chart["lines"], key=lambda ln: ln["status"] == "open")  # 끝난 종목을 먼저(아래에) 그린다
+    k_open = 0
+    colors = []
+    for ln in chart["lines"]:  # 보유 중 종목 색은 입력 순서대로
+        if ln["status"] == "open":
+            colors.append(LINE_COLORS[k_open % len(LINE_COLORS)])
+            k_open += 1
+        else:
+            colors.append(CLOSED_C)
+    lines = sorted(zip(chart["lines"], colors), key=lambda t: t[0]["status"] == "open")  # 끝난 종목을 먼저(아래에) 그린다
     allv, alld = [0.0], []
-    for ln in lines:
+    for ln, _ in lines:
         allv += [v for v in ln["excess"] if v is not None and v == v]
         alld += list(pd.to_datetime(ln["dates"]))
     lo, hi = min(allv), max(allv)
@@ -125,10 +152,9 @@ def render(chart: dict | None, out_path: Path, as_of: str | None = None) -> Path
     ax.axhspan(lo, 0, color=BG_DOWN, zorder=0, lw=0)
     ax.axhline(0, color=QQQ_C, lw=2.4, zorder=2)
     ends = []
-    for ln in lines:
+    for ln, col in lines:
         open_ = ln["status"] == "open"
         last = ln["excess"][-1]
-        col = (UP if (last or 0) >= 0 else DOWN) if open_ else DONE
         x = pd.to_datetime(ln["dates"])
         y = ln["excess"]
         z = 4 if open_ else 3
@@ -138,20 +164,30 @@ def render(chart: dict | None, out_path: Path, as_of: str | None = None) -> Path
             k = ln["check_at"]
             ax.scatter([x[k]], [y[k]], s=46, marker="D", facecolor="white", edgecolor=col, linewidth=1.5, zorder=z + 1)
         ax.scatter([x[-1]], [y[-1]], s=46, color=col, zorder=z + 1)
-        ends.append({"y": last, "col": col if open_ else SUB, "open": open_,
-                     "l1": f"{short_name(ln['name'])} {last:+.1f}%p" + ("" if open_ else " (끝)"),
-                     "l2": f"주가 {ln['values'][-1]:+.1f}% · {ln['held']}/{ln['hold']}일"})
-    # 이름표가 많아 두 줄로 다 못 넣으면 한 줄("회사명 +x%p")로, 그래도 많으면 글자를 줄인다(보유 20~30개도 잘리지 않게)
-    two = len(ends) * LABEL_GAP <= LABEL_SPACE
-    gap = LABEL_GAP if two else LABEL_SPACE / len(ends)
-    fs = 11.5 if two else max(6.5, min(11.5, gap * AXES_PT * 0.8))
-    ys = spread_labels([e["y"] for e in ends], (hi - lo) * gap, lo + (hi - lo) * 0.04, hi - (hi - lo) * 0.04)
-    for e, yy in zip(ends, ys):
-        ax.annotate(e["l1"], xy=(1.02, yy), xycoords=("axes fraction", "data"), fontsize=fs, color=e["col"],
-                    va="bottom" if two else "center", fontweight="bold" if e["open"] else "normal", annotation_clip=False)
-        if two:
-            ax.annotate(e["l2"], xy=(1.02, yy), xycoords=("axes fraction", "data"), fontsize=9.5, color=SUB, va="top",
-                        annotation_clip=False)
+        ends.append({"x": x[-1], "y": last, "col": col, "open": open_,
+                     "text": f"{short_name(ln['name'])} {last:+.1f}%p" + ("" if open_ else " (끝)")})
+    # 이름표: 각 선 끝점(●) 바로 오른쪽. 가로로 겹칠 수 있는 묶음 안에서 세로로만 밀고, 밀렸으면 같은 색 가는 선으로 잇는다
+    span = hi - lo
+    ys = [e["y"] for e in ends]
+    fs_scale = [1.0] * len(ends)
+    for grp in label_groups([e["x"].value / 864e11 for e in ends], LABEL_DAYS):
+        gap = LABEL_PT / AXES_PT
+        if len(grp) * gap > LABEL_SPACE:  # 너무 많으면 간격·글자를 줄인다(보유 20~30개도 잘리지 않게)
+            gap = LABEL_SPACE / len(grp)
+            for i in grp:
+                fs_scale[i] = max(0.6, gap * AXES_PT / LABEL_PT)
+        pos = spread_labels([ends[i]["y"] for i in grp], span * gap, lo + span * 0.03, hi - span * 0.03)
+        for i, yy in zip(grp, pos):
+            ys[i] = yy
+    box = {"boxstyle": "round,pad=0.2", "fc": "white", "ec": "none", "alpha": 0.85}
+    dx = pd.Timedelta(days=2)
+    for e, yy, sc_ in zip(ends, ys, fs_scale):
+        moved = abs(yy - e["y"]) > span * 0.004
+        if moved:
+            ax.plot([e["x"], e["x"] + dx], [e["y"], yy], color=e["col"], lw=0.8, zorder=5, solid_capstyle="round")
+        ax.annotate(e["text"], xy=(e["x"] + dx, yy), xytext=(3, 0), textcoords="offset points", va="center", ha="left",
+                    fontsize=(11 if e["open"] else 9.5) * sc_, color=e["col"] if e["open"] else SUB,
+                    fontweight="bold" if e["open"] else "normal", bbox=box, zorder=6, annotation_clip=False)
     ticks = [t for t in MaxNLocator(nbins=6, steps=[1, 2, 2.5, 5, 10]).tick_values(lo, hi) if lo <= t <= hi]
     if 0 not in ticks:
         ticks.append(0.0)
@@ -171,7 +207,7 @@ def render(chart: dict | None, out_path: Path, as_of: str | None = None) -> Path
     ax.grid(axis="y", color=GRID, lw=0.8, zorder=1)
     ax.set_axisbelow(True)
     dmin, dmax = min(alld), max(alld)
-    ax.set_xlim(dmin - pd.Timedelta(days=2), dmax + pd.Timedelta(days=2))
+    ax.set_xlim(dmin - pd.Timedelta(days=2), dmax + pd.Timedelta(days=LABEL_DAYS))  # 오른쪽 약 5주 = 이름표 자리
     _month_ticks(ax, pd.bdate_range(dmin, dmax))
     return _save(fig, out_path)
 
@@ -201,8 +237,9 @@ def card_tag(card: dict) -> str:
 
 
 def render_card(card: dict, out_path: Path, next_day: str | None = None, today_kst=None) -> Path:
-    """② 종목 카드 PNG 한 장. 둥근 점(2026-11-12): 빨강 = 실적 발표(반응일 d0 종가), 파랑 = 매수(매수일 시가),
-    노랑 = 매도 예정일(아직 가격이 없어 바닥선, 가로축을 그날까지 늘림). 점 설명은 그래프 왼쪽 위 색인."""
+    """② 종목 카드 PNG 한 장. 점(2026-11-12 v2 보완, 모양으로 구별): 검정 ★ = 실적 반응일(d0 종가), 보라 속 빈 ○ = 매수일 시가,
+    주황 ◆ = 매도 예정일 — 가로축은 기준일까지만, 매도일이 오늘이면 그 자리에 ◆, 뒤면 오른쪽 끝 안쪽에 "→ M/D 매도 ◆".
+    점 설명은 태그 줄과 축 사이 색인."""
     import numpy as np
     from matplotlib.figure import Figure
     from matplotlib.lines import Line2D
@@ -247,28 +284,31 @@ def render_card(card: dict, out_path: Path, next_day: str | None = None, today_k
     sc = np.array([np.nan if v is None else v for v in card["close"]], dtype=float)
     ax2.plot(xs, sc, color=PURPLE, lw=2.4, zorder=4, solid_capstyle="round")
     b = card["buy_at"]
-    x_sell = n - 1 + max(int(card.get("sell_in") or 0), 0)  # 매도 예정일 = 기준일 + sell_in 거래일
-    if x_sell > n - 1:
-        ax.axvspan(n - 1, x_sell, color=GRID, alpha=0.35, lw=0, zorder=0)  # 아직 오지 않은 기간
-    dot = {"s": 120, "edgecolor": "white", "linewidth": 1.6, "zorder": 9}
     d0 = pd.Timestamp(card["d0"]) if card.get("d0") else None
     if d0 is not None and d0 in dates:
         i0 = int(dates.get_loc(d0))
         if not np.isnan(sc[i0]):
-            ax.axvline(i0, color=DOT_EARN, lw=1.0, ls=(0, (3, 3)), alpha=0.6, zorder=1)
-            ax2.scatter([i0], [sc[i0]], color=DOT_EARN, **dot)
-    ax.axvline(b, color=DOT_BUY, lw=1.0, ls=(0, (3, 3)), alpha=0.6, zorder=1)
-    ax2.scatter([b], [card["buy_px"]], color=DOT_BUY, **dot)
+            ax2.scatter([i0], [sc[i0]], s=230, marker="*", color=STAR_C, edgecolor="white", linewidth=0.8, zorder=9)
+    ax.axvline(b, color=SUB, lw=1.0, ls=(0, (3, 3)), zorder=1)
+    ax2.scatter([b], [card["buy_px"]], s=90, facecolor="white", edgecolor=PURPLE, linewidth=2.2, zorder=9)
     bd = pd.Timestamp(card["buy_day"])
     right = b < n / 2
     ax2.annotate(f"매수 {bd.month}/{bd.day} ${card['buy_px']:,.0f}", (b, card["buy_px"]), xytext=(8 if right else -8, 10),
-                 textcoords="offset points", ha="left" if right else "right", fontsize=10, color=DOT_BUY,
+                 textcoords="offset points", ha="left" if right else "right", fontsize=10, color=PURPLE,
                  bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "none"}, zorder=7)
-    ax.axvline(x_sell, color="#CA8A04", lw=1.0, ls=(0, (3, 3)), alpha=0.7, zorder=1)
-    ax.scatter([x_sell], [lo], color=DOT_SELL, clip_on=False, **{**dot, "edgecolor": INK, "linewidth": 1.0})
-    # 점 색인 — 그래프 바깥(태그 줄과 축 사이), 매도 예정 날짜는 오른쪽 위 글자(sell_note)에 있다
-    keys = [("실적 발표(반응일)", DOT_EARN, "white"), ("매수일", DOT_BUY, "white"), ("매도 예정일", DOT_SELL, INK)]
-    fig.legend(handles=[Line2D([], [], ls="none", marker="o", ms=9, mfc=c, mec=e, mew=1.0, label=t) for t, c, e in keys],
+    pdy = pd.Timestamp(card["plan_day"])
+    if int(card.get("sell_in") or 0) <= 0:  # 매도일이 오늘 — 그 자리(오늘 종가)에 ◆
+        if not np.isnan(sc[n - 1]):
+            ax2.scatter([n - 1], [sc[n - 1]], s=90, marker="D", color=SELL_C, edgecolor="white", linewidth=1.0, zorder=9)
+    else:
+        ax.text(0.995, 0.03, f"→ {pdy.month}/{pdy.day} 매도 ◆", transform=ax.transAxes, ha="right", va="bottom", fontsize=10,
+                color=SELL_C, fontweight="bold", bbox={"boxstyle": "round,pad=0.2", "fc": "white", "ec": "none", "alpha": 0.9},
+                zorder=8)
+    # 점 색인 — 그래프 바깥(태그 줄과 축 사이)
+    keys = [("실적 반응일", dict(marker="*", ms=13, mfc=STAR_C, mec=STAR_C)),
+            ("매수일", dict(marker="o", ms=8, mfc="white", mec=PURPLE, mew=2.0)),
+            ("매도 예정일", dict(marker="D", ms=7, mfc=SELL_C, mec=SELL_C))]
+    fig.legend(handles=[Line2D([], [], ls="none", label=t, **kw) for t, kw in keys],
                loc="lower left", bbox_to_anchor=(0.075, 0.745), ncol=3, fontsize=10, frameon=False, handletextpad=0.3,
                columnspacing=1.2, borderaxespad=0)
     # 끝점 이름표 — 흰 상자, 더 높은 쪽이 위
@@ -285,10 +325,8 @@ def render_card(card: dict, out_path: Path, next_day: str | None = None, today_k
     ax.annotate(f"QQQ ${card['last_qqq']:,.0f} {card['qqq_ret']:+.1f}%", (n - 1, ys[1]), xytext=(n - 1 + n * 0.02, y_q),
                 textcoords="data", va="center", fontsize=10, fontweight="bold", color=SUB, bbox=box, zorder=8,
                 annotation_clip=False)
-    ax.set_xlim(-1, max(n - 1 + n * 0.30, x_sell + (x_sell + 1) * 0.04))
-    # 눈금은 매도 예정일까지 늘린 축 전체 기준(앞날은 평일로 근사 — 눈금 글자에만 쓴다)
-    ext = dates.append(pd.bdate_range(dates[-1] + pd.offsets.BDay(1), periods=x_sell - (n - 1))) if x_sell > n - 1 else dates
-    (_month_ticks(ax, ext, np.arange(len(ext))) if len(ext) > 40 else _week_ticks(ax, ext))
+    ax.set_xlim(-1, n - 1 + n * 0.30)
+    (_month_ticks(ax, dates, xs) if n > 40 else _week_ticks(ax, dates))
     ax.tick_params(axis="y", colors=SUB, labelsize=9.5, length=0)
     ax2.tick_params(axis="y", colors=PURPLE, labelsize=9.5, length=0)
     ax.tick_params(axis="x", colors=SUB, labelsize=9.5, length=0)

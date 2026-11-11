@@ -61,7 +61,7 @@ def test_report_view_pead_mode_order_head_and_fold():
     rv = letter_plain.report_view(s, cfg, "personal")
     assert rv["head"] == "성적표(90일) 2건 · QQQ 대비 평균 +2.7%p · 승률 50%"  # 머리 줄 자리에 성적표 한 줄(2026-11-12)
     g_line = letter_plain.report_view(s, cfg, "group")["sections"][0]["lines"][1]
-    assert g_line == "성적표 90일: 2건 · 평균 초과 +2.71% · 승률 50%" and letter_plain.report_view(s, cfg, "group")["head"] is None
+    assert g_line == "성적표 90일: 2건 · 평균 초과 +2.71% · 승률 50%" and letter_plain.report_view(s, cfg, "group")["head"] == "검증 중 · 실제 돈 아님 · 투자 권유 아님"
     assert [x["key"] for x in rv["sections"]] == ["pead_todo", "pead_new", "pead_compare", "pead_cards"]
     assert next(x for x in rv["sections"] if x["key"] == "pead_cards")["title"] == "■ 종목 카드 (보유 6개)"
     assert rv["extras"] == [] and rv["monday_chart"] is False and rv["pead"] is True
@@ -221,7 +221,7 @@ def test_chart_many_lines_switches_to_one_line_labels(tmp_path):
     base = L["chart"]["lines"][0]
     many = {**L["chart"], "lines": [{**base, "ticker": f"T{i}", "name": f"회사{i}", "excess": [v + i for v in base["excess"]]}
                                     for i in range(25)]}
-    assert 25 * pead_chart.LABEL_GAP > pead_chart.LABEL_SPACE  # 두 줄로는 못 넣는 수
+    assert 25 * pead_chart.LABEL_PT / pead_chart.AXES_PT > pead_chart.LABEL_SPACE  # 제 간격으로는 못 넣는 수 → 간격·글자 줄임
     assert pead_chart.render(many, tmp_path / "m.png").read_bytes()[:4] == b"\x89PNG"
 
 
@@ -238,3 +238,21 @@ def test_card_dots_render_without_d0_and_on_sell_day(tmp_path):
     for i, over in enumerate([{"d0": None}, {"d0": "2020-01-02"}, {"sell_in": 0}]):
         p = pead_chart.render_card({**c, **over}, tmp_path / f"c{i}.png")
         assert p.read_bytes()[:4] == b"\x89PNG"
+
+
+def test_label_groups_and_line_colors():
+    # 그림 ① 이름표(2026-11-12): 끝점이 가로로 가까운 것끼리만 세로로 민다
+    assert pead_chart.label_groups([100.0, 10.0, 120.0, 300.0, 101.0], 35) == [[1], [0, 4, 2], [3]]
+    assert pead_chart.label_groups([], 35) == []
+    assert not {"#E5484D", "#3B82F6"} & set(pead_chart.LINE_COLORS) and len(pead_chart.LINE_COLORS) == 8
+
+
+def test_group_html_has_head_line(tmp_path, monkeypatch):
+    from notify import report_html
+
+    monkeypatch.setattr(report_preview, "OUT", tmp_path)
+    s, cfg = _preview_summary()
+    g = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
+    p = report_html.render_report(s, cfg, tmp_path, edition="personal").read_text(encoding="utf-8")
+    assert "검증 중 · 실제 돈 아님 · 투자 권유 아님" in g and "검증 중 · 실제 돈 아님" not in p
+    assert "성적표(90일) 2건" in p
