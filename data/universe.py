@@ -165,6 +165,29 @@ def _attach_name_kr(df: pd.DataFrame) -> pd.DataFrame:
     return merged
 
 
+ALIAS_MIN_LEN = 2  # 별칭 최소 글자 수 — 한 글자 별칭은 아무 제목에나 걸린다
+
+
+def load_name_aliases(path: Path | None = None) -> dict[str, list[str]]:
+    """name_kr.csv의 alias 칸(실적 뉴스 검색용 별칭, '|'로 여러 개) → {티커: [별칭]}.
+
+    입력: CSV 경로(기본 NAME_KR_CSV). 출력: 별칭이 있는 티커만. ALIAS_MIN_LEN 글자 미만·한글 이름과 같은 별칭은 버린다.
+    파일이나 alias 칸이 없으면 빈 dict.
+    """
+    path = path or NAME_KR_CSV
+    if not path.exists():
+        return {}
+    kr = pd.read_csv(path, dtype=str).fillna("")
+    if "alias" not in kr.columns:
+        return {}
+    out: dict[str, list[str]] = {}
+    for t, n, a in zip(kr["ticker"], kr["name_kr"], kr["alias"]):
+        al = [x.strip() for x in a.split("|") if len(x.strip()) >= ALIAS_MIN_LEN and x.strip() != n.strip()]
+        if al:
+            out[t.strip()] = list(dict.fromkeys(al))
+    return out
+
+
 def get_universe() -> pd.DataFrame:
     """나스닥 100 구성 종목 목록을 만든다.
 

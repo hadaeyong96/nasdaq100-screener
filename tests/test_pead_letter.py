@@ -152,13 +152,15 @@ def test_earnings_news_companies_order_and_attach():
            earnings={"rows": [{"ticker": "NVDA", "name": "엔비디아", "date": "2026-11-12"},
                               {"ticker": "WMT", "name": "월마트", "date": "2026-11-19"}], "failed": 0})
     assert daily.earnings_news_companies(L, "2026-11-12") == ["테이크투인터랙티브", "앱러빈", "엔비디아"]
+    ttwo = {"name": "테이크투인터랙티브", "aliases": ["테이크투"]}
+    assert daily.earnings_news_companies(L, "2026-11-12", {"TTWO": ["테이크투"]}) == [ttwo, "앱러빈", "엔비디아"]
     seen = []
     s = {"pead_watch": {"status": "ok", "letter": L}, "letter_today_kst": pd.Timestamp("2026-11-12")}
     daily._attach_earnings_news(s, news_fn=lambda n: seen.append(n) or {"status": "ok", "top": [], "failed": []})
-    assert seen == [["테이크투인터랙티브", "앱러빈", "엔비디아"]] and s["earnings_news"]["status"] == "ok"
+    assert seen == [[ttwo, "앱러빈", "엔비디아"]] and s["earnings_news"]["status"] == "ok"  # 별칭은 name_kr.csv alias 칸
     s2 = {"pead_watch": {"status": "ok", "letter": L}}
     daily._attach_earnings_news(s2, news_fn=lambda n: (_ for _ in ()).throw(RuntimeError("x")))
-    assert s2["earnings_news"]["status"] == "fail"
+    assert s2["earnings_news"]["status"] == "fail" and s2["earnings_news"]["failed"][0] == "테이크투인터랙티브"
     s3 = {"pead_watch": {"status": "error", "letter": L}}
     daily._attach_earnings_news(s3)
     assert s3["earnings_news"] is None

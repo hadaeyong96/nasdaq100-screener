@@ -2671,12 +2671,24 @@ def _attach_pead_watch(summary: dict, cfg: dict, run_fn=None, chart_fn=None) -> 
         print(f"[daily] 실적급등 그래프 오류(편지는 그대로): {type(exc).__name__}: {exc}")
 
 
-def earnings_news_companies(letter: dict, today_kst=None) -> list[str]:
-    """실적 뉴스 검색 회사(앞쪽이 먼저): 새 추천 → 관찰 중 → 실적 발표 예정 중 편지 받는 날까지 발표한 종목. 한글 이름, 없으면 티커."""
+def earnings_news_companies(letter: dict, today_kst=None, aliases: dict[str, list[str]] | None = None) -> list:
+    """실적 뉴스 검색 회사(앞쪽이 먼저): 새 추천 → 관찰 중 → 실적 발표 예정 중 편지 받는 날까지 발표한 종목.
+
+    출력: 한글 이름(없으면 티커) 목록. aliases({티커: [별칭]}, name_kr.csv alias 칸)를 주면 별칭이 있는 회사는
+    {"name", "aliases"}로 준다 — 편지에는 정식 이름만, 별칭은 검색에만 쓴다.
+    """
     today = pd.Timestamp(today_kst).normalize() if today_kst is not None else None
     rows = list(letter.get("new") or []) + list(letter.get("watching") or [])
     rows += [r for r in (letter.get("earnings") or {}).get("rows") or [] if today is None or pd.Timestamp(r["date"]) <= today]
-    return list(dict.fromkeys((r.get("name") or r["ticker"]) for r in rows))
+    out, seen = [], set()
+    for r in rows:
+        name = r.get("name") or r["ticker"]
+        if name in seen:
+            continue
+        seen.add(name)
+        al = (aliases or {}).get(r["ticker"])
+        out.append({"name": name, "aliases": al} if al else name)
+    return out
 
 
 def _attach_earnings_news(summary: dict, news_fn=None) -> None:
@@ -2687,12 +2699,19 @@ def _attach_earnings_news(summary: dict, news_fn=None) -> None:
     if not pwr or pwr.get("status") == "error":
         summary["earnings_news"] = None
         return
-    names = earnings_news_companies(pwr["letter"], summary.get("letter_today_kst"))
+    try:
+        from data.universe import load_name_aliases
+
+        aliases = load_name_aliases()
+    except Exception as exc:  # noqa: BLE001 — 별칭이 없어도 정식 이름으로 찾는다
+        print(f"[daily] 실적 뉴스 별칭을 읽지 못했습니다(정식 이름만): {type(exc).__name__}")
+        aliases = {}
+    names = earnings_news_companies(pwr["letter"], summary.get("letter_today_kst"), aliases)
     try:
         summary["earnings_news"] = (news_fn or (lambda n: news.earnings_news(pd.Timestamp.now(tz="UTC"), n)))(names)
     except Exception as exc:  # noqa: BLE001 — 뉴스 실패가 편지를 막으면 안 된다
         print(f"[daily] 실적 뉴스를 받지 못했습니다(편지는 그대로): {type(exc).__name__}")
-        summary["earnings_news"] = {"status": "fail", "top": [], "topics": {}, "failed": names}
+        summary["earnings_news"] = {"status": "fail", "top": [], "topics": {}, "failed": [n if isinstance(n, str) else n["name"] for n in names]}
     if summary["earnings_news"].get("failed"):
         print(f"[daily] 실적 뉴스 검색어 실패 {len(summary['earnings_news']['failed'])}개")
 
