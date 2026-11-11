@@ -634,11 +634,12 @@ def extra_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
 
 
 def glance_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
-    """실적급등 편지의 접기 「한눈에」(2026-11-11): 시장 온도 한 줄, (그날만) 급락장·저축일·12월 공제·성적표,
+    """실적급등 편지의 접기 「한눈에」(2026-11-11): 시장 온도 한 줄, (그날만) 저축일·12월 공제·성적표,
     웅덩이 v3.2·반등 v2 장부 첫 줄. 계산·기록은 그대로, 보이는 자리만 접기로."""
     day = _day(summary)
     out = market_main_lines(summary, cfg, ph)[:1]
-    out += [x for x in todo_lines(summary, cfg, ph, edition) if x != phrase(ph, "todo.none", day)]
+    skip = {phrase(ph, "todo.none", day), phrase(ph, "todo.crash", day)}  # 급락장 경고는 실적급등 편지에서 뺀다(2026-11-11)
+    out += [x for x in todo_lines(summary, cfg, ph, edition) if x not in skip]
     for slot in ("puddle_v31", "puddle_rebound"):
         ls = (summary.get(slot) or {}).get(edition) or []
         if ls:
@@ -666,21 +667,19 @@ def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict
     extras = extra_lines(summary, cfg, ph, edition)
     head, fold_top = None, []
     pead = summary.get("pead_watch")
-    if pead:  # 실적급등 추천 편지(2026-11-11): 본문 = 실적급등 ①~⑤, 예전 본문은 접기 맨 위로
+    if pead:  # 실적급등 추천 편지(2026-11-11): 본문 = 실적급등 ①~⑤(뉴스 = 실적 발표 뉴스). 시장·내 돈·일반 뉴스·가상 실험 소식·급락장 경고는 뺀다
         from notify import pead_letter
 
         head = pead_letter.HEAD
         fold_top = [{"key": "glance", "title": "한눈에", "lines": glance_lines(summary, cfg, ph, edition)}]
-        fold_top += [s for s in secs if s["key"] != "todo"]
-        if extras:
-            fold_top.append({"key": "extras", "title": "가상 실험 소식", "lines": extras})
-        secs = pead_letter.sections(pead, edition, summary.get("letter_today_kst"))
+        secs = pead_letter.sections(pead, edition, summary.get("letter_today_kst"), summary.get("earnings_news"))
         extras = []
     as_of = summary.get("as_of")
     base = f"{pd.Timestamp(as_of).month}/{pd.Timestamp(as_of).day}" if as_of is not None else "?"
     return {
         "title": title(summary, cfg, ph),
         "head": head,
+        "pead": bool(pead),
         "problem": phrase(ph, "problem.prefix", day) + " ".join(probs) if probs else None,
         "sections": secs,
         "fold_top": fold_top,

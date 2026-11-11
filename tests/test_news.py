@@ -91,3 +91,36 @@ def test_fetch_failures_reported():
 
 def test_shorten_title():
     assert cn.shorten("가" * 61) == "가" * 59 + "…" and cn.shorten("가" * 60) == "가" * 60
+
+
+# ── 실적 발표 뉴스 (실적급등 편지, 2026-11-11) ───────────────────────────────
+
+
+def test_earnings_news_keeps_titles_with_company_name_only():
+    feeds = {
+        "앱러빈 실적": _rss([("앱러빈, 3분기 실적 예상 상회…주가 30% 급등", "연합뉴스", 2),
+                           ("美 증시 혼조, 기술주 약세", "연합뉴스", 2)]),
+        "맥도날드 실적": _rss([("맥도날드 실적 호조에 주가 6%↑", "한국경제", 5), ("맥도날드 실적", "모르는언론", 1),
+                             ("맥도날드, 새 메뉴 출시", "뉴스1", 1)]),
+    }
+
+    def get(url):
+        for q, body in feeds.items():
+            if dn.quote(q) in url:
+                return body
+        raise RuntimeError("없음")
+
+    res = dn.earnings_news(NOW, ["앱러빈", "맥도날드", "앱러빈"], topics_cfg=TOPICS, get=get, pause=0)
+    titles = [a["title"] for a in res["top"]]
+    assert res["status"] == "ok"
+    assert titles == ["앱러빈, 3분기 실적 예상 상회…주가 30% 급등", "맥도날드 실적 호조에 주가 6%↑"]  # 이름 없는 기사·허용 밖 언론사·실적 낱말 없는 기사 제외
+
+
+def test_earnings_news_empty_and_failed():
+    assert dn.earnings_news(NOW, [], topics_cfg=TOPICS, get=lambda u: "", pause=0)["top"] == []
+
+    def boom(url):
+        raise RuntimeError("x")
+
+    res = dn.earnings_news(NOW, ["앱러빈"], topics_cfg=TOPICS, get=boom, pause=0)
+    assert res["status"] == "fail" and res["failed"] == ["앱러빈 실적"]

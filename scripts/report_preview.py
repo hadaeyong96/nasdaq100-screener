@@ -3,7 +3,7 @@
 사용법:
     python scripts/report_preview.py                  # outputs/report_preview.html
     python scripts/report_preview.py --screenshot after  # + 폰 폭(375)·PC 폭(1200) 스크린샷
-    python scripts/report_preview.py --pead              # 실적급등 추천 편지 개인판·단체방판(가짜 신호 2·관찰 3·끝남 2·비교 그래프)
+    python scripts/report_preview.py --pead              # 실적급등 추천 편지 개인판·단체방판(가짜 신호 2·관찰 3·끝남 2·비교 그래프·실적 뉴스 3)
 
 샘플: 오늘의 추천 4건(긴 조건 문구 포함) + 시장 온도 6칸. 실제 계좌·보유 정보는 없다.
 단체방도 같은 보고서·첨부 설명을 받는다(2026-10-15) — 첨부 설명은 outputs/caption_preview.txt로 남긴다.
@@ -140,6 +140,11 @@ def sample_pead(summary: dict) -> dict:
     qv = np.cumsum(np.random.default_rng(9).normal(0.06, 0.8, len(qd)))
     L["chart"] = {"lines": lines, "qqq": {"dates": [d.date().isoformat() for d in qd], "values": [float(x) for x in qv]}}
     summary["pead_watch"] = {"status": "ok", "letter": L}
+    now = pd.Timestamp("2026-11-11 22:00", tz="UTC")
+    summary["earnings_news"] = {"status": "ok", "failed": [], "top": [
+        {"title": "앱러빈, 3분기 매출 예상 상회…주가 31% 급등", "source": "연합뉴스", "url": "https://example.com/1", "published": now},
+        {"title": "테이크투, 'GTA6' 기대에 실적 전망 상향", "source": "한국경제", "url": "https://example.com/2", "published": now},
+        {"title": "엔비디아 실적 발표 앞두고 반도체주 관망", "source": "뉴스1", "url": "https://example.com/3", "published": now}]}
     from notify import pead_chart
 
     summary["pead_chart"] = pead_chart.render(L["chart"], OUT / "pead_chart_preview.png", "2026-11-11")

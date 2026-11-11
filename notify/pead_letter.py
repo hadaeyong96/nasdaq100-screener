@@ -1,7 +1,8 @@
 """실적급등 추천 장부 → 아침 편지 문장 (표시 전용 순수 함수, docs/prereg/pead_watch.md 9장).
 
 입력은 engine.pead_watch.run의 letter 칸(summary["pead_watch"]). 문장은 짧은 단문 경어체.
-개인판: ① 오늘 할 일 ② 새 추천 ③ 관찰 중 ④ 실적 발표 예정 ⑤ 끝난 종목·성적표. 단체방판: 종목 이름·티커 없이 개수·성적표만.
+개인판: ① 오늘 할 일 ② 새 추천 ③ 관찰 중 ④ 실적 발표 예정 + 실적 발표 뉴스 ⑤ 끝난 종목·성적표.
+단체방판: 종목 이름·티커 없이 개수·성적표만(뉴스 제목에 회사 이름이 있어 뉴스도 없음).
 """
 
 from __future__ import annotations
@@ -99,6 +100,21 @@ def earnings_lines(L: dict) -> list[str]:
     return out
 
 
+def news_lines(news: dict | None) -> list:
+    """실적 발표 뉴스(data.news.earnings_news) — 줄 = {text, title, source, url}(제목 링크). 없으면 한 줄 안내."""
+    from core.news import shorten
+
+    if not news or news.get("status") == "fail":
+        return ["실적 발표 뉴스를 받지 못했습니다."]
+    if not news.get("top"):
+        return ["최근 24시간 실적 발표 뉴스가 없습니다."]
+    out = []
+    for a in news["top"]:
+        t = shorten(a["title"])
+        out.append({"text": f"{t} ({a['source']})", "title": t, "source": a["source"], "url": a.get("url", "")})
+    return out
+
+
 def _score_line(name: str, sc: dict) -> str:
     if not sc or not sc.get("n"):
         return f"성적표 {name}: 아직 끝난 매매가 없습니다."
@@ -125,8 +141,9 @@ def group_lines(L: dict) -> list[str]:
     return out
 
 
-def sections(pwr: dict | None, edition: str, today_kst=None) -> list[dict]:
-    """보고서 본문 칸 [{key, title, lines}]. pwr = summary["pead_watch"] ({status, letter}). 오류면 한 줄."""
+def sections(pwr: dict | None, edition: str, today_kst=None, news: dict | None = None) -> list[dict]:
+    """보고서 본문 칸 [{key, title, lines}]. pwr = summary["pead_watch"] ({status, letter}), news = summary["earnings_news"].
+    오류면 한 줄."""
     if not pwr:
         return []
     if pwr.get("status") == "error":
@@ -139,5 +156,6 @@ def sections(pwr: dict | None, edition: str, today_kst=None) -> list[dict]:
         {"key": "pead_new", "title": "■ 새 추천", "lines": new_lines(L)},
         {"key": "pead_watching", "title": "■ 관찰 중", "lines": watching_lines(L)},
         {"key": "pead_earnings", "title": "■ 실적 발표 예정 (이번 주·다음 주)", "lines": earnings_lines(L)},
+        {"key": "pead_news", "title": "■ 실적 발표 뉴스", "lines": news_lines(news)},
         {"key": "pead_closed", "title": "■ 끝난 종목 · 성적표", "lines": closed_lines(L)},
     ]

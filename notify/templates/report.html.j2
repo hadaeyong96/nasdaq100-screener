@@ -1233,6 +1233,7 @@ nav.toc{line-height:1.9;margin:0 0 10px}
   <h3 id="fold-{{ s.key }}">{{ s.title }}</h3>
   {% for line in s.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}{% endfor %}
   {% endfor %}
+  {% if not letter.report.pead %}{# 실적급등 편지(2026-11-11)는 시장 온도 표·지수·웅덩이 후보·가상 실험을 뺀다 #}
   <h3>{{ d.thermometer_title }}</h3>
   {% if d.thermometer %}
   <div class="ln"><b>{{ d.thermometer.head }}</b></div>
@@ -1264,6 +1265,7 @@ nav.toc{line-height:1.9;margin:0 0 10px}
   <h3 id="sec-lab">{{ d.lab_title }}</h3>
   {% for line in d.lab %}<div class="ln">▶ {{ line }}</div>{% endfor %}
   {% if curve_chart_src and not letter.report.monday_chart %}<figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>{% endif %}
+  {% endif %}
   {% endif %}
   {% if scorecard %}<h3>이번 달 가상 성적표</h3>{% for line in scorecard.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}{% endif %}
   {% if dec_tax and not is_group %}<h3>올해 세금 없이 팔 수 있는 이익</h3>{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}{% endif %}

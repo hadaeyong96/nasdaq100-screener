@@ -85,3 +85,34 @@ def letter_news(now_utc, topics_cfg: dict | None = None, get=None, pause: float 
     if not sel["top"]:
         status = "fail" if res["failed"] else "ok"
     return {"status": status, **sel, "failed": res["failed"]}
+
+
+EARNINGS_TOP = 6  # 실적 발표 뉴스 최대 줄 수 (2026-11-11)
+EARNINGS_MAX_QUERIES = 15  # 검색어(회사) 최대 수 — RSS 요청 수 상한
+EARNINGS_WORDS = ("실적", "매출", "이익", "분기", "가이던스", "어닝", "전망")  # 제목에 하나는 있어야 실적 기사로 본다
+
+
+def earnings_news(now_utc, companies: list[str], topics_cfg: dict | None = None, get=None, pause: float | None = None,
+                  top: int = EARNINGS_TOP) -> dict:
+    """실적급등 편지의 실적 발표 뉴스(2026-11-11): 회사마다 "{이름} 실적" 검색(최근 24시간, 같은 언론사 허용 목록·제외어),
+    제목에 그 회사 이름과 실적 낱말(EARNINGS_WORDS)이 함께 있는 기사만 남기고 회사마다 같은 사건을 묶은 뒤, 점수(언론사 수 × 최신성) 순 최대 top개.
+
+    입력: companies(검색할 회사 이름, 앞에서부터 최대 EARNINGS_MAX_QUERIES개). 출력: letter_news와 같은 모양(top만 채움).
+    """
+    base = topics_cfg if topics_cfg is not None else load_topics()
+    names = list(dict.fromkeys(n for n in companies if str(n).strip()))[:EARNINGS_MAX_QUERIES]
+    if not names:
+        return {"status": "ok", "top": [], "topics": {}, "failed": []}
+    cfg = {**base, "topics": [{"name": "실적 발표", "weight": 1.0, "queries": [f"{n} 실적" for n in names]}],
+           "core_min_score": 0.0, "core_max": top, "core_min": 0}
+    res = fetch(cfg, get=get, pause=pause)
+    for f in res["fetched"]:
+        name = f["q"].rsplit(" 실적", 1)[0]
+        f["items"] = [it for it in f["items"] if name.replace(" ", "") in it["title"].replace(" ", "")
+                      and any(w in it["title"] for w in EARNINGS_WORDS)]
+    if not res["fetched"]:
+        return {"status": "fail", "top": [], "topics": {}, "failed": res["failed"]}
+    # 같은 사건 묶기는 회사마다 따로 — 다른 회사 기사가 "실적·주가" 같은 낱말로 한 사건으로 묶이지 않게
+    arts = [a for f in res["fetched"] for a in cnews.select([f], cfg, now_utc)["top"]]
+    arts.sort(key=lambda a: (-a["score"], -a["published"].value, a["title"]))
+    return {"status": "partial" if res["failed"] else "ok", "top": arts[:top], "topics": {}, "failed": res["failed"]}

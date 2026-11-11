@@ -74,15 +74,33 @@ def test_report_view_pead_mode_order_head_and_fold():
     s, cfg = _preview_summary()
     rv = letter_plain.report_view(s, cfg, "personal")
     assert rv["head"] == "검증 중 · 승률 약 50% · 실제 돈 아님"
-    assert [x["key"] for x in rv["sections"]] == ["pead_todo", "pead_new", "pead_watching", "pead_earnings", "pead_closed"]
-    assert rv["extras"] == [] and rv["monday_chart"] is False
+    assert [x["key"] for x in rv["sections"]] == ["pead_todo", "pead_new", "pead_watching", "pead_earnings", "pead_news",
+                                                   "pead_closed"]
+    assert rv["extras"] == [] and rv["monday_chart"] is False and rv["pead"] is True
+    assert [x["key"] for x in rv["fold_top"]] == ["glance"]  # 시장·내 돈·일반 뉴스·가상 실험 소식은 뺀다
     glance = rv["fold_top"][0]
-    assert glance["key"] == "glance" and glance["lines"][0].startswith("시장 온도 58도")
+    assert glance["lines"][0].startswith("시장 온도 58도")
     assert any("웅덩이 v3.2" in x for x in glance["lines"]) and any("반등 확인 v2" in x for x in glance["lines"])
-    assert "market" in [x["key"] for x in rv["fold_top"]]
+    news = next(x for x in rv["sections"] if x["key"] == "pead_news")["lines"]
+    assert news[0]["source"] == "연합뉴스" and "앱러빈" in news[0]["title"]
     g = letter_plain.report_view(s, cfg, "group")
     assert [x["key"] for x in g["sections"]] == ["pead_group"]
     assert letter_plain.has_todo(s, cfg, "personal") is True
+
+
+def test_glance_drops_crash_warning(monkeypatch):
+    s, cfg = _preview_summary()
+    from notify import letter
+
+    monkeypatch.setattr(letter, "crash_warning", lambda q: "급락장입니다")
+    ph = letter_plain.load_phrases()
+    lines = letter_plain.glance_lines(s, cfg, ph, "personal")
+    assert letter_plain.phrase(ph, "todo.crash", letter_plain._day(s)) not in lines
+
+
+def test_news_lines_states():
+    assert pead_letter.news_lines(None) == ["실적 발표 뉴스를 받지 못했습니다."]
+    assert pead_letter.news_lines({"status": "ok", "top": []}) == ["최근 24시간 실적 발표 뉴스가 없습니다."]
 
 
 def test_report_view_without_pead_keeps_old_layout():
@@ -101,8 +119,9 @@ def test_rendered_html_personal_has_chart_group_has_no_names(tmp_path, monkeypat
     s, cfg = _preview_summary()
     p = report_html.render_report(s, cfg, tmp_path, edition="personal").read_text(encoding="utf-8")
     g = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
-    assert "실적급등 추천 종목 비교 그래프" in p and "테이크투인터랙티브(TTWO)" in p
-    assert "실적급등 추천 종목 비교 그래프" not in g and "TTWO" not in g and "새 추천 2개" in g
+    assert "실적급등 추천 종목 비교 그래프" in p and "테이크투인터랙티브(TTWO)" in p and "실적 발표 뉴스" in p
+    assert "공포 매수판" not in p and "지수·금리·환율" not in p  # 접기 상세에서도 시장 칸 뺌
+    assert "실적급등 추천 종목 비교 그래프" not in g and "TTWO" not in g and "새 추천 2개" in g and "앱러빈" not in g
 
 
 def test_chart_render_none_without_lines(tmp_path):
@@ -124,3 +143,22 @@ def test_attach_pead_watch_sets_summary_and_survives_chart_error():
     s2 = {"as_of": pd.Timestamp("2026-11-11"), "letter_check": {}}
     daily._attach_pead_watch(s2, {}, run_fn=lambda cfg, as_of, **kw: {"status": "error", "letter": None}, chart_fn=lambda *a: None)
     assert s2["pead_watch"]["status"] == "error" and "실적급등 장부 오류" in s2["letter_check"]["notes"]
+
+
+def test_earnings_news_companies_order_and_attach():
+    from engine import daily
+
+    L = _L(new=[{"ticker": "TTWO", "name": "테이크투인터랙티브"}], watching=[{"ticker": "APP", "name": "앱러빈"}],
+           earnings={"rows": [{"ticker": "NVDA", "name": "엔비디아", "date": "2026-11-12"},
+                              {"ticker": "WMT", "name": "월마트", "date": "2026-11-19"}], "failed": 0})
+    assert daily.earnings_news_companies(L, "2026-11-12") == ["테이크투인터랙티브", "앱러빈", "엔비디아"]
+    seen = []
+    s = {"pead_watch": {"status": "ok", "letter": L}, "letter_today_kst": pd.Timestamp("2026-11-12")}
+    daily._attach_earnings_news(s, news_fn=lambda n: seen.append(n) or {"status": "ok", "top": [], "failed": []})
+    assert seen == [["테이크투인터랙티브", "앱러빈", "엔비디아"]] and s["earnings_news"]["status"] == "ok"
+    s2 = {"pead_watch": {"status": "ok", "letter": L}}
+    daily._attach_earnings_news(s2, news_fn=lambda n: (_ for _ in ()).throw(RuntimeError("x")))
+    assert s2["earnings_news"]["status"] == "fail"
+    s3 = {"pead_watch": {"status": "error", "letter": L}}
+    daily._attach_earnings_news(s3)
+    assert s3["earnings_news"] is None
