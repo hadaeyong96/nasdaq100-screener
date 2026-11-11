@@ -143,3 +143,44 @@ def test_chart_data_lines_start_at_buy_day(db, monkeypatch):
     assert ln["ticker"] == "A" and ln["dates"][0] == "2026-10-22" and ln["values"][0] == pytest.approx(
         (_px(1, D0).at[pd.Timestamp("2026-10-22"), "close"] / _px(1, D0).at[pd.Timestamp("2026-10-22"), "open"] - 1) * 100)
     assert ch["qqq"]["dates"][0] == "2026-10-22" and ch["qqq"]["dates"][-1] == "2026-11-10"
+
+
+def test_chart_data_excess_series_check_point_and_cards(db, monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    res = ew.run(CFG, pd.Timestamp("2027-02-10"), db_path=db, src=_src(), start="2026-10-19")
+    ch = res["letter"]["chart"]
+    ln = ch["lines"][0]
+    a, q = _px(1, D0), _px(3)
+    ib = pd.Timestamp("2026-10-22")
+    assert ln["excess"][-1] == pytest.approx(ln["vs_qqq"])  # 마지막 초과 = vs_qqq
+    k = 5
+    d = pd.Timestamp(ln["dates"][k])
+    want = (a.at[d, "close"] / a.at[ib, "open"] - q.at[d, "close"] / q.at[ib, "open"]) * 100
+    assert ln["excess"][k] == pytest.approx(want)  # 그 종목 매수일 QQQ 시가 기준
+    assert ln["check_at"] == 60 and ln["held"] == len(ln["dates"]) - 1
+    w = next(r for r in res["letter"]["watching"] if r["ticker"] == "A")
+    assert ln["vs_qqq"] == pytest.approx(w["vs_qqq"] * 100)  # 관찰 중 칸과 같은 값
+    c = ch["cards"][0]
+    assert c["ticker"] == "A" and c["kind"] == "hold" and c["buy_at"] == ew.CARD_PAD_BEFORE
+    assert c["dates"][c["buy_at"]] == "2026-10-22" and c["dates"][-1] == "2027-02-10"
+    assert c["qqq"]["high"][0] == pytest.approx(max(q.iloc[q.index.get_loc(pd.Timestamp(c["dates"][0]))][["open", "close"]]))
+    assert ch["qqq_pct"] == pytest.approx((q.at[pd.Timestamp("2027-02-10"), "close"] / q.at[ib, "open"] - 1) * 100)
+
+
+def test_chart_card_order_new_soon_rest():
+    from core import pead_timing as pt
+
+    days = pd.bdate_range("2026-01-01", "2027-06-30")
+    ia = int(days.get_loc(pd.Timestamp("2026-11-11")))
+    px = {t: _px(i).reindex(days).ffill() for i, t in enumerate(["QQQ", "N", "S", "R1", "R2"], start=3)}
+    al = {t: pt.align(d, days) for t, d in px.items()}
+
+    def tr(t, ib):
+        return {"ticker": t, "d0": days[ib - 1].date().isoformat(), "status": "open", "buy_day": days[ib].date().isoformat(),
+                "plan_day": days[ib + 90].date().isoformat(), "buy_px": float(px[t]["open"].iloc[ib])}
+
+    main = [tr("R2", ia - 30), tr("S", ia - 86), tr("R1", ia - 50), tr("N", ia - 2)]
+    ch = ew.chart_data(main, al, al["QQQ"], days, ia, {}, px, {}, 90, 60)
+    assert [c["ticker"] for c in ch["cards"]] == ["N", "S", "R1", "R2"]
+    assert [c["kind"] for c in ch["cards"]] == ["new", "soon", "hold", "hold"]
+    assert ch["cards"][1]["sell_in"] == 4

@@ -85,12 +85,14 @@ def same_event(a: set, b: set, overlap: float = 0.5, min_shared: int = 2) -> boo
     return shared >= min_shared and shared / min(len(a), len(b)) >= overlap
 
 
-def recency(age_hours: float) -> float:
-    """최신성 가중치: 12시간 안 1.0, 24시간 안 0.7, 그 밖 0."""
+def recency(age_hours: float, max_age_hours: float = 24.0) -> float:
+    """최신성 가중치: 12시간 안 1.0, 24시간 안 0.7, max_age_hours 안 0.4(실적급등 종목 카드 뉴스 7일, 2026-11-12), 그 밖 0."""
     if age_hours <= 12:
         return 1.0
     if age_hours <= 24:
         return 0.7
+    if age_hours <= max_age_hours:
+        return 0.4
     return 0.0
 
 
@@ -116,7 +118,7 @@ def select(fetched: list[dict], topics_cfg: dict, now_utc) -> dict:
     """검색어별로 받은 기사 → 편지 뉴스.
 
     fetched: [{topic, weight, items: parse_rss 결과}] (검색어 하나당 하나, 설정 순서대로)
-    now_utc: 기준 시각(UTC). 24시간보다 오래된 기사는 뺀다.
+    now_utc: 기준 시각(UTC). topics_cfg max_age_hours(기본 24)보다 오래된 기사는 뺀다.
     출력: {"top": [기사], "topics": {주제: [기사]}} — 기사 = {title, source, url, published, score, n_sources, topic}
     """
     now = pd.Timestamp(now_utc)
@@ -127,6 +129,7 @@ def select(fetched: list[dict], topics_cfg: dict, now_utc) -> dict:
     min_shared = int(topics_cfg.get("group_min_shared", 2))
     order = [t["name"] for t in topics_cfg.get("topics") or []]
     exclude = topics_cfg.get("exclude") or []
+    max_age = float(topics_cfg.get("max_age_hours", 24))
 
     # 1) 허용 언론사·24시간 안만·제외어 없는 제목만, 같은 기사(주소 또는 제목+언론사)는 가중치 큰 주제 하나로
     arts: dict[tuple, dict] = {}
@@ -136,7 +139,7 @@ def select(fetched: list[dict], topics_cfg: dict, now_utc) -> dict:
             if canon is None or excluded(it["title"], exclude):
                 continue
             age = (now - it["published"]).total_seconds() / 3600
-            if age < -1 or recency(max(age, 0)) == 0:
+            if age < -1 or recency(max(age, 0), max_age) == 0:
                 continue
             key = (it.get("url") or "", it["title"], canon)
             cur = arts.get(key)
@@ -161,7 +164,7 @@ def select(fetched: list[dict], topics_cfg: dict, now_utc) -> dict:
         rep = g["members"][0]
         best = max(g["members"], key=lambda m: (m["weight"], -order.index(m["topic"]) if m["topic"] in order else 0))
         n_src = len({m["source"] for m in g["members"]})
-        fresh = recency(min(m["age"] for m in g["members"]))
+        fresh = recency(min(m["age"] for m in g["members"]), max_age)
         scored.append({"title": rep["title"], "source": rep["source"], "url": rep.get("url", ""), "published": rep["published"],
                        "topic": best["topic"], "n_sources": n_src, "score": round(n_src * best["weight"] * fresh, 6)})
     scored.sort(key=lambda s: (-s["score"], -s["n_sources"], -s["published"].value, s["title"]))

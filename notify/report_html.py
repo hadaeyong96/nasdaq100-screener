@@ -525,6 +525,26 @@ def pead_chart_src(summary: dict, edition: str) -> str | None:
     return "data:image/png;base64," + base64.b64encode(Path(p).read_bytes()).decode("ascii")
 
 
+def pead_card_srcs(summary: dict, edition: str) -> list[dict]:
+    """실적급등 종목 카드(notify/pead_chart.render_card, 2026-11-11 v2) → [{title, src(data URI), news(줄 목록)}]. 개인판만, 카드 순서 그대로.
+    news(2026-11-12): 펼친 카드(앞 CARD_OPEN장)는 그 종목 실적 뉴스 최대 3개 + 구글 뉴스 검색 링크, 접힌 카드는 링크만."""
+    import base64
+
+    from notify import pead_letter
+
+    if edition == "group":
+        return []
+    out = []
+    for c in summary.get("pead_cards") or []:
+        p = Path(c["path"])
+        if p.exists():
+            name = c.get("name") or c["ticker"]
+            news = pead_letter.news_lines(summary.get("earnings_news"), name) if len(out) < pead_letter.CARD_OPEN else []
+            out.append({"title": c["title"], "src": "data:image/png;base64," + base64.b64encode(p.read_bytes()).decode("ascii"),
+                        "news": news + [pead_letter.search_line(name)]})
+    return out
+
+
 def candidate_chart_srcs(summary: dict) -> list[dict]:
     """웅덩이 후보 종목 차트(notify/candidate_chart) → [{title, src(data URI)}]. 개인판 HTML 전용."""
     import base64
@@ -688,6 +708,7 @@ def build_context(summary: dict, cfg: dict, edition: str = "personal") -> dict:
         "letter": _letter_ctx(summary, cfg, edition),
         "curve_chart_src": curve_chart_src(summary, edition),
         "pead_chart_src": pead_chart_src(summary, edition),
+        "pead_card_srcs": pead_card_srcs(summary, edition),
         "candidate_chart_srcs": candidate_chart_srcs(summary) if personal else [],  # 개인판만(2026-10-26)  # 「▶ 그래프로 보기」 맨 위 수익곡선(2026-10-26)
         "dec_tax": summary.get("dec_tax") if personal else None,  # 12월 공제 안내 접기(개인판만, 표시일만)
         "stale": bool(summary.get("stale")),

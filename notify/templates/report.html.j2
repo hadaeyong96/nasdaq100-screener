@@ -181,7 +181,7 @@ details.fold>summary{cursor:pointer;padding:10px 14px;font-weight:700;font-size:
 details.fold>summary::-webkit-details-marker{display:none}
 details.fold[open]>summary{border-bottom:1px solid var(--line)}
 details.fold>.fold-body{padding:10px 12px}
-.curve-chart{margin:0 0 12px}.curve-chart img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
+.curve-chart{margin:0 0 12px}.pcard{margin:0 0 20px}.pcard .curve-chart{margin-bottom:6px}.curve-chart img{display:block;width:100%;height:auto;border:1px solid var(--line);border-radius:10px;background:#fff}
 details.exp{border-top:1px solid var(--grid);margin:4px 0}
 details.exp>summary{cursor:pointer;padding:8px 2px;font-weight:700;font-size:14px;color:var(--ink)}
 details.exp>summary::marker{color:var(--mute)}
@@ -383,14 +383,23 @@ nav.toc{line-height:1.9;margin:0 0 10px}
    본문: (자료 문제) → 할 일 → 내 돈(개인판) → 시장 → 오늘의 뉴스 3 → 조건부 줄(가상 매매·월요일 성적+그래프·연구 소식) → 기준 줄.
    상세(시장 온도 표·공포 매수판 표·지수·웅덩이 후보·가상 실험·용어 풀이)는 맨 아래 접기 「자세히 보기」 하나에. #}
 {% set rv = letter.report %}
+{% macro rline(line) %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %}{% if line.source %} ({{ line.source }}){% endif %}</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}{% endmacro %}
+{% macro pcard(c) %}<div class="pcard"><figure class="curve-chart" aria-label="종목 카드 {{ c.title }}"><img src="{{ c.src }}" alt="{{ c.title }} — QQQ 캔들과 주가" width="990" height="473"></figure>
+{% for line in c.news %}{{ rline(line) }}{% endfor %}</div>{% endmacro %}
 <section class="letter plain" aria-label="아침 편지">
 {% if rv.head %}<div class="ln mini">{{ rv.head }}</div>{% endif %}
 {% if rv.problem %}<div class="ln crash">▶ {{ rv.problem }}</div>{% endif %}
 {% for s in rv.sections %}
 <div class="rsec" id="sec-{{ s.key }}">
   <h2>{{ s.title }}</h2>
-  {% for line in s.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}{% endfor %}
-  {% if s.key == 'pead_watching' and pead_chart_src and not is_group %}<figure class="curve-chart" aria-label="실적급등 추천 종목 비교 그래프"><img src="{{ pead_chart_src }}" alt="실적급등 추천 종목 — 추천 다음 날 시가부터 매수가 대비 %와 QQQ" width="1200" height="672"></figure>{% endif %}
+  {% for line in s.lines %}{{ rline(line) }}{% endfor %}
+  {% if s.key == 'pead_compare' and pead_chart_src and not is_group %}<figure class="curve-chart" aria-label="한눈에 비교 그래프"><img src="{{ pead_chart_src }}" alt="QQQ보다 얼마나 앞섰나 — 추천 종목별 QQQ 대비 초과" width="990" height="616"></figure>{% endif %}
+  {% if s.key == 'pead_cards' and pead_card_srcs and not is_group %}{# 앞 4장은 펼치고 5장째부터 접기 (2026-11-11 v2) #}
+  {# 카드 하나 → 바로 아래 그 종목 실적 뉴스(최대 3)·검색 링크 (2026-11-12). 접힌 카드는 링크만 #}
+  {% for c in pead_card_srcs[:4] %}{{ pcard(c) }}{% endfor %}
+  {% if pead_card_srcs|length > 4 %}<details class="more"><summary>카드 더 보기 ({{ pead_card_srcs|length - 4 }}장)</summary>
+  {% for c in pead_card_srcs[4:] %}{{ pcard(c) }}{% endfor %}
+  </details>{% endif %}{% endif %}
 </div>
 {% endfor %}
 {% if rv.extras or (rv.monday_chart and curve_chart_src) %}
@@ -1224,6 +1233,7 @@ nav.toc{line-height:1.9;margin:0 0 10px}
 </section>
 {% endset %}
 {% if letter and letter.report %}
+{% if not letter.report.pead %}{# 실적급등 편지는 접기 「자세히 보기」 없음 (2026-11-12 사용자 지시) #}
 {% set d = letter.report.details %}
 <details class="fold" id="fold-details">
 <summary>{{ d.title }}</summary>
@@ -1267,13 +1277,14 @@ nav.toc{line-height:1.9;margin:0 0 10px}
   {% if curve_chart_src and not letter.report.monday_chart %}<figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>{% endif %}
   {% endif %}
   {% endif %}
-  {% if scorecard %}<h3>이번 달 가상 성적표</h3>{% for line in scorecard.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}{% endif %}
+  {% if scorecard and not letter.report.pead %}<h3>이번 달 가상 성적표</h3>{% for line in scorecard.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}{% endif %}
   {% if dec_tax and not is_group %}<h3>올해 세금 없이 팔 수 있는 이익</h3>{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}{% endif %}
   <div class="ln mini">{{ d.caution }}</div>
   <h3>{{ d.guide_title }}</h3>
   {{ guide_html }}
 </div>
 </details>
+{% endif %}
 {% else %}
 {% if scorecard %}
 <details class="fold" id="fold-scorecard">

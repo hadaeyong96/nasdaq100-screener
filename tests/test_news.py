@@ -204,3 +204,28 @@ def test_repo_aliases_are_few_and_at_least_two_chars():
     assert raw and all(len(x.strip()) >= universe.ALIAS_MIN_LEN for x in raw)
     al = universe.load_name_aliases()
     assert al["TTWO"] == ["테이크투"] and al["GOOGL"] == ["알파벳", "구글"] and len(al) <= 10
+
+
+def test_earnings_news_days_window_and_by_company():
+    # 종목 카드 아래 뉴스(2026-11-12): when:7d로 검색, 7일 안 기사만, 회사별 최대 per_company개
+    feeds = {"앱러빈 실적": _rss([("앱러빈 3분기 실적 호조", "연합뉴스", 2), ("앱러빈 매출 전망 상향", "한국경제", 100),
+                               ("앱러빈 분기 이익 급증", "이데일리", 150), ("앱러빈 가이던스 발표", "뉴스1", 160),
+                               ("앱러빈 실적 예고", "연합뉴스", 200)])}
+    urls = []
+
+    def get(url):
+        urls.append(url)
+        return feeds["앱러빈 실적"]
+
+    res = dn.earnings_news(NOW, ["앱러빈"], topics_cfg=TOPICS, get=get, pause=0, days=7, per_company=3)
+    assert dn.quote("when:7d") in urls[0]
+    got = [a["title"] for a in res["by_company"]["앱러빈"]]
+    assert got[0] == "앱러빈 3분기 실적 호조" and len(got) == 3 and "앱러빈 실적 예고" not in got  # 200시간 = 7일 넘음
+    one_day = dn.earnings_news(NOW, ["앱러빈"], topics_cfg=TOPICS, get=get, pause=0)
+    assert dn.quote("when:1d") in urls[-1] and [a["title"] for a in one_day["top"]] == ["앱러빈 3분기 실적 호조"]  # 기본은 그대로 24시간
+
+
+def test_recency_extra_window_default_unchanged():
+    from core import news as cn
+
+    assert cn.recency(30) == 0.0 and cn.recency(30, 168) == 0.4 and cn.recency(10, 168) == 1.0 and cn.recency(200, 168) == 0.0
