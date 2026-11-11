@@ -2,14 +2,18 @@
 
 입력은 engine.pead_watch.run의 letter 칸(summary["pead_watch"]). 문장은 짧은 단문 경어체.
 개인판 v2(2026-11-11, 그래프 중심): 오늘 할 일 → 새 추천(있을 때만) → 한눈에 비교(그래프 ①) → 종목 카드(그래프 ②)
-→ 실적 뉴스. 성적표·끝난 종목·실적 발표 예정은 접기 「자세히 보기」(fold_sections). 머리 한 줄은 없음(사용자 지시).
+(카드마다 바로 아래 그 종목 실적 뉴스 최대 3개 + 구글 뉴스 검색 링크, 2026-11-12). 머리 한 줄·접기 「자세히 보기」는 없음
+(사용자 지시 2026-11-11·11-12).
 단체방판: 종목 이름·그래프·뉴스 없이 개수·할 일 유무·성적표 한 줄.
 """
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import pandas as pd
 
+CARD_OPEN = 4  # 펼쳐 보이는 종목 카드 수 — 이 카드만 기사를 검색하고, 나머지는 접고 검색 링크만 (템플릿 [:4]와 같음)
 WEEKDAY = "월화수목금토일"
 LEDGER_NAMES = {"main": "90일", "compare": "60일"}
 
@@ -66,47 +70,28 @@ def new_lines(L: dict) -> list[str]:
     return out
 
 
-def watching_lines(L: dict) -> list[str]:
-    """③ 관찰 중 — 보유 n/90일, 매수가 대비·QQQ 대비, 매도 예정일. 매수 대기는 매수일만."""
-    if not L["watching"]:
-        return ["관찰 중인 종목이 없습니다."]
-    out = []
-    for r in L["watching"]:
-        if r["status"] == "pending":
-            out.append(f"{who(r)} · 매수 대기({md(r['buy_day'])} 시가) · 매도 예정 {md(r['plan_day'])}")
-        else:
-            out.append(f"{who(r)} · 보유 {r['held']}/{r['hold']}일 · 매수가 대비 {pct(r['ret'])} · QQQ 대비 {pp(r['vs_qqq'])}"
-                       f" · 매도 예정 {md(r['plan_day'])}")
-    return out
+def search_url(name: str) -> str:
+    """그 회사 실적 뉴스 구글 뉴스 검색 주소("{이름} 실적", 한국어)."""
+    return f"https://news.google.com/search?q={quote(f'{name} 실적')}&hl=ko&gl=KR&ceid=KR:ko"
 
 
-def earnings_lines(L: dict) -> list[str]:
-    """④ 실적 발표 예정(이번 주·다음 주) — 날짜별 종목. 확인 실패 수가 있으면 한 줄 덧붙인다."""
-    e = L.get("earnings") or {}
-    rows = e.get("rows") or []
-    out = []
-    if rows:
-        by: dict[str, list[str]] = {}
-        for r in rows:
-            by.setdefault(r["date"], []).append(who(r))
-        out += [f"{md(d)}: {', '.join(v)}" for d, v in by.items()]
-    else:
-        out.append("이번 주·다음 주 발표 예정 종목이 없습니다.")
-    if e.get("failed"):
-        out.append(f"예정일 확인 실패 {e['failed']}개")
-    return out
+def search_line(name: str) -> dict:
+    """검색 링크 한 줄 — 보고서 줄 모양 {text, title, url}(언론사 없음)."""
+    return {"text": "구글 뉴스에서 더 찾기", "title": "구글 뉴스에서 더 찾기", "url": search_url(name)}
 
 
-def news_lines(news: dict | None) -> list:
-    """실적 발표 뉴스(data.news.earnings_news) — 줄 = {text, title, source, url}(제목 링크). 없으면 한 줄 안내."""
+def news_lines(news: dict | None, name: str) -> list:
+    """회사 하나의 실적 뉴스(data.news.earnings_news의 by_company[name], 최대 3개) — 줄 = {text, title, source, url}(제목 링크).
+    없으면 한 줄 안내. 검색 링크는 붙이지 않는다(search_line)."""
     from core.news import shorten
 
     if not news or news.get("status") == "fail":
-        return ["실적 발표 뉴스를 받지 못했습니다."]
-    if not news.get("top"):
-        return ["최근 24시간 실적 발표 뉴스가 없습니다."]
+        return ["실적 뉴스를 받지 못했습니다."]
+    arts = (news.get("by_company") or {}).get(name) or []
+    if not arts:
+        return ["최근 7일 실적 뉴스가 없습니다."]
     out = []
-    for a in news["top"]:
+    for a in arts:
         t = shorten(a["title"])
         out.append({"text": f"{t} ({a['source']})", "title": t, "source": a["source"], "url": a.get("url", "")})
     return out
@@ -119,14 +104,15 @@ def _score_line(name: str, sc: dict) -> str:
     return f"성적표 {name}: {sc['n']}건 · 평균 초과 {sc['mean']:+.2f}%{basis} · 승률 {sc['win']:.0f}%"
 
 
-def closed_lines(L: dict) -> list[str]:
-    """⑤ 끝난 종목 최근 5개 + 성적표(90·60 따로, 비용 뒤·세금 전 QQQ 대비)."""
-    out = [f"{who(r)} · {md(r['sell_day'])} 매도 · {pct(r['ret'])} · QQQ 대비 {pp(r['vs_qqq'])}" for r in L["closed"]]
-    if not out:
-        out.append("끝난 종목이 아직 없습니다.")
-    for k in ("main", "compare"):
-        out.append(_score_line(LEDGER_NAMES[k], (L.get("scorecards") or {}).get(k)))
-    return out
+def personal_score_line(L: dict) -> str:
+    """개인판 맨 위(제목 바로 아래, 예전 머리 줄 자리) 성적표 한 줄(2026-11-12) — 단체방판 한 줄과 같은 90일 장부 숫자.
+    "성적표(90일) n건 · QQQ 대비 평균 +x.x%p · 승률 x%", 끝난 매매가 없으면 "성적표(90일) 아직 끝난 매매 없음"."""
+    sc = (L.get("scorecards") or {}).get("main")
+    name = LEDGER_NAMES["main"]
+    if not sc or not sc.get("n"):
+        return f"성적표({name}) 아직 끝난 매매 없음"
+    basis = "" if sc.get("basis") == "cost" else " (비용 전)"
+    return f"성적표({name}) {sc['n']}건 · QQQ 대비 평균 {sc['mean']:+.1f}%p{basis} · 승률 {sc['win']:.0f}%"
 
 
 def group_lines(L: dict) -> list[str]:
@@ -144,7 +130,7 @@ def cards_title(L: dict) -> str:
 
 def sections(pwr: dict | None, edition: str, today_kst=None, news: dict | None = None) -> list[dict]:
     """보고서 본문 칸 [{key, title, lines}]. pwr = summary["pead_watch"] ({status, letter}), news = summary["earnings_news"].
-    그래프 칸(pead_compare·pead_cards)은 lines가 비어 있고 그림은 보고서가 붙인다(그림이 없으면 한 줄 안내). 오류면 한 줄."""
+    그래프 칸(pead_compare·pead_cards)은 lines가 비어 있고 그림·카드 아래 뉴스는 보고서가 붙인다(그림이 없으면 한 줄 안내). 오류면 한 줄."""
     if not pwr:
         return []
     if pwr.get("status") == "error":
@@ -153,24 +139,16 @@ def sections(pwr: dict | None, edition: str, today_kst=None, news: dict | None =
     if edition == "group":
         return [{"key": "pead_group", "title": "■ 실적급등 추천", "lines": group_lines(L)}]
     secs = [{"key": "pead_todo", "title": "■ 오늘 할 일", "lines": todo_lines(L, today_kst)}]
-    if L["new"]:
-        secs.append({"key": "pead_new", "title": "■ 새 추천", "lines": new_lines(L)})
+    if L["new"]:  # 카드가 없는 새 추천(매수 대기)은 줄 아래에 바로 그 종목 뉴스·검색 링크
+        carded = {c["ticker"] for c in (L.get("chart") or {}).get("cards") or []}
+        lines = []
+        for r, ln in zip(L["new"], new_lines(L)):
+            lines.append(ln)
+            if r["ticker"] not in carded:
+                lines += news_lines(news, r.get("name") or r["ticker"]) + [search_line(r.get("name") or r["ticker"])]
+        secs.append({"key": "pead_new", "title": "■ 새 추천", "lines": lines})
     has = bool((L.get("chart") or {}).get("lines"))
     secs.append({"key": "pead_compare", "title": "■ 한눈에 비교", "lines": [] if has else ["보유 중인 종목이 없습니다."]})
     if (L.get("chart") or {}).get("cards"):
         secs.append({"key": "pead_cards", "title": cards_title(L), "lines": []})
-    secs.append({"key": "pead_news", "title": "■ 실적 뉴스", "lines": news_lines(news)})
     return secs
-
-
-def fold_sections(pwr: dict | None, edition: str) -> list[dict]:
-    """접기 「자세히 보기」 맨 위 칸(개인판): 성적표(90·60 따로) → 끝난 종목 최근 5개 → 실적 발표 예정(이번 주·다음 주)."""
-    if not pwr or pwr.get("status") == "error" or edition == "group":
-        return []
-    L = pwr["letter"]
-    closed = closed_lines(L)
-    return [
-        {"key": "pead_score", "title": "성적표", "lines": closed[-2:]},
-        {"key": "pead_closed", "title": "끝난 종목 (최근 5개)", "lines": closed[:-2]},
-        {"key": "pead_earnings", "title": "실적 발표 예정 (이번 주·다음 주)", "lines": earnings_lines(L)},
-    ]

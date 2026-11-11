@@ -667,12 +667,12 @@ def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict
     extras = extra_lines(summary, cfg, ph, edition)
     head, fold_top = None, []
     pead = summary.get("pead_watch")
-    if pead:  # 실적급등 추천 편지 v2(2026-11-11): 본문 = 할 일·새 추천·그래프 2종·실적 뉴스. 머리 줄 없음.
-        # 시장·내 돈·일반 뉴스·가상 실험 소식·급락장 경고는 뺀다. 성적표·끝난 종목·실적 예정·한눈에는 접기 안.
+    if pead:  # 실적급등 추천 편지 v2(2026-11-11): 본문 = 맨 위 성적표 한 줄 · 할 일 · 새 추천 · 그래프 2종(카드마다 뉴스).
+        # 시장·내 돈·일반 뉴스·가상 실험 소식·급락장 경고는 뺀다. 접기 「자세히 보기」도 없음(2026-11-12 사용자 지시).
         from notify import pead_letter
 
-        fold_top = pead_letter.fold_sections(pead, edition)
-        fold_top.append({"key": "glance", "title": "한눈에", "lines": glance_lines(summary, cfg, ph, edition)})
+        if edition != GROUP and pead.get("status") != "error":  # 머리 줄 자리에 성적표(90일) 한 줄 (2026-11-12)
+            head = pead_letter.personal_score_line(pead["letter"])
         secs = pead_letter.sections(pead, edition, summary.get("letter_today_kst"), summary.get("earnings_news"))
         extras = []
     as_of = summary.get("as_of")

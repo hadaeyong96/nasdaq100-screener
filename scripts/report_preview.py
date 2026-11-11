@@ -167,10 +167,14 @@ def sample_pead(summary: dict) -> dict:
     L = sample_pead_letter()
     summary["pead_watch"] = {"status": "ok", "letter": L}
     now = pd.Timestamp("2026-11-11 22:00", tz="UTC")
-    summary["earnings_news"] = {"status": "ok", "failed": [], "top": [
-        {"title": "앱러빈, 3분기 매출 예상 상회…주가 31% 급등", "source": "연합뉴스", "url": "https://example.com/1", "published": now},
-        {"title": "테이크투, 'GTA6' 기대에 실적 전망 상향", "source": "한국경제", "url": "https://example.com/2", "published": now},
-        {"title": "엔비디아 실적 발표 앞두고 반도체주 관망", "source": "뉴스1", "url": "https://example.com/3", "published": now}]}
+    def art(i, title, source):
+        return {"title": title, "source": source, "url": f"https://example.com/{i}", "published": now}
+
+    by = {"앱러빈": [art(1, "앱러빈, 3분기 매출 예상 상회…주가 31% 급등", "연합뉴스"),
+                  art(2, "앱러빈 실적 서프라이즈, 광고 플랫폼 성장 지속", "한국경제"),
+                  art(3, "[美특징주] 앱러빈, 가이던스 상향에 신고가", "이데일리")],
+          "테이크투인터랙티브": [art(4, "테이크투, 'GTA6' 기대에 실적 전망 상향", "한국경제")]}
+    summary["earnings_news"] = {"status": "ok", "failed": [], "top": [a for v in by.values() for a in v], "by_company": by}
     from engine import daily
     from notify import pead_chart
 

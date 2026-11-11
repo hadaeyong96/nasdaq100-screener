@@ -2673,7 +2673,7 @@ def _attach_pead_watch(summary: dict, cfg: dict, run_fn=None, chart_fn=None, car
 
 
 def attach_pead_cards(L: dict, out_dir, as_of: str, today_kst=None, card_fn=None) -> list[dict]:
-    """종목 카드 PNG(카드 순서 그대로) → [{ticker, title, path}]. 카드 하나가 실패하면 그 카드만 건너뛴다."""
+    """종목 카드 PNG(카드 순서 그대로) → [{ticker, name, title, path}]. 카드 하나가 실패하면 그 카드만 건너뛴다."""
     from notify import pead_chart
 
     out = []
@@ -2681,21 +2681,24 @@ def attach_pead_cards(L: dict, out_dir, as_of: str, today_kst=None, card_fn=None
         try:
             p = (card_fn or pead_chart.render_card)(c, Path(out_dir) / f"pead_card_{as_of}_{c['ticker']}.png",
                                                     L.get("next_day"), today_kst)
-            out.append({"ticker": c["ticker"], "title": f"{c['name']} ({c['ticker']})", "path": str(p)})
+            out.append({"ticker": c["ticker"], "name": c["name"], "title": f"{c['name']} ({c['ticker']})", "path": str(p)})
         except Exception as exc:  # noqa: BLE001
             print(f"[daily] 종목 카드 오류 {c.get('ticker')}(편지는 그대로): {type(exc).__name__}: {exc}")
     return out
 
 
 def earnings_news_companies(letter: dict, today_kst=None, aliases: dict[str, list[str]] | None = None) -> list:
-    """실적 뉴스 검색 회사(앞쪽이 먼저): 새 추천 → 관찰 중 → 실적 발표 예정 중 편지 받는 날까지 발표한 종목.
+    """실적 뉴스 검색 회사(앞쪽이 먼저, 2026-11-12): 카드가 없는 새 추천(매수 대기) → 펼친 종목 카드(앞 CARD_OPEN장, 카드 순서).
+    접힌 카드는 검색하지 않는다(편지에는 구글 뉴스 검색 링크만). today_kst는 예전 호출과 맞추려 받기만 한다.
 
     출력: 한글 이름(없으면 티커) 목록. aliases({티커: [별칭]}, name_kr.csv alias 칸)를 주면 별칭이 있는 회사는
     {"name", "aliases"}로 준다 — 편지에는 정식 이름만, 별칭은 검색에만 쓴다.
     """
-    today = pd.Timestamp(today_kst).normalize() if today_kst is not None else None
-    rows = list(letter.get("new") or []) + list(letter.get("watching") or [])
-    rows += [r for r in (letter.get("earnings") or {}).get("rows") or [] if today is None or pd.Timestamp(r["date"]) <= today]
+    from notify.pead_letter import CARD_OPEN
+
+    cards = (letter.get("chart") or {}).get("cards") or []
+    carded = {c["ticker"] for c in cards}
+    rows = [r for r in letter.get("new") or [] if r["ticker"] not in carded] + list(cards[:CARD_OPEN])
     out, seen = [], set()
     for r in rows:
         name = r.get("name") or r["ticker"]
@@ -2724,7 +2727,7 @@ def _attach_earnings_news(summary: dict, news_fn=None) -> None:
         aliases = {}
     names = earnings_news_companies(pwr["letter"], summary.get("letter_today_kst"), aliases)
     try:
-        summary["earnings_news"] = (news_fn or (lambda n: news.earnings_news(pd.Timestamp.now(tz="UTC"), n)))(names)
+        summary["earnings_news"] = (news_fn or (lambda n: news.earnings_news(pd.Timestamp.now(tz="UTC"), n, days=7)))(names)
     except Exception as exc:  # noqa: BLE001 — 뉴스 실패가 편지를 막으면 안 된다
         print(f"[daily] 실적 뉴스를 받지 못했습니다(편지는 그대로): {type(exc).__name__}")
         summary["earnings_news"] = {"status": "fail", "top": [], "topics": {}, "failed": [n if isinstance(n, str) else n["name"] for n in names]}
