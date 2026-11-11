@@ -425,6 +425,11 @@ NEWS_TOP_N = 3  # ■ 오늘의 뉴스: 점수 상위 몇 개 (수집·점수는
 def has_todo(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> bool:
     """오늘 할 일이 기본 문장(todo.none "투자 포지션 변경 없습니다.")이 아니면 True — 판마다 다르다(저축일·12월 공제는 개인판만)."""
     ph = phrases if phrases is not None else load_phrases()
+    pwr = summary.get("pead_watch")
+    if edition == PERSONAL and pwr and pwr.get("status") != "error":
+        a = pwr["letter"]["actions"]
+        if a["buy"] or a["sell"]:  # 실적급등 매수·매도(2026-11-11)
+            return True
     return todo_lines(summary, cfg, ph, edition) != [phrase(ph, "todo.none", _day(summary))]
 
 
@@ -628,6 +633,20 @@ def extra_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
     return out
 
 
+def glance_lines(summary: dict, cfg: dict, ph: dict, edition: str) -> list[str]:
+    """실적급등 편지의 접기 「한눈에」(2026-11-11): 시장 온도 한 줄, (그날만) 저축일·12월 공제·성적표,
+    웅덩이 v3.2·반등 v2 장부 첫 줄. 계산·기록은 그대로, 보이는 자리만 접기로."""
+    day = _day(summary)
+    out = market_main_lines(summary, cfg, ph)[:1]
+    skip = {phrase(ph, "todo.none", day), phrase(ph, "todo.crash", day)}  # 급락장 경고는 실적급등 편지에서 뺀다(2026-11-11)
+    out += [x for x in todo_lines(summary, cfg, ph, edition) if x not in skip]
+    for slot in ("puddle_v31", "puddle_rebound"):
+        ls = (summary.get(slot) or {}).get(edition) or []
+        if ls:
+            out.append(ls[0])
+    return out
+
+
 def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict | None = None) -> dict:
     """보고서 화면 → {title, problem(글|None), sections[{key, title, lines}], extras[글], monday_chart(bool), base(기준 줄), details{…}}.
     본문 = 할 일·내 돈(개인판, 빈칸이면 생략)·시장·뉴스 + 조건부 줄 + 기준 줄. 상세는 맨 아래 접기 「자세히 보기」 하나에 모은다
@@ -645,14 +664,27 @@ def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict
     news = news_top_lines(summary, ph)
     if news:
         secs.append({"key": "news", "title": rp.get("news", "■ 오늘의 뉴스"), "lines": news})
+    extras = extra_lines(summary, cfg, ph, edition)
+    head, fold_top = None, []
+    pead = summary.get("pead_watch")
+    if pead:  # 실적급등 추천 편지(2026-11-11): 본문 = 실적급등 ①~⑤(뉴스 = 실적 발표 뉴스). 시장·내 돈·일반 뉴스·가상 실험 소식·급락장 경고는 뺀다
+        from notify import pead_letter
+
+        head = pead_letter.HEAD
+        fold_top = [{"key": "glance", "title": "한눈에", "lines": glance_lines(summary, cfg, ph, edition)}]
+        secs = pead_letter.sections(pead, edition, summary.get("letter_today_kst"), summary.get("earnings_news"))
+        extras = []
     as_of = summary.get("as_of")
     base = f"{pd.Timestamp(as_of).month}/{pd.Timestamp(as_of).day}" if as_of is not None else "?"
     return {
         "title": title(summary, cfg, ph),
+        "head": head,
+        "pead": bool(pead),
         "problem": phrase(ph, "problem.prefix", day) + " ".join(probs) if probs else None,
         "sections": secs,
-        "extras": extra_lines(summary, cfg, ph, edition),
-        "monday_chart": _is_monday(summary),
+        "fold_top": fold_top,
+        "extras": extras,
+        "monday_chart": _is_monday(summary) and not pead,
         "base": phrase(ph, "footer.base", day, 날짜=base),
         "details": {
             "title": rp.get("details", "▶ 자세히 보기"),

@@ -45,29 +45,38 @@ def _save_cache(df: pd.DataFrame, cache_path: Path) -> None:
 
 
 def get_earnings_dates(
-    tickers: list[str], today: date | None = None, cache_path: Path = CACHE_PATH
+    tickers: list[str], today: date | None = None, cache_path: Path = CACHE_PATH, max_workers: int = 1
 ) -> dict[str, date | None]:
     """종목별 다음 실적 발표일을 받는다 (하루 단위 캐시, cache_path에 저장).
 
-    입력: yfinance 형식 ticker 목록, today(테스트용 날짜 주입), cache_path
+    입력: yfinance 형식 ticker 목록, today(테스트용 날짜 주입), cache_path,
+         max_workers(캐시에 없는 종목을 동시에 받을 수 — 실적급등 장부 약 150종목, 2026-11-11. 기본 1 = 차례로)
     출력: {ticker: date 또는 None}
     """
     today = today or datetime.now().date()
     cache = _load_cache(cache_path)
 
     result: dict[str, date | None] = {}
-    updated = False
+    todo = []
     for ticker in tickers:
         cached_row = cache.loc[ticker] if ticker in cache.index else None
         if cached_row is not None and pd.Timestamp(cached_row["fetched_on"]).date() == today:
             raw = cached_row["earnings_date"]
             result[ticker] = None if pd.isna(raw) else pd.Timestamp(raw).date()
             continue
+        todo.append(ticker)
 
-        fetched = _fetch_next_earnings_date(ticker, today)
+    if max_workers > 1 and len(todo) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            fetched_all = list(ex.map(lambda t: _fetch_next_earnings_date(t, today), todo))
+    else:
+        fetched_all = [_fetch_next_earnings_date(t, today) for t in todo]
+    updated = bool(todo)
+    for ticker, fetched in zip(todo, fetched_all):
         result[ticker] = fetched
         cache.loc[ticker] = {"earnings_date": fetched, "fetched_on": today}
-        updated = True
 
     if updated:
         _save_cache(cache, cache_path)

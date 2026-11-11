@@ -2333,7 +2333,11 @@ def main() -> None:
             _safe_step(summary, "웅덩이 반등 확인 v2 장부", lambda: _attach_puddle_rebound(summary, cfg))
             _safe_step(summary, "그래프", lambda: _attach_curve_chart(summary, cfg))
             _safe_step(summary, "웅덩이 후보 차트", lambda: _attach_candidate_charts(summary))
-            _safe_step(summary, "뉴스", lambda: _attach_news(summary, cfg))
+            if (cfg.get("pead_watch") or {}).get("enabled", False):  # 2026-11-11: 뉴스 = 실적급등 종목 실적 발표 뉴스
+                _safe_step(summary, "실적급등 추천", lambda: _attach_pead_watch(summary, cfg))
+                _safe_step(summary, "실적 뉴스", lambda: _attach_earnings_news(summary))
+            else:
+                _safe_step(summary, "뉴스", lambda: _attach_news(summary, cfg))
             _attach_search_forecast(summary)  # 실패해도 편지에 흔적 없음(자료 문제 줄도 안 남김)
         # 전략공장 F2: 매달 첫 거래일만 「가상 장부 월간 성적표」 접기 — 2026-10-22 새 출발로 끔(report.monthly_scorecard)
         if (cfg.get("report") or {}).get("monthly_scorecard", True):
@@ -2640,6 +2644,57 @@ def _attach_curve_chart(summary: dict, cfg: dict, out_dir: Path | None = None, d
     except Exception as exc:  # noqa: BLE001 — 그래프만 빠진다
         print(f"[daily] 수익곡선 그래프를 만들지 못했습니다(편지는 그대로): {type(exc).__name__}: {exc}")
         summary["curve_chart"] = {"error": type(exc).__name__}
+
+
+def _attach_pead_watch(summary: dict, cfg: dict, run_fn=None, chart_fn=None) -> None:
+    """실적급등 추천 장부(engine/pead_watch, docs/prereg/pead_watch.md) → summary["pead_watch"]({status, letter})와
+    개인판 비교 그래프 summary["pead_chart"]. 장부는 run_safely로 감싸 실패해도 편지는 나간다(오류면 칸에 한 줄)."""
+    from engine import pead_watch
+
+    summary["pead_watch"] = None
+    if summary.get("as_of") is None:
+        return
+    res = (run_fn or pead_watch.run_safely)(cfg, summary["as_of"], today_kst=summary.get("letter_today_kst"))
+    if not res:
+        return
+    summary["pead_watch"] = {"status": res.get("status"), "letter": res.get("letter") or pead_watch._empty_letter(),
+                             "timing": res.get("timing")}
+    if res.get("status") == "error" and summary.get("letter_check") is not None:
+        summary["letter_check"].setdefault("notes", []).append("실적급등 장부 오류")
+    try:
+        from notify import pead_chart
+
+        as_of = pd.Timestamp(summary["as_of"]).date().isoformat()
+        summary["pead_chart"] = (chart_fn or pead_chart.render)(summary["pead_watch"]["letter"].get("chart"),
+                                                                OUTPUT_DIR / f"pead_chart_{as_of}.png", as_of)
+    except Exception as exc:  # noqa: BLE001 — 그래프만 건너뛴다
+        print(f"[daily] 실적급등 그래프 오류(편지는 그대로): {type(exc).__name__}: {exc}")
+
+
+def earnings_news_companies(letter: dict, today_kst=None) -> list[str]:
+    """실적 뉴스 검색 회사(앞쪽이 먼저): 새 추천 → 관찰 중 → 실적 발표 예정 중 편지 받는 날까지 발표한 종목. 한글 이름, 없으면 티커."""
+    today = pd.Timestamp(today_kst).normalize() if today_kst is not None else None
+    rows = list(letter.get("new") or []) + list(letter.get("watching") or [])
+    rows += [r for r in (letter.get("earnings") or {}).get("rows") or [] if today is None or pd.Timestamp(r["date"]) <= today]
+    return list(dict.fromkeys((r.get("name") or r["ticker"]) for r in rows))
+
+
+def _attach_earnings_news(summary: dict, news_fn=None) -> None:
+    """실적급등 편지 뉴스(2026-11-11): summary["pead_watch"] 종목의 실적 발표 기사 → summary["earnings_news"]. 실패하면 status "fail"."""
+    from data import news
+
+    pwr = summary.get("pead_watch")
+    if not pwr or pwr.get("status") == "error":
+        summary["earnings_news"] = None
+        return
+    names = earnings_news_companies(pwr["letter"], summary.get("letter_today_kst"))
+    try:
+        summary["earnings_news"] = (news_fn or (lambda n: news.earnings_news(pd.Timestamp.now(tz="UTC"), n)))(names)
+    except Exception as exc:  # noqa: BLE001 — 뉴스 실패가 편지를 막으면 안 된다
+        print(f"[daily] 실적 뉴스를 받지 못했습니다(편지는 그대로): {type(exc).__name__}")
+        summary["earnings_news"] = {"status": "fail", "top": [], "topics": {}, "failed": names}
+    if summary["earnings_news"].get("failed"):
+        print(f"[daily] 실적 뉴스 검색어 실패 {len(summary['earnings_news']['failed'])}개")
 
 
 def _attach_search_forecast(summary: dict, counts_fn=None) -> None:

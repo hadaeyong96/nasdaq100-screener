@@ -1,0 +1,55 @@
+# 실적급등 추천 장부 (pead_watch) 사전 등록 — docs/prereg/pead_watch.md의 수치를 기계가 읽게 옮긴 것.
+# 태그 pead-watch-prereg 뒤 수정 금지. 엔진은 시작할 때 이 파일 해시를 태그 커밋과 대조한다.
+
+registered_at: "2026-11-11"
+basis:
+  sw1: {tag: sw1-prereg, result: docs/results/sw1.md, n: 601, mean_excess_after_pct: 0.53}
+  sealed_a: {result: docs/results/sealed_a_sw1.md, n: 382, mean_excess_after_pct: -0.21, verdict: FAIL}
+  timing: {tag: pead-timing-plan, result_commit: 2f40339, picked: "B1·90", mean_excess_after_pct: 0.67,
+           ref_2022_2026_b1_90_pct: -0.69, weakness: ["무작위 구별력 없음(25칸 모두 99+)", "백분위 100.0 동점 4칸 중 평균 큰 칸",
+                                                     "승률 48~52%", "2022~ B1·90 -0.69%"]}
+
+universe:
+  lists: [nasdaq100, sp100]
+  combine: union
+  as_of: previous_month_end_of_reaction_day
+  membership_label: {both: "둘 다", ndx: "나스닥100", sp100: "S&P100"}
+
+announcement:
+  form: "8-K"              # 8-K/A 제외
+  item: "2.02"
+  min_gap_days: 60         # 직전에 센 8-K 2.02 접수일로부터 달력일
+  accepted_source: index_page   # 공시 색인 페이지 Accepted(동부)
+  reaction_day: {pre_market_before: "09:30", pre_market: same_day, otherwise: next_trading_day}
+
+signal:
+  stock_return_min: 0.05
+  excess_vs_qqq_min: 0.05
+  volume_ratio_min: 2.0
+  volume_window_days: 20
+  min_rows: 22
+
+trade:
+  buy: next_trading_day_open
+  ledgers: {main: 90, compare: 60, reference: 20}   # 매수일부터 거래일, 그날 종가 매도
+  stop_loss: none
+  same_ticker_while_holding: ignore_new_signal
+  prices: "yfinance auto_adjust=False Open/Close/Volume (분할 반영)"
+  costs: {buy_commission_pct: 0.07, sell_commission_pct: 0.07, fx_spread_pct: 0.1}
+  tax: {rate_pct: 22, unit: year, deduction: none}
+  benchmark: QQQ
+
+verdict:
+  ledger: main
+  window_months: 12
+  extend_months_once: 6
+  criteria:
+    - {id: 1, key: mean_excess_after_cost_tax, rule: "> 0"}
+    - {id: 2, key: random_percentile, rule: ">= 90", iterations: 1000, seed: 20261112}
+    - {id: 3, key: trade_count, rule: ">= 50", else: "6개월 1회 연장, 그래도 미달이면 판정 불가"}
+  reference_only: ["compare(60)", "reference(20)", "나스닥100만", "S&P100만"]
+
+record:
+  db: virtual_books.db
+  tables_prefix: pead_watch_
+  write_only: github_actions_schedule
