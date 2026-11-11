@@ -22,6 +22,9 @@ def legacy_cfg(cfg: dict) -> dict:
     vb = c.get("virtual_books")
     if vb is not None:
         vb["enabled"] = True
-        if "penny" in vb:
-            vb["penny"]["enabled"] = True
+        # 7·8·9번(picks·value_score·accel)은 2026-11-11 설정 정리로 enabled: false — 새 출발 전 값(true)으로 되돌린다.
+        # 6번 momentum은 그 전부터 꺼져 있었으므로 그대로 둔다.
+        for key in ("penny", "picks", "value_score", "accel"):
+            if key in vb:
+                vb[key]["enabled"] = True
     return c

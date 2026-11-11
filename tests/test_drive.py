@@ -14,8 +14,10 @@ from store import drive
 class _FakeRequest:
     def __init__(self, result):
         self._result = result
+        self.num_retries = None
 
-    def execute(self):
+    def execute(self, num_retries=0):
+        self.num_retries = num_retries
         return self._result
 
 
@@ -23,13 +25,16 @@ class _FakeFilesResource:
     def __init__(self, media_by_file_id: dict[str, bytes] | None = None):
         self._media_by_file_id = media_by_file_id or {}
         self.update_calls: list[tuple[str, object]] = []
+        self.requests: list[_FakeRequest] = []
 
     def get_media(self, fileId: str) -> _FakeRequest:
-        return _FakeRequest(self._media_by_file_id.get(fileId, b""))
+        self.requests.append(_FakeRequest(self._media_by_file_id.get(fileId, b"")))
+        return self.requests[-1]
 
     def update(self, fileId: str, media_body) -> _FakeRequest:
         self.update_calls.append((fileId, media_body))
-        return _FakeRequest({"id": fileId})
+        self.requests.append(_FakeRequest({"id": fileId}))
+        return self.requests[-1]
 
 
 class _FakeDriveService:
@@ -50,6 +55,17 @@ def test_download_from_drive_writes_local_file(tmp_path):
     drive.download_from_drive("file-abc", local_path, service=service)
 
     assert local_path.read_bytes() == b"sqlite-bytes-here"
+
+
+def test_download_and_upload_retry_transient_errors(tmp_path):
+    """받기·올리기 모두 googleapiclient 재시도(num_retries=3)를 켠다 — 2026-11-11 paper 업로드 일시 오류."""
+    service = _FakeDriveService({"file-abc": b"content"})
+    local_path = tmp_path / "state.db"
+
+    drive.download_from_drive("file-abc", local_path, service=service)
+    drive.upload_to_drive("file-abc", local_path, service=service)
+
+    assert [r.num_retries for r in service.files().requests] == [3, 3]
 
 
 def test_download_from_drive_creates_parent_directories(tmp_path):

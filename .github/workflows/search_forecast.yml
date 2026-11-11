@@ -63,6 +63,8 @@ jobs:
         run: |
           git config user.name "search-forecast-bot"
           git config user.email "actions@users.noreply.github.com"
+          # 잠글 분기가 없던 주는 폴더가 안 생긴다 — git add가 pathspec 오류(exit 128)로 실패하지 않게 건너뛴다(2026-11-08 실패).
+          if [ ! -d docs/forecast_locks ]; then echo "새 잠금 없음(폴더 없음)"; exit 0; fi
           git add docs/forecast_locks
           if git diff --cached --quiet; then echo "새 잠금 없음"; exit 0; fi
           git commit -m "검색량 예고 잠금: $(date -u +%Y-%m-%dT%H:%MZ) (시각·해시만)"
