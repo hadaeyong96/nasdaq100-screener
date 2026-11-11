@@ -1,4 +1,4 @@
-pandas
+pandas<3 # pandas 3에서 테스트 3개 실패(2026-11-11 상태 점검) — 2.x 고정
 numpy
 yfinance
 requests # 야후 chart API 직접 호출(close 보완)·구성 종목 출처 조회
