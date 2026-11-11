@@ -230,3 +230,11 @@ def test_personal_score_line_empty_and_basis():
     assert pead_letter.personal_score_line(_L(scorecards={"main": {"n": 0}})) == "성적표(90일) 아직 끝난 매매 없음"
     sc = {"main": {"n": 12, "mean": -0.46, "win": 41.7, "basis": "gross"}}
     assert pead_letter.personal_score_line(_L(scorecards=sc)) == "성적표(90일) 12건 · QQQ 대비 평균 -0.5%p (비용 전) · 승률 42%"
+
+
+def test_card_dots_render_without_d0_and_on_sell_day(tmp_path):
+    # 점 표시(2026-11-12): 반응일이 그림 밖이거나 없어도, 매도일이 오늘(sell_in 0)이어도 그린다
+    c = dict(report_preview.sample_pead_letter()["chart"]["cards"][0])
+    for i, over in enumerate([{"d0": None}, {"d0": "2020-01-02"}, {"sell_in": 0}]):
+        p = pead_chart.render_card({**c, **over}, tmp_path / f"c{i}.png")
+        assert p.read_bytes()[:4] == b"\x89PNG"
