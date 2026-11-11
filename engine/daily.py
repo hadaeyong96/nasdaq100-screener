@@ -2646,7 +2646,7 @@ def _attach_curve_chart(summary: dict, cfg: dict, out_dir: Path | None = None, d
         summary["curve_chart"] = {"error": type(exc).__name__}
 
 
-def _attach_pead_watch(summary: dict, cfg: dict, run_fn=None, chart_fn=None) -> None:
+def _attach_pead_watch(summary: dict, cfg: dict, run_fn=None, chart_fn=None, card_fn=None) -> None:
     """실적급등 추천 장부(engine/pead_watch, docs/prereg/pead_watch.md) → summary["pead_watch"]({status, letter})와
     개인판 비교 그래프 summary["pead_chart"]. 장부는 run_safely로 감싸 실패해도 편지는 나간다(오류면 칸에 한 줄)."""
     from engine import pead_watch
@@ -2661,14 +2661,30 @@ def _attach_pead_watch(summary: dict, cfg: dict, run_fn=None, chart_fn=None) -> 
                              "timing": res.get("timing")}
     if res.get("status") == "error" and summary.get("letter_check") is not None:
         summary["letter_check"].setdefault("notes", []).append("실적급등 장부 오류")
-    try:
-        from notify import pead_chart
+    from notify import pead_chart
 
-        as_of = pd.Timestamp(summary["as_of"]).date().isoformat()
-        summary["pead_chart"] = (chart_fn or pead_chart.render)(summary["pead_watch"]["letter"].get("chart"),
-                                                                OUTPUT_DIR / f"pead_chart_{as_of}.png", as_of)
+    L = summary["pead_watch"]["letter"]
+    as_of = pd.Timestamp(summary["as_of"]).date().isoformat()
+    try:
+        summary["pead_chart"] = (chart_fn or pead_chart.render)(L.get("chart"), OUTPUT_DIR / f"pead_chart_{as_of}.png", as_of)
     except Exception as exc:  # noqa: BLE001 — 그래프만 건너뛴다
         print(f"[daily] 실적급등 그래프 오류(편지는 그대로): {type(exc).__name__}: {exc}")
+    summary["pead_cards"] = attach_pead_cards(L, OUTPUT_DIR, as_of, summary.get("letter_today_kst"), card_fn)
+
+
+def attach_pead_cards(L: dict, out_dir, as_of: str, today_kst=None, card_fn=None) -> list[dict]:
+    """종목 카드 PNG(카드 순서 그대로) → [{ticker, title, path}]. 카드 하나가 실패하면 그 카드만 건너뛴다."""
+    from notify import pead_chart
+
+    out = []
+    for c in (L.get("chart") or {}).get("cards") or []:
+        try:
+            p = (card_fn or pead_chart.render_card)(c, Path(out_dir) / f"pead_card_{as_of}_{c['ticker']}.png",
+                                                    L.get("next_day"), today_kst)
+            out.append({"ticker": c["ticker"], "title": f"{c['name']} ({c['ticker']})", "path": str(p)})
+        except Exception as exc:  # noqa: BLE001
+            print(f"[daily] 종목 카드 오류 {c.get('ticker')}(편지는 그대로): {type(exc).__name__}: {exc}")
+    return out
 
 
 def earnings_news_companies(letter: dict, today_kst=None, aliases: dict[str, list[str]] | None = None) -> list:

@@ -81,73 +81,101 @@ def sample_summary(cfg: dict) -> dict:
     }
 
 
-def _fake_line(ticker, name, start, n, drift, seed, status="open"):
+def _fake_px(seed, days, drift=0.0005, vol=0.012, start=100.0, jump_at=None, jump=0.0):
+    """가짜 일봉(open·high·low·close·volume) — 미리보기 전용."""
     import numpy as np
 
     rng = np.random.default_rng(seed)
-    days = pd.bdate_range(start, periods=n)
-    v = np.cumsum(rng.normal(drift, 1.2, n))
-    v[0] = rng.normal(0.3, 0.5)
-    return {"ticker": ticker, "name": name, "status": status, "dates": [d.date().isoformat() for d in days],
-            "values": [float(x) for x in v], "vs_qqq": float(v[-1] - drift * n * 0.4)}
+    r = rng.normal(drift, vol, len(days))
+    if jump_at is not None:
+        r[days.get_loc(pd.Timestamp(jump_at))] += jump
+    c = start * np.cumprod(1 + r)
+    o = c / (1 + rng.normal(0, vol / 2, len(days)))
+    h = np.maximum(o, c) * (1 + np.abs(rng.normal(0, vol / 2, len(days))))
+    lo = np.minimum(o, c) * (1 - np.abs(rng.normal(0, vol / 2, len(days))))
+    return pd.DataFrame({"open": o, "high": h, "low": lo, "close": c, "volume": 1e6}, index=days)
+
+
+# 미리보기 보유 종목: (티커, 이름, 소속, 매수일, 시드, 하루 기대, 시작가) — 새 추천 1(APP) · 매도 임박 1(AMAT) · 나머지 4
+_PEAD_OPEN = [("APP", "앱러빈", "나스닥100", "2026-11-06", 11, 0.006, 400.0),
+              ("AMAT", "어플라이드 머티어리얼즈", "나스닥100", None, 12, 0.0012, 190.0),
+              ("BKNG", "부킹홀딩스", "둘 다", "2026-10-15", 13, -0.0004, 5100.0),
+              ("IDXX", "아이덱스 래버러토리스", "나스닥100", "2026-09-16", 14, 0.0015, 610.0),
+              ("ROP", "로퍼 테크놀로지스", "나스닥100", "2026-08-20", 15, -0.0008, 540.0),
+              ("MCD", "맥도날드", "S&P100", "2026-10-01", 16, 0.0007, 300.0)]
+_PEAD_CLOSED = [("CSX", "CSX", "나스닥100", "2026-06-23", 17, 0.0003, 35.0),
+                ("LMT", "록히드 마틴", "S&P100", "2026-06-18", 18, 0.0011, 470.0)]
+
+
+def sample_pead_letter(as_of="2026-11-11") -> dict:
+    """가짜 가격·매매로 engine.pead_watch.chart_data를 실제로 돌려 편지 칸(letter)을 만든다 — 미리보기·테스트 공용, 네트워크 없음."""
+    from core import pead_timing as pt
+    from engine import pead_watch as ew
+
+    days = pd.bdate_range("2026-01-02", "2027-12-31")
+    ia = int(days.get_loc(pd.Timestamp(as_of)))
+    raw = {"QQQ": _fake_px(9, days, 0.0004, 0.009, 560.0)}
+    trades, names = [], {"QQQ": "QQQ"}
+    for status, rows in (("open", _PEAD_OPEN), ("closed", _PEAD_CLOSED)):
+        for t, name, label, buy, seed, drift, start in rows:
+            ib = int(days.get_loc(pd.Timestamp(buy))) if buy else ia + 1 - 90  # None = 다음 거래일 매도(매도 임박)
+            buy = days[ib].date().isoformat()
+            raw[t] = _fake_px(seed, days, drift, 0.016, start, days[ib - 1], 0.09)
+            names[t] = name
+            tr = {"ledger": "main", "ticker": t, "d0": days[ib - 1].date().isoformat(), "label": label, "status": status,
+                  "buy_day": buy, "plan_day": days[ib + 90].date().isoformat(), "buy_px": float(raw[t]["open"].iloc[ib]),
+                  "q_buy": float(raw["QQQ"]["open"].iloc[ib])}
+            if status == "closed":
+                tr.update(sell_day=days[ib + 90].date().isoformat(), sell_px=float(raw[t]["close"].iloc[ib + 90]),
+                          q_sell=float(raw["QQQ"]["close"].iloc[ib + 90]))
+            trades.append(tr)
+    raw = {t: d.loc[:as_of] for t, d in raw.items()}
+    al = {t: pt.align(d, days) for t, d in raw.items()}
+    sigs = {("APP", trades[0]["d0"]): {"ret": 0.310, "excess": 0.375, "vol_ratio": 5.1}}
+    chart = ew.chart_data(trades, al, al["QQQ"], days, ia, names, raw, sigs, 90, 60)
+    nxt = days[ia + 1].date().isoformat()
+    soon = [c for c in chart["cards"] if c["sell_in"] == 1]
+    return {
+        "as_of": as_of, "next_day": nxt,
+        "actions": {"buy": [{"ticker": "TTWO", "name": "테이크투인터랙티브", "label": "나스닥100"}],
+                    "sell": [{"ticker": c["ticker"], "name": c["name"], "label": c["label"]} for c in soon]},
+        "new": [{"ticker": "TTWO", "name": "테이크투인터랙티브", "label": "나스닥100", "d0": as_of, "ret": 0.083,
+                 "excess": 0.090, "vol_ratio": 2.9, "buy_day": nxt, "check_day": days[ia + 61].date().isoformat(),
+                 "sell_day": days[ia + 91].date().isoformat(), "late": False, "skip": None}],
+        "watching": [], "closed": [
+            {"ticker": "CSX", "name": "CSX", "label": "나스닥100", "buy_day": "2026-06-23", "sell_day": "2026-10-30",
+             "ret": 0.042, "vs_qqq": -0.011},
+            {"ticker": "LMT", "name": "록히드 마틴", "label": "S&P100", "buy_day": "2026-06-18", "sell_day": "2026-10-27",
+             "ret": 0.118, "vs_qqq": 0.071}],
+        "scorecards": {"main": {"hold": 90, "n": 2, "mean": 2.71, "win": 50.0, "basis": "cost"},
+                       "compare": {"hold": 60, "n": 4, "mean": -0.42, "win": 50.0, "basis": "cost"}},
+        "earnings": {"rows": [{"ticker": "NVDA", "name": "엔비디아", "label": "둘 다", "date": "2026-11-18"},
+                              {"ticker": "WMT", "name": "월마트", "label": "둘 다", "date": "2026-11-19"}], "failed": 3},
+        "counts": {"new": 1, "watching": len(chart["cards"])},
+        "chart": chart,
+    }
 
 
 def sample_pead(summary: dict) -> dict:
-    """실적급등 추천 편지 미리보기 칸(engine.pead_watch.run의 letter와 같은 모양, 모두 가짜 숫자)."""
-    import numpy as np
-
+    """실적급등 추천 편지 v2 미리보기(가짜 숫자): 새 추천 1(매수 대기) · 보유 6(새 추천 1 · 매도 임박 1 · 나머지 4) · 끝난 2."""
     summary.update(as_of=pd.Timestamp("2026-11-11"), letter_today_kst=pd.Timestamp("2026-11-12"),
                    thermometer={"temp": 58, "zone": "미지근함", "delta": 2, "data_date": "2026-11-11"},
                    puddle_v31={"personal": ["웅덩이 v3.2: QQQ 대비 +0.4%p, 보유 2종목입니다. (실제 돈 아님)"],
                                "group": ["웅덩이 v3.2: QQQ 대비 +0.4%p입니다. (실제 돈 아님)"]},
                    puddle_rebound={"personal": ["반등 확인 v2: QQQ 대비 −0.2%p, 보유 없음입니다. (실제 돈 아님)"],
                                    "group": ["반등 확인 v2: QQQ 대비 −0.2%p입니다. (실제 돈 아님)"]})
-    L = {
-        "as_of": "2026-11-11", "next_day": "2026-11-12",
-        "actions": {"buy": [{"ticker": "TTWO", "name": "테이크투인터랙티브", "label": "나스닥100"},
-                            {"ticker": "MCD", "name": "맥도날드", "label": "S&P100"}],
-                    "sell": [{"ticker": "AMAT", "name": "어플라이드 머티어리얼즈", "label": "나스닥100"}]},
-        "new": [{"ticker": "TTWO", "name": "테이크투인터랙티브", "label": "나스닥100", "d0": "2026-11-11", "ret": 0.083,
-                 "excess": 0.090, "vol_ratio": 2.9, "buy_day": "2026-11-12", "check_day": "2027-02-10", "sell_day": "2027-03-25",
-                 "late": False, "skip": None},
-                {"ticker": "MCD", "name": "맥도날드", "label": "S&P100", "d0": "2026-11-10", "ret": 0.065, "excess": 0.056,
-                 "vol_ratio": 2.1, "buy_day": "2026-11-12", "check_day": "2027-02-10", "sell_day": "2027-03-25",
-                 "late": True, "skip": None}],
-        "watching": [
-            {"ticker": "APP", "name": "앱러빈", "label": "나스닥100", "status": "open", "held": 4, "hold": 90, "ret": 0.071,
-             "vs_qqq": 0.064, "buy_day": "2026-11-06", "plan_day": "2027-03-19", "check_day": "2027-02-04"},
-            {"ticker": "BKNG", "name": "부킹홀딩스", "label": "둘 다", "status": "open", "held": 5, "hold": 90, "ret": -0.012,
-             "vs_qqq": -0.018, "buy_day": "2026-11-05", "plan_day": "2027-03-18", "check_day": "2027-02-03"},
-            {"ticker": "AMAT", "name": "어플라이드 머티어리얼즈", "label": "나스닥100", "status": "open", "held": 89, "hold": 90,
-             "ret": 0.153, "vs_qqq": 0.082, "buy_day": "2026-07-06", "plan_day": "2026-11-12", "check_day": "2026-09-29"}],
-        "closed": [{"ticker": "CSX", "name": "CSX", "label": "나스닥100", "buy_day": "2026-07-01", "sell_day": "2026-11-06",
-                    "ret": 0.042, "vs_qqq": -0.011},
-                   {"ticker": "LMT", "name": "록히드 마틴", "label": "S&P100", "buy_day": "2026-06-26", "sell_day": "2026-11-03",
-                    "ret": 0.118, "vs_qqq": 0.071}],
-        "scorecards": {"main": {"hold": 90, "n": 2, "mean": 2.71, "win": 50.0, "basis": "cost"},
-                       "compare": {"hold": 60, "n": 4, "mean": -0.42, "win": 50.0, "basis": "cost"}},
-        "earnings": {"rows": [{"ticker": "NVDA", "name": "엔비디아", "label": "둘 다", "date": "2026-11-18"},
-                              {"ticker": "WMT", "name": "월마트", "label": "둘 다", "date": "2026-11-19"},
-                              {"ticker": "INTU", "name": "인튜이트", "label": "나스닥100", "date": "2026-11-19"}],
-                     "failed": 3},
-        "counts": {"new": 2, "watching": 3},
-    }
-    lines = [_fake_line("APP", "앱러빈", "2026-11-06", 4, 1.6, 1), _fake_line("BKNG", "부킹홀딩스", "2026-11-05", 5, -0.2, 2),
-             _fake_line("AMAT", "어플라이드 머티어리얼즈", "2026-07-06", 89, 0.17, 3),
-             _fake_line("CSX", "CSX", "2026-07-01", 91, 0.05, 4, "closed"),
-             _fake_line("LMT", "록히드 마틴", "2026-06-26", 91, 0.13, 5, "closed")]
-    qd = pd.bdate_range("2026-06-26", "2026-11-11")
-    qv = np.cumsum(np.random.default_rng(9).normal(0.06, 0.8, len(qd)))
-    L["chart"] = {"lines": lines, "qqq": {"dates": [d.date().isoformat() for d in qd], "values": [float(x) for x in qv]}}
+    L = sample_pead_letter()
     summary["pead_watch"] = {"status": "ok", "letter": L}
     now = pd.Timestamp("2026-11-11 22:00", tz="UTC")
     summary["earnings_news"] = {"status": "ok", "failed": [], "top": [
         {"title": "앱러빈, 3분기 매출 예상 상회…주가 31% 급등", "source": "연합뉴스", "url": "https://example.com/1", "published": now},
         {"title": "테이크투, 'GTA6' 기대에 실적 전망 상향", "source": "한국경제", "url": "https://example.com/2", "published": now},
         {"title": "엔비디아 실적 발표 앞두고 반도체주 관망", "source": "뉴스1", "url": "https://example.com/3", "published": now}]}
+    from engine import daily
     from notify import pead_chart
 
     summary["pead_chart"] = pead_chart.render(L["chart"], OUT / "pead_chart_preview.png", "2026-11-11")
+    summary["pead_cards"] = daily.attach_pead_cards(L, OUT, "preview", summary["letter_today_kst"])
     return summary
 
 

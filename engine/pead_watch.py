@@ -318,7 +318,8 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
                     res["warnings"].append(f"끝난 매매 값이 달라짐 {k} — 기록값 유지")
                 t.update({c: o.get(c) for c in st.TRADE_COLS if o.get(c) is not None})
 
-        # 6) 편지 칸
+        # 6) 편지 칸 (카드의 "새 추천" 태그는 지난 실행의 판정값도 쓴다 — 읽기만)
+        res["signal_hist"] = [x for x in st.load_signals(conn) if x.get("signal")]
         res["letter"] = build_letter(by_ledger, judged, al, raw, bench, days, as_of, names, p, members, src, today_kst,
                                      need[-1].date().isoformat(), res)
         res["timing"]["total"] = round(time.monotonic() - t0, 1)
@@ -418,13 +419,42 @@ def build_letter(by_ledger, judged, al, raw, bench, days, as_of, names, p, membe
         L["earnings"] = {"rows": [], "failed": len(tick), "error": type(exc).__name__}
     res["timing"]["earnings"] = round(time.monotonic() - te, 1)
 
-    L["chart"] = chart_data(main, al, bench, days, ia, names)
+    sigs = {(j["ticker"], j["d0"]): j for j in (res.get("signal_hist") or [])}
+    sigs.update({(j["ticker"], j["d0"]): j for j in judged})
+    L["chart"] = chart_data(main, al, bench, days, ia, names, raw, sigs, main_hold, cmp_hold)
     return L
 
 
-def chart_data(main: list[dict], al: dict, bench: pt.Aligned, days: pd.DatetimeIndex, ia: int, names: dict) -> dict | None:
-    """그래프 자료: 보유 중 + 최근 끝난 추천 종목의 매수가 대비 % 선(매수일부터), QQQ 선(가장 이른 매수일부터, 같은 기준)."""
-    lines = []
+CARD_PAD_BEFORE = 20  # 카드 기간: 매수일 이만큼 거래일 전부터 기준일까지
+CARD_NEW_DAYS = 5  # 매수일이 기준일 또는 이 거래일 안이면 "새 추천" 카드(맨 앞)
+CARD_SOON_DAYS = 5  # 매도일까지 이 거래일 이하면 새 추천 다음 자리
+
+
+def _qqq_ohlc(raw_q: pd.DataFrame | None, ds: pd.DatetimeIndex) -> dict:
+    """QQQ 일봉(시가·고가·저가·종가) — 고가·저가 칸이 없으면 시가·종가의 큰 값·작은 값. 없는 날은 None."""
+    d = (raw_q if raw_q is not None else pd.DataFrame(columns=["open", "close"])).reindex(ds)
+    o, c = d["open"].astype(float), d["close"].astype(float)
+    h = d["high"].astype(float) if "high" in d else pd.concat([o, c], axis=1).max(axis=1)
+    lo = d["low"].astype(float) if "low" in d else pd.concat([o, c], axis=1).min(axis=1)
+    f = lambda x: [None if not np.isfinite(v) else float(v) for v in x.to_numpy(dtype=float)]  # noqa: E731
+    return {"open": f(o), "high": f(h), "low": f(lo), "close": f(c)}
+
+
+def chart_data(main: list[dict], al: dict, bench: pt.Aligned, days: pd.DatetimeIndex, ia: int, names: dict,
+               raw: dict | None = None, signals: dict | None = None, hold: int = 90, check: int = 60,
+               labels: dict | None = None) -> dict | None:
+    """그래프 자료(계산은 여기서만, notify/pead_chart는 그리기만).
+
+    lines: 보유 중 + 최근 끝난(CHART_LOOKBACK_CLOSED) 매매. 선마다 매수일부터 날짜별 매수가 대비 %(values)와
+      QQQ 대비 초과 %p(excess — 그 종목 매수일 QQQ 시가 기준, 마지막 값 = vs_qqq), 60거래일 점검 위치(check_at, dates 안 칸 번호),
+      보유 거래일 수(held)/hold.
+    qqq: 가장 이른 매수일부터 QQQ % 선, qqq_pct: 같은 기간 QQQ %(가장 이른 보유 중 매수일 시가 → 기준일 종가, 보유 없으면 전체 선).
+    cards: 보유 중인 모든 종목(끝난 종목 없음). 순서 = 새 추천(매수일이 기준일 또는 CARD_NEW_DAYS 거래일 안) →
+      매도일까지 CARD_SOON_DAYS 거래일 이하 → 나머지(매도일 가까운 순). 기간 = 매수일 CARD_PAD_BEFORE 거래일 전 ~ 기준일.
+    선이 하나도 없으면 None.
+    """
+    raw, signals, labels = raw or {}, signals or {}, labels or {}
+    lines, cards = [], []
     for t in main:
         if t["status"] not in ("open", "closed") or t.get("buy_px") is None:
             continue
@@ -437,16 +467,48 @@ def chart_data(main: list[dict], al: dict, bench: pt.Aligned, days: pd.DatetimeI
             continue
         idx = np.arange(ib, ie + 1)
         v = a.close[a.lastv[idx]] / t["buy_px"] - 1
-        q_end = bench.close[ie] / bench.open[ib] - 1  # 이 종목 매수일 시가 기준 QQQ (이름표의 QQQ 대비)
-        lines.append({"ticker": t["ticker"], "name": _row_name(t["ticker"], names), "status": t["status"],
+        q0 = t.get("q_buy") or bench.open[ib]  # 이 종목 매수일 QQQ 시가 (이름표의 QQQ 대비)
+        q = bench.close[bench.lastv[idx]] / q0 - 1
+        ex = v - q
+        name = _row_name(t["ticker"], names)
+        lines.append({"ticker": t["ticker"], "name": name, "status": t["status"],
                       "dates": [days[i].date().isoformat() for i in idx], "values": [float(x) * 100 for x in v],
-                      "vs_qqq": float(v[-1] - q_end) * 100 if np.isfinite(q_end) else None})
+                      "excess": [float(x) * 100 for x in ex],
+                      "vs_qqq": float(ex[-1]) * 100 if np.isfinite(ex[-1]) else None,
+                      "check_at": check if ib + check <= ie else None, "held": int(ie - ib), "hold": hold})
+        if t["status"] != "open":
+            continue
+        ip = int(days.get_loc(pd.Timestamp(t["plan_day"])))
+        i0 = max(0, ib - CARD_PAD_BEFORE)
+        cidx = np.arange(i0, ia + 1)
+        ds = days[i0:ia + 1]
+        sig = signals.get((t["ticker"], t["d0"])) or {}
+        new = ia - ib <= CARD_NEW_DAYS
+        last_c = float(a.close[a.lastv[ia]])
+        cards.append({
+            "ticker": t["ticker"], "name": name, "label": t.get("label") or labels.get(t["ticker"]),
+            "kind": "new" if new else ("soon" if ip - ia <= CARD_SOON_DAYS else "hold"),
+            "d0": t["d0"], "sig_ret": sig.get("ret"), "sig_excess": sig.get("excess"), "sig_vol": sig.get("vol_ratio"),
+            "dates": [d.date().isoformat() for d in ds], "buy_at": int(ib - i0), "buy_day": t["buy_day"],
+            "buy_px": float(t["buy_px"]), "q_buy": float(q0), "qqq": _qqq_ohlc(raw.get("QQQ"), ds),
+            "close": [None if a.lastv[i] < 0 else float(a.close[a.lastv[i]]) for i in cidx],
+            "ret": float(v[-1]) * 100, "qqq_ret": float(q[-1]) * 100,
+            "vs_qqq": float(ex[-1]) * 100 if np.isfinite(ex[-1]) else None, "last_close": last_c,
+            "last_qqq": float(bench.close[bench.lastv[ia]]),
+            "held": int(ia - ib), "hold": hold, "plan_day": t["plan_day"], "sell_in": int(ip - ia),
+        })
     if not lines:
         return None
+    rank = {"new": 0, "soon": 1, "hold": 2}
+    cards.sort(key=lambda c: (rank[c["kind"]], -c["buy_at"] if c["kind"] == "new" else 0, c["plan_day"], c["ticker"]))
     first = min(int(days.get_loc(pd.Timestamp(x["dates"][0]))) for x in lines)
     idx = np.arange(first, ia + 1)
     q = bench.close[idx] / bench.open[first] - 1
-    return {"lines": lines, "qqq": {"dates": [days[i].date().isoformat() for i in idx], "values": [float(x) * 100 for x in q]}}
+    opens = [int(days.get_loc(pd.Timestamp(x["dates"][0]))) for x in lines if x["status"] == "open"]
+    f0 = min(opens) if opens else first
+    qp = bench.close[bench.lastv[ia]] / bench.open[f0] - 1
+    return {"lines": lines, "cards": cards, "qqq_pct": float(qp) * 100 if np.isfinite(qp) else None,
+            "qqq": {"dates": [days[i].date().isoformat() for i in idx], "values": [float(x) * 100 for x in q]}}
 
 
 def run_safely(cfg: dict, as_of, **kwargs) -> dict | None:

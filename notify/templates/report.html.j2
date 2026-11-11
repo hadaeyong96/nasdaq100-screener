@@ -390,7 +390,12 @@ nav.toc{line-height:1.9;margin:0 0 10px}
 <div class="rsec" id="sec-{{ s.key }}">
   <h2>{{ s.title }}</h2>
   {% for line in s.lines %}{% if line is mapping %}<div class="ln">▶ {% if line.url %}<a href="{{ line.url }}" target="_blank" rel="noopener noreferrer">{{ line.title }}</a>{% else %}{{ line.title }}{% endif %} ({{ line.source }})</div>{% else %}<div class="ln">▶ {{ line }}</div>{% endif %}{% endfor %}
-  {% if s.key == 'pead_watching' and pead_chart_src and not is_group %}<figure class="curve-chart" aria-label="실적급등 추천 종목 비교 그래프"><img src="{{ pead_chart_src }}" alt="실적급등 추천 종목 — 추천 다음 날 시가부터 매수가 대비 %와 QQQ" width="1200" height="672"></figure>{% endif %}
+  {% if s.key == 'pead_compare' and pead_chart_src and not is_group %}<figure class="curve-chart" aria-label="한눈에 비교 그래프"><img src="{{ pead_chart_src }}" alt="QQQ보다 얼마나 앞섰나 — 추천 종목별 QQQ 대비 초과" width="990" height="616"></figure>{% endif %}
+  {% if s.key == 'pead_cards' and pead_card_srcs and not is_group %}{# 앞 4장은 펼치고 5장째부터 접기 (2026-11-11 v2) #}
+  {% for c in pead_card_srcs[:4] %}<figure class="curve-chart" aria-label="종목 카드 {{ c.title }}"><img src="{{ c.src }}" alt="{{ c.title }} — QQQ 캔들과 주가" width="990" height="473"></figure>{% endfor %}
+  {% if pead_card_srcs|length > 4 %}<details class="more"><summary>카드 더 보기 ({{ pead_card_srcs|length - 4 }}장)</summary>
+  {% for c in pead_card_srcs[4:] %}<figure class="curve-chart" aria-label="종목 카드 {{ c.title }}"><img src="{{ c.src }}" alt="{{ c.title }} — QQQ 캔들과 주가" width="990" height="473"></figure>{% endfor %}
+  </details>{% endif %}{% endif %}
 </div>
 {% endfor %}
 {% if rv.extras or (rv.monday_chart and curve_chart_src) %}
@@ -1267,7 +1272,7 @@ nav.toc{line-height:1.9;margin:0 0 10px}
   {% if curve_chart_src and not letter.report.monday_chart %}<figure class="curve-chart" aria-label="가상 실험 성적 그래프"><img src="{{ curve_chart_src }}" alt="가상 실험 성적 — QQQ 기준 수익곡선" width="1200" height="700"></figure>{% endif %}
   {% endif %}
   {% endif %}
-  {% if scorecard %}<h3>이번 달 가상 성적표</h3>{% for line in scorecard.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}{% endif %}
+  {% if scorecard and not letter.report.pead %}<h3>이번 달 가상 성적표</h3>{% for line in scorecard.lines %}<div class="ln">▶ {{ line }}</div>{% endfor %}{% endif %}
   {% if dec_tax and not is_group %}<h3>올해 세금 없이 팔 수 있는 이익</h3>{% for line in dec_tax.lines %}<div class="ln">{{ line }}</div>{% endfor %}{% endif %}
   <div class="ln mini">{{ d.caution }}</div>
   <h3>{{ d.guide_title }}</h3>
