@@ -92,27 +92,52 @@ EARNINGS_MAX_QUERIES = 15  # 검색어(회사) 최대 수 — RSS 요청 수 상
 EARNINGS_WORDS = ("실적", "매출", "이익", "분기", "가이던스", "어닝", "전망")  # 제목에 하나는 있어야 실적 기사로 본다
 
 
-def earnings_news(now_utc, companies: list[str], topics_cfg: dict | None = None, get=None, pause: float | None = None,
-                  top: int = EARNINGS_TOP) -> dict:
-    """실적급등 편지의 실적 발표 뉴스(2026-11-11): 회사마다 "{이름} 실적" 검색(최근 24시간, 같은 언론사 허용 목록·제외어),
-    제목에 그 회사 이름과 실적 낱말(EARNINGS_WORDS)이 함께 있는 기사만 남기고 회사마다 같은 사건을 묶은 뒤, 점수(언론사 수 × 최신성) 순 최대 top개.
+def _plain(s: str) -> str:
+    """제목·이름 비교용: 띄어쓰기·하이픈을 지운다 ("테이크-투" == "테이크투")."""
+    return s.replace(" ", "").replace("-", "")
 
-    입력: companies(검색할 회사 이름, 앞에서부터 최대 EARNINGS_MAX_QUERIES개). 출력: letter_news와 같은 모양(top만 채움).
+
+def earnings_news(now_utc, companies: list, topics_cfg: dict | None = None, get=None, pause: float | None = None,
+                  top: int = EARNINGS_TOP) -> dict:
+    """실적급등 편지의 실적 발표 뉴스(2026-11-11): 회사 이름·별칭마다 "{이름} 실적" 검색(최근 24시간, 같은 언론사 허용 목록·제외어),
+    제목에 그 회사 이름이나 별칭(띄어쓰기·하이픈 무시)과 실적 낱말(EARNINGS_WORDS)이 함께 있는 기사만 남기고 회사마다 같은 사건을 묶은 뒤,
+    점수(언론사 수 × 최신성) 순 최대 top개. 별칭(name_kr.csv alias 칸)은 검색과 제목 필터에만 쓴다.
+    구글 뉴스 RSS는 "(A OR B)"가 합집합이 되지 않아(2026-11-11 실측: 별칭에만 걸린 기사 10건 중 0건) 별칭은 따로 검색한다.
+
+    입력: companies — 회사 이름 문자열 또는 {"name", "aliases"}. 검색어는 앞 회사부터 모두 합쳐 최대 EARNINGS_MAX_QUERIES개.
+    출력: letter_news와 같은 모양(top만 채움).
     """
     base = topics_cfg if topics_cfg is not None else load_topics()
-    names = list(dict.fromkeys(n for n in companies if str(n).strip()))[:EARNINGS_MAX_QUERIES]
-    if not names:
+    by_name: dict[str, list[str]] = {}
+    for c in companies:
+        name, aliases = (c, []) if isinstance(c, str) else (c.get("name") or "", c.get("aliases") or [])
+        name = str(name).strip()
+        if name and name not in by_name:
+            by_name[name] = list(dict.fromkeys([name, *(a.strip() for a in aliases if a.strip() and a.strip() != name)]))
+    company_of: dict[str, str] = {}  # 검색어 → 회사
+    for name, terms in by_name.items():
+        for t in terms:
+            company_of.setdefault(f"{t} 실적", name)
+    company_of = dict(list(company_of.items())[:EARNINGS_MAX_QUERIES])
+    if not company_of:
         return {"status": "ok", "top": [], "topics": {}, "failed": []}
-    cfg = {**base, "topics": [{"name": "실적 발표", "weight": 1.0, "queries": [f"{n} 실적" for n in names]}],
+    cfg = {**base, "topics": [{"name": "실적 발표", "weight": 1.0, "queries": list(company_of)}],
            "core_min_score": 0.0, "core_max": top, "core_min": 0}
     res = fetch(cfg, get=get, pause=pause)
+    groups: dict[str, list[dict]] = {}
     for f in res["fetched"]:
-        name = f["q"].rsplit(" 실적", 1)[0]
-        f["items"] = [it for it in f["items"] if name.replace(" ", "") in it["title"].replace(" ", "")
+        name = company_of[f["q"]]
+        keys = [_plain(t) for t in by_name[name]]
+        f["items"] = [it for it in f["items"] if any(k in _plain(it["title"]) for k in keys)
                       and any(w in it["title"] for w in EARNINGS_WORDS)]
+        groups.setdefault(name, []).append(f)
     if not res["fetched"]:
         return {"status": "fail", "top": [], "topics": {}, "failed": res["failed"]}
-    # 같은 사건 묶기는 회사마다 따로 — 다른 회사 기사가 "실적·주가" 같은 낱말로 한 사건으로 묶이지 않게
-    arts = [a for f in res["fetched"] for a in cnews.select([f], cfg, now_utc)["top"]]
+    # 같은 사건 묶기는 회사마다 따로 — 다른 회사 기사가 "실적·주가" 같은 낱말로 한 사건으로 묶이지 않게.
+    # 한 회사의 이름·별칭 검색 결과는 함께 넣는다(select가 같은 기사를 하나로 합친다).
+    arts = [a for fs in groups.values() for a in cnews.select(fs, cfg, now_utc)["top"]]
     arts.sort(key=lambda a: (-a["score"], -a["published"].value, a["title"]))
+    # 별칭이 같은 회사(알파벳 A주·C주)는 같은 기사가 두 번 잡힌다 — 제목으로 한 번만
+    seen: set[str] = set()
+    arts = [a for a in arts if not (a["title"] in seen or seen.add(a["title"]))]
     return {"status": "partial" if res["failed"] else "ok", "top": arts[:top], "topics": {}, "failed": res["failed"]}

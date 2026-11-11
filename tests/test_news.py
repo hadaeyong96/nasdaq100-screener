@@ -124,3 +124,83 @@ def test_earnings_news_empty_and_failed():
 
     res = dn.earnings_news(NOW, ["앱러빈"], topics_cfg=TOPICS, get=boom, pause=0)
     assert res["status"] == "fail" and res["failed"] == ["앱러빈 실적"]
+
+
+def test_earnings_news_alias_searched_separately_and_merged_once():
+    # 구글 뉴스 RSS는 OR가 합집합이 아니라서 별칭은 따로 검색한다. 제목의 하이픈("테이크-투")은 무시한다.
+    feeds = {
+        "테이크투인터랙티브 실적": _rss([("테이크투인터랙티브, 2분기 실적 예상 하회", "연합뉴스", 3)]),
+        "테이크투 실적": _rss([("[美특징주]테이크-투, 실적 부진에도 주가↑", "이데일리", 2), ("테이크투, 신작 출시일 공개", "연합뉴스", 2),
+                            ("테이크투인터랙티브, 2분기 실적 예상 하회", "연합뉴스", 3)]),
+        "알파벳(구글) A주 실적": _rss([]),
+        "알파벳 실적": _rss([("구글 모회사 알파벳 3분기 실적 호조", "한국경제", 4)]),
+        "구글 실적": _rss([("구글 모회사 알파벳 3분기 실적 호조", "한국경제", 4)]),
+        "알파벳(구글) C주 실적": _rss([]),
+    }
+    asked = []
+
+    def get(url):
+        for k, body in feeds.items():
+            if url.startswith(dn.RSS_URL.split("{q}")[0] + dn.quote(k + " ")):
+                asked.append(k)
+                return body
+        raise RuntimeError("없음")
+
+    comps = [{"name": "테이크투인터랙티브", "aliases": ["테이크투"]},
+             {"name": "알파벳(구글) A주", "aliases": ["알파벳", "구글"]},
+             {"name": "알파벳(구글) C주", "aliases": ["알파벳", "구글"]}]
+    res = dn.earnings_news(NOW, comps, topics_cfg=TOPICS, get=get, pause=0)
+    assert asked == ["테이크투인터랙티브 실적", "테이크투 실적", "알파벳(구글) A주 실적", "알파벳 실적", "구글 실적",
+                     "알파벳(구글) C주 실적"]  # 같은 검색어는 한 번
+    titles = [a["title"] for a in res["top"]]
+    assert sorted(titles) == sorted(["[美특징주]테이크-투, 실적 부진에도 주가↑", "테이크투인터랙티브, 2분기 실적 예상 하회",
+                                     "구글 모회사 알파벳 3분기 실적 호조"])  # 같은 기사는 한 번, 실적 낱말 없는 기사 제외
+
+
+def test_earnings_news_query_cap_counts_alias_searches():
+    asked = []
+
+    def get(url):
+        asked.append(url)
+        return _rss([])
+
+    comps = [{"name": f"회사{i}", "aliases": [f"별칭{i}"]} for i in range(10)]
+    dn.earnings_news(NOW, comps, topics_cfg=TOPICS, get=get, pause=0)
+    assert len(asked) == dn.EARNINGS_MAX_QUERIES
+
+
+def test_earnings_news_without_aliases_unchanged():
+    feeds = {"앱러빈 실적": _rss([("앱러빈, 3분기 실적 예상 상회", "연합뉴스", 2)])}
+
+    def get(url):
+        for k, body in feeds.items():
+            if dn.quote(k) in url:
+                return body
+        raise RuntimeError("없음")
+
+    a = dn.earnings_news(NOW, ["앱러빈"], topics_cfg=TOPICS, get=get, pause=0)
+    b = dn.earnings_news(NOW, [{"name": "앱러빈", "aliases": []}], topics_cfg=TOPICS, get=get, pause=0)
+    assert [x["title"] for x in a["top"]] == [x["title"] for x in b["top"]] == ["앱러빈, 3분기 실적 예상 상회"]
+
+
+def test_load_name_aliases_rules(tmp_path):
+    from data import universe
+
+    p = tmp_path / "kr.csv"
+    p.write_text("ticker,name_kr,alias\nTTWO,테이크투인터랙티브,테이크투\nX,엑스,엑|엑스|엑스코\nY,와이,\n", encoding="utf-8")
+    assert universe.load_name_aliases(p) == {"TTWO": ["테이크투"], "X": ["엑스코"]}  # 한 글자·정식 이름과 같은 별칭 버림
+    old = tmp_path / "old.csv"
+    old.write_text("ticker,name_kr\nTTWO,테이크투인터랙티브\n", encoding="utf-8")
+    assert universe.load_name_aliases(old) == {} and universe.load_name_aliases(tmp_path / "없음.csv") == {}
+
+
+def test_repo_aliases_are_few_and_at_least_two_chars():
+    import pandas as pd
+
+    from data import universe
+
+    kr = pd.read_csv(universe.NAME_KR_CSV, dtype=str).fillna("")
+    raw = [x for a in kr["alias"] for x in a.split("|") if x]
+    assert raw and all(len(x.strip()) >= universe.ALIAS_MIN_LEN for x in raw)
+    al = universe.load_name_aliases()
+    assert al["TTWO"] == ["테이크투"] and al["GOOGL"] == ["알파벳", "구글"] and len(al) <= 10
