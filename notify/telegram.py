@@ -545,6 +545,52 @@ def send_group_briefing(
     return result
 
 
+def dec_tax_text(summary: dict, cfg: dict) -> str | None:
+    """12월 공제 안내 짧은 글(개인 채팅 전용, 2026-11-12): "[12월 공제 안내] M/D(요일)" + 안내 줄(summary["dec_tax"]["lines"]).
+    안내가 없는 날(표시일이 아님·만들기 실패)은 None."""
+    dt = summary.get("dec_tax")
+    if not dt or not dt.get("lines"):
+        return None
+    from notify import letter_plain
+
+    as_of = summary.get("as_of")
+    head = "[12월 공제 안내]" + (f" {letter_plain._md(as_of)}" if as_of is not None else "")
+    return "\n".join([head, *[str(x) for x in dt["lines"]]])
+
+
+def send_dec_tax_text(summary: dict, cfg: dict, force_no_send: bool = False) -> bool:
+    """12월 공제 안내를 개인 채팅(TELEGRAM_CHAT_ID)에만 글로 보낸다. 단체방에는 절대 보내지 않는다.
+    같은 기준일 중복 방지 키 "YYYY-MM-DD:dec_tax". paper 모드·--no-send·로컬(dry-run)은 보내지 않는다.
+    출력: 실제로 보냈으면 True."""
+    text = dec_tax_text(summary, cfg)
+    mode = summary.get("mode", "live")
+    if not text or force_no_send or mode == "paper":
+        return False
+    if not real_send_allowed():
+        _dry_run_log("12월 공제 안내(개인 채팅)")
+        return False
+    token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID") or ""
+    if not token or not chat_id:
+        _log(f"[telegram] 12월 공제 안내: 토큰·개인 chat_id가 없어 보내지 않습니다. ({env_status()})")
+        return False
+    as_of = summary.get("as_of")
+    key = f"{as_of.date().isoformat() if as_of is not None else '알수없음'}:dec_tax"
+    conn = db.connect(db.db_path_for_mode(mode))
+    try:
+        if db.has_notified(conn, key):
+            _log(f"[telegram] {key} 이미 보낸 기록이 있어 다시 보내지 않습니다.")
+            return False
+        ok = _send_text(token, chat_id, text)
+        if ok:
+            db.record_notified(conn, key, datetime.now().isoformat(timespec="seconds"))
+        else:
+            _log("[telegram] 12월 공제 안내 발송에 실패했습니다 (다음 실행에서 재시도 가능).")
+        return ok
+    finally:
+        conn.close()
+
+
 def group_send_warning_line(result: dict | None) -> str | None:
     """send_group_briefing 결과 -> 개인 채팅에 남길 경고 한 줄 (성공·건너뜀이면 None).
 

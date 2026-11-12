@@ -141,7 +141,8 @@ def test_daily_main_sends_both_even_if_personal_raises(monkeypatch, cfg, tmp_pat
     monkeypatch.setattr(sys, "argv", ["daily", "--mode", "live"])
     daily.main()
     group_paths = [p for k, p in calls if k == "group"]
-    assert len(group_paths) == 1 and str(group_paths[0]).endswith("_group.html")  # 단체방판 보고서(2026-10-17)
+    assert len(group_paths) == 1 and group_paths[0] == summary["report_path"]  # 개인과 같은 파일(2026-11-12)
+    assert not str(group_paths[0]).endswith("_group.html")
     assert any(k == "ops" and "RuntimeError" in m and "personal down" not in m for k, m in calls)  # 종류만 (토큰 노출 방지)
 
 

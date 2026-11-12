@@ -515,6 +515,16 @@ def curve_chart_src(summary: dict, edition: str) -> str | None:
     return "data:image/png;base64," + base64.b64encode(Path(p).read_bytes()).decode("ascii")
 
 
+# 실제 계좌 정보 칸(2026-11-12): 보고서는 개인 채팅·단체방이 같은 파일이라 넣지 않는다 — 내 돈(QQQM·ISA 수량·평가·손익·한도),
+# 12월 공제 안내(개인 채팅에 짧은 글로 따로), 저축일 할 일
+ACCOUNT_KEYS = ("my_money", "wallet", "dec_tax", "savings_day")
+
+
+def without_account(summary: dict) -> dict:
+    """summary → 실제 계좌 정보 칸(ACCOUNT_KEYS)을 뺀 얕은 복사본(원본은 그대로 — 12월 공제 글은 원본에서 만든다)."""
+    return {k: v for k, v in summary.items() if k not in ACCOUNT_KEYS}
+
+
 def pead_chart_src(summary: dict, edition: str) -> str | None:
     """실적급등 추천 비교 그래프(notify/pead_chart, 2026-11-11) → data URI. 개인판만(종목 이름이 있어 단체방판엔 없음)."""
     import base64

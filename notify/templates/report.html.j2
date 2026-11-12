@@ -387,6 +387,7 @@ nav.toc{line-height:1.9;margin:0 0 10px}
 {% macro pcard(c) %}<div class="pcard"><figure class="curve-chart" aria-label="종목 카드 {{ c.title }}"><img src="{{ c.src }}" alt="{{ c.title }} — QQQ 캔들과 주가" width="990" height="473"></figure>
 {% for line in c.news %}{{ rline(line) }}{% endfor %}</div>{% endmacro %}
 <section class="letter plain" aria-label="아침 편지">
+{% if rv.notice %}<div class="ln mini">{{ rv.notice }}</div>{% endif %}
 {% if rv.head %}<div class="ln mini">{{ rv.head }}</div>{% endif %}
 {% if rv.problem %}<div class="ln crash">▶ {{ rv.problem }}</div>{% endif %}
 {% for s in rv.sections %}
