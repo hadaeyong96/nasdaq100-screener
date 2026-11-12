@@ -387,7 +387,10 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
             st.set_meta(conn, st.META_LAST, res["as_of"])
             st.put_daily(conn, res["as_of"], {"todo": res["todo"], "judged": len(judged),
                                               "signals": [j["ticker"] for j in judged if j["signal"]],
-                                              "counts": res["letter"]["counts"], "warnings": res["warnings"][:10]})
+                                              "counts": res["letter"]["counts"], "warnings": res["warnings"][:10],
+                                              "timing": res["timing"],
+                                              "tag_blanks": {f"{j['ticker']} {j['d0']}": j.get("tag_errors")
+                                                             for j in judged if j["signal"] and j.get("tag_errors")}})
         conn.commit()
         return res
     finally:
@@ -460,7 +463,7 @@ def signal_tags(c: dict, px: pd.DataFrame | None, days: pd.DatetimeIndex, src: S
     else:
         try:
             docs = tg.parse_index_docs(src.index_html(int(c["cik"]), c["accn"]))
-            ex = next((d for d in docs if ptag.is_ex991(d["type"])), None)
+            ex = ptag.pick_press_release(docs)
             if ex is None:
                 errs.append("보도자료: EX-99.1 없음")
             else:

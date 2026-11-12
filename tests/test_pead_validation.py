@@ -277,3 +277,13 @@ def test_engine_writes_tags_portfolio_and_next_announcement(tmp_path, monkeypatc
 def test_is_ex991_number_forms_only():
     assert ptag.is_ex991("EX-99.1") and ptag.is_ex991("ex-99.01")
     assert not ptag.is_ex991("EX-99") and not ptag.is_ex991("EX-99.2") and not ptag.is_ex991("EX-99.10")
+
+
+def test_pick_press_release_bare_ex99_only_when_sole_ex99_attachment():
+    d = lambda *ts: [{"type": t, "url": f"u/{i}"} for i, t in enumerate(ts)]  # noqa: E731
+    assert ptag.pick_press_release(d("8-K", "EX-99.1", "EX-99"))["type"] == "EX-99.1"
+    assert ptag.pick_press_release(d("8-K", "EX-99.01", "EX-99.02"))["type"] == "EX-99.01"
+    assert ptag.pick_press_release(d("8-K", "EX-99", "GRAPHIC", "EX-101.SCH"))["type"] == "EX-99"  # EX-99 하나뿐
+    assert ptag.pick_press_release(d("8-K", "EX-99", "EX-99.2")) is None  # 여러 개면 원 정의(EX-99.1만)
+    assert ptag.pick_press_release(d("8-K", "EX-99", "EX-99")) is None
+    assert ptag.pick_press_release(d("8-K", "EX-99.2")) is None and ptag.pick_press_release(d("8-K")) is None

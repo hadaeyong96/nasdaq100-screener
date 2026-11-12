@@ -104,6 +104,16 @@ def is_ex991(doc_type: str) -> bool:
     return m is not None
 
 
+def pick_press_release(docs: list[dict]) -> dict | None:
+    """색인 문서 [{type, url}] → 보도자료 문서. EX-99.1(EX-99.01 포함) 첫 문서, 없으면 EX-99 계열 첨부가
+    번호 없는 'EX-99' 하나뿐일 때 그 문서(보강 docs/prereg/pead_watch_tags_addendum.md). 그 밖은 None."""
+    ex = next((d for d in docs if is_ex991(d["type"])), None)
+    if ex is not None:
+        return ex
+    fam = [d for d in docs if str(d["type"]).strip().upper().startswith("EX-99")]
+    return fam[0] if len(fam) == 1 and fam[0]["type"].strip().upper() == "EX-99" else None
+
+
 def html_words(doc: str) -> list[str]:
     """HTML(또는 글) → 대문자 단어 목록. 스크립트·스타일·태그를 지우고 엔티티를 푼 뒤 [A-Za-z]+."""
     t = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", doc)
