@@ -61,7 +61,8 @@ def test_report_view_pead_mode_order_head_and_fold():
     rv = letter_plain.report_view(s, cfg, "personal")
     assert rv["head"] == "성적표(90일) 2건 · QQQ 대비 평균 +2.7%p · 승률 50%"  # 머리 줄 자리에 성적표 한 줄(2026-11-12)
     g_line = letter_plain.report_view(s, cfg, "group")["sections"][0]["lines"][1]
-    assert g_line == "성적표 90일: 2건 · 평균 초과 +2.71% · 승률 50%" and letter_plain.report_view(s, cfg, "group")["head"] == "검증 중 · 실제 돈 아님 · 투자 권유 아님"
+    assert g_line == "성적표 90일: 2건 · 평균 초과 +2.71% · 승률 50%" and letter_plain.report_view(s, cfg, "group")["head"] is None
+    assert rv["notice"] == letter_plain.NOTICE == "검증 중 · 실제 돈 아님 · 투자 권유 아님"
     assert [x["key"] for x in rv["sections"]] == ["pead_todo", "pead_new", "pead_compare", "pead_cards"]
     assert next(x for x in rv["sections"] if x["key"] == "pead_cards")["title"] == "■ 종목 카드 (보유 6개)"
     assert rv["extras"] == [] and rv["monday_chart"] is False and rv["pead"] is True
@@ -254,5 +255,6 @@ def test_group_html_has_head_line(tmp_path, monkeypatch):
     s, cfg = _preview_summary()
     g = report_html.render_report(s, cfg, tmp_path, edition="group").read_text(encoding="utf-8")
     p = report_html.render_report(s, cfg, tmp_path, edition="personal").read_text(encoding="utf-8")
-    assert "검증 중 · 실제 돈 아님 · 투자 권유 아님" in g and "검증 중 · 실제 돈 아님" not in p
-    assert "성적표(90일) 2건" in p
+    # 2026-11-12 같은 보고서: 맨 위 한 줄은 두 판 모두, 성적표 줄보다 위
+    assert "검증 중 · 실제 돈 아님 · 투자 권유 아님" in g
+    assert p.index("검증 중 · 실제 돈 아님 · 투자 권유 아님") < p.index("성적표(90일) 2건") < p.index("■ 오늘 할 일")

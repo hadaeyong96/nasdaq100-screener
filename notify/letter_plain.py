@@ -23,6 +23,7 @@ import yaml
 from notify import letter
 
 PERSONAL, GROUP = letter.PERSONAL, letter.GROUP
+NOTICE = "검증 중 · 실제 돈 아님 · 투자 권유 아님"  # 보고서 맨 위(제목 아래) 한 줄 — 개인 채팅·단체방 같은 파일 (2026-11-12)
 ROOT = Path(__file__).resolve().parents[1]
 PHRASES_PATH = ROOT / "config" / "letter_phrases.yaml"
 BULLET, SECTION = "▶ ", "■ "
@@ -671,9 +672,7 @@ def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict
         # 시장·내 돈·일반 뉴스·가상 실험 소식·급락장 경고는 뺀다. 접기 「자세히 보기」도 없음(2026-11-12 사용자 지시).
         from notify import pead_letter
 
-        if edition == GROUP:  # 단체방판 맨 위 한 줄 (2026-11-12)
-            head = pead_letter.GROUP_HEAD
-        elif pead.get("status") != "error":  # 개인판 머리 줄 자리에 성적표(90일) 한 줄 (2026-11-12)
+        if edition != GROUP and pead.get("status") != "error":  # 머리 줄 자리(NOTICE 아래)에 성적표(90일) 한 줄 (2026-11-12)
             head = pead_letter.personal_score_line(pead["letter"])
         secs = pead_letter.sections(pead, edition, summary.get("letter_today_kst"), summary.get("earnings_news"))
         extras = []
@@ -681,6 +680,7 @@ def report_view(summary: dict, cfg: dict, edition: str = PERSONAL, phrases: dict
     base = f"{pd.Timestamp(as_of).month}/{pd.Timestamp(as_of).day}" if as_of is not None else "?"
     return {
         "title": title(summary, cfg, ph),
+        "notice": NOTICE,
         "head": head,
         "pead": bool(pead),
         "problem": phrase(ph, "problem.prefix", day) + " ".join(probs) if probs else None,

@@ -42,8 +42,10 @@ def _main(body):
 
 
 def _lines(main):
-    """본문 글 줄(▶ 줄 + 기준 줄, 칸 제목 제외)."""
-    return [htmllib.unescape(re.sub(r"<[^>]+>", "", m)).strip() for m in re.findall(r'<div class="ln[^"]*">(.*?)</div>', main, re.S)]
+    """본문 글 줄(▶ 줄 + 기준 줄, 칸 제목 제외). 맨 위 「검증 중 · 실제 돈 아님 · 투자 권유 아님」(2026-11-12)은 확인하고 뺀다."""
+    out = [htmllib.unescape(re.sub(r"<[^>]+>", "", m)).strip() for m in re.findall(r'<div class="ln[^"]*">(.*?)</div>', main, re.S)]
+    assert out[0] == "검증 중 · 실제 돈 아님 · 투자 권유 아님"
+    return out[1:]
 
 
 def _fold(body):

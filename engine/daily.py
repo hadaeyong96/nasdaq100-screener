@@ -2375,8 +2375,8 @@ def main() -> None:
                 telegram.notify_ops_error(msg)
             if mode == "live":
                 try:
-                    # 단체방은 단체방판 보고서(짧은 판, 2026-10-17 — 개인 항목·티커 없음). 단체방판을 못 그렸으면
-                    # 개인판을 대신 보내지 않고 첨부 설명 글만 보낸다.
+                    # 단체방은 개인과 같은 보고서 파일(report.group_same_as_personal, 2026-11-12). 스위치를 끄면 단체방판
+                    # (짧은 판, 2026-10-17 — 개인 항목·티커 없음)이고, 못 그렸으면 개인판을 대신 보내지 않고 첨부 설명 글만 보낸다.
                     group_result = telegram.send_group_briefing(
                         briefing.build_report_caption(summary, cfg, edition="group"),
                         summary.get("group_report_path"), summary, cfg,
@@ -2388,6 +2388,10 @@ def main() -> None:
                 if warning:
                     print(telegram.redact(f"[daily] {warning}"))
                     telegram.notify_ops_error(warning)
+                try:  # 12월 공제 안내는 보고서에 넣지 않고 개인 채팅에만 짧은 글로 (2026-11-12, 표시일만)
+                    telegram.send_dec_tax_text(summary, cfg, force_no_send=args.no_send)
+                except Exception as exc:  # noqa: BLE001
+                    print(telegram.redact(f"[daily] 12월 공제 안내 글 발송 오류: {telegram.error_brief(exc)}"))
         print(f"텔레그램 글: {sent_path}")
 
         # 가상 장부 알림(전환 신호·낙폭)은 브리핑 뒤에 따로 — 실패해도 브리핑과 무관
@@ -2403,12 +2407,17 @@ def _briefing_recs(summary: dict) -> dict:
 
 
 def render_editions(summary: dict, cfg: dict) -> None:
-    """짧은 판(2026-10-17): 개인판·단체방판 보고서를 마지막 summary로 다시 그린다(표시 전용).
-    개인판이 실패하면 원래 보고서를 그대로 두고, 단체방판이 실패하면 group_report_path를 비운다(개인판을 대신 보내지 않음)."""
+    """짧은 판(2026-10-17): 보고서를 마지막 summary로 다시 그린다(표시 전용). 실제 계좌 정보(report_html.ACCOUNT_KEYS)는 빼고 그린다.
+    report.group_same_as_personal(기본 true, 2026-11-12)이면 단체방도 같은 파일(group_report_path = report_path).
+    false면 예전처럼 단체방판을 따로 그린다 — 실패하면 group_report_path를 비운다(개인판을 대신 보내지 않음).
+    개인판이 실패하면 원래 보고서를 그대로 둔다(계좌 정보를 붙이기 전에 그린 것)."""
     try:
-        summary["report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR)
+        summary["report_path"] = report_html.render_report(report_html.without_account(summary), cfg, OUTPUT_DIR)
     except Exception as exc:  # noqa: BLE001
         print(f"[daily] 개인판을 다시 그리지 못해 원래 보고서를 씁니다: {type(exc).__name__}: {exc}")
+    if (cfg.get("report") or {}).get("group_same_as_personal", True):
+        summary["group_report_path"] = summary.get("report_path")
+        return
     try:
         summary["group_report_path"] = report_html.render_report(summary, cfg, OUTPUT_DIR, edition="group")
     except Exception as exc:  # noqa: BLE001
