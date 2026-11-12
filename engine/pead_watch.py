@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import tempfile
 import time
@@ -24,7 +25,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from core import pead_tags as ptag
 from core import pead_timing as pt
+from core import pead_validation as pv
 from core import pead_watch as pw
 from store import pead_watch as st
 from store import virtual_books as vbstore
@@ -72,6 +75,12 @@ class Sources:
     fx: Callable[[date, date], dict]
     earnings: Callable[[list], dict]
     calendar: Callable[[date, date], pd.DatetimeIndex]
+    # 기록 꼬리표(docs/prereg/pead_watch_tags.md) — 없으면 그 꼬리표는 빈칸
+    efts_day: Callable[[str], list] | None = None    # 접수일 하루 8-K 문서들
+    recent_q: Callable[[int], list] | None = None    # 10-Q/10-K 접수 목록
+    index_html: Callable[[int, str], str] | None = None
+    fetch_text: Callable[[str], str] | None = None
+    lm_lists: Callable[[], dict] | None = None
 
 
 def live_sources(cfg: dict) -> Sources:
@@ -79,6 +88,7 @@ def live_sources(cfg: dict) -> Sources:
     from data import edgar
     from data import fx as dfx
     from data import market_calendar as mc
+    from data import pead_tags_data as tg
     from data import pead_watch_data as pd_
     from data.prices import fetch_one
     from data.universe import get_universe
@@ -108,6 +118,11 @@ def live_sources(cfg: dict) -> Sources:
         fx=fx,
         earnings=lambda tick: dearn.get_earnings_dates(tick, max_workers=8),
         calendar=mc.trading_days_between,
+        efts_day=lambda day: tg.efts_8k_day(day, ua()),
+        recent_q=lambda cik: tg.recent_filings(cik, ua()),
+        index_html=lambda cik, accn: tg.index_html(cik, accn, ua()),
+        fetch_text=lambda url: tg.fetch_text(url, ua()),
+        lm_lists=tg.load_lm_lists,
     )
 
 
@@ -200,9 +215,11 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
         trades = st.load_trades(conn)
         todo_set = {d.date().isoformat() for d in todo}
         cands, new_filings, gaps = [], [], {"cik": [], "edgar": [], "accepted": []}
+        ann_hits = []  # (종목, accn, 반응일) — 진행할 날이 반응일인 실적 발표 전부(명단 무관, 다음 발표 기록용)
+        held_now = {t["ticker"] for t in trades if t["status"] in ("pending", "open")}
         if todo:
             tick = sorted(set().union(*[m["ndx"] | m["sp100"] for k, m in members.items()
-                                        if k in {pw.prev_month_end(d).date().isoformat() for d in todo}]))
+                                        if k in {pw.prev_month_end(d).date().isoformat() for d in todo}]) | held_now)
             ciks = src.cik_map()
             since = (todo[0] - pd.Timedelta(days=FILING_LOOKBACK_DAYS)).date().isoformat()
             cik_of = {}
@@ -239,10 +256,12 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
                 for nf in new_filings:
                     if nf["accn"] == accn:
                         nf["d0"] = d0.date().isoformat()
+                ann_hits.append((t, accn, d0.date().isoformat()))
                 m = members[pw.prev_month_end(d0).date().isoformat()]
                 label = pw.membership_label(t, m["ndx"], m["sp100"])
                 if label:
-                    cands.append({"ticker": t, "d0": d0.date().isoformat(), "accn": accn, "label": label, "accepted_et": acc})
+                    cands.append({"ticker": t, "d0": d0.date().isoformat(), "accn": accn, "label": label, "accepted_et": acc,
+                                  "cik": cik_of[t], "filing_date": f["filing_date"]})
         for k, v in gaps.items():
             if v:
                 res["warnings"].append({"cik": "CIK 없음", "edgar": "EDGAR 접수 목록 실패", "accepted": "Accepted 실패"}[k]
@@ -269,7 +288,7 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
         res["timing"]["prices"] = round(time.monotonic() - t2, 1)
 
         # 4) 거래일마다 진행
-        judged = []
+        judged, tag_jobs = [], []
         by_ledger = {lg: [t for t in trades if t["ledger"] == lg] for lg, _ in p.ledgers}
         old_closed = {(t["ledger"], t["ticker"], t["d0"]): t for t in trades if t["status"] in ("closed", "skipped")}
         for d in todo:
@@ -283,15 +302,24 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
                 if j:
                     row.update(ret=j["ret"], excess=j["excess"], vol_ratio=j["vol_ratio"], signal=int(j["signal"]),
                                status="신호" if j["signal"] else "조건 미달")
-                judged.append(row)
+                judged.append({k: v for k, v in row.items() if k not in ("cik", "filing_date")})
                 if j and j["signal"]:
-                    today_sig.append(row)
+                    today_sig.append(judged[-1])
+                    tag_jobs.append((judged[-1], c))
             for lg, hold in p.ledgers:
                 by_ledger[lg], w = pw.step_day(by_ledger[lg], d, today_sig, al, bench, days, lg, hold)
                 if d == todo[-1]:
                     res["warnings"] += sorted(set(w))
         res["judged"] = judged
 
+        # 4-1) 기록 꼬리표 (새 신호만, 판정·매매에 안 씀 — docs/prereg/pead_watch_tags.md)
+        tt = time.monotonic()
+        tag_cache: dict = {}
+        for row, c in tag_jobs:
+            row.update(signal_tags(c, raw.get(c["ticker"]), days, src, tag_cache))
+            if row.get("tag_errors"):
+                res["warnings"].append(f"꼬리표 빈칸 {c['ticker']} {c['d0']}: {row['tag_errors']}")
+        res["timing"]["tags"] = round(time.monotonic() - tt, 1)
         # 5) 환율 (새로 체결·매도된 매매)
         allt = [t for lg in by_ledger.values() for t in lg]
         need_fx = sorted({t["buy_day"] for t in allt if t["status"] in ("open", "closed") and not t.get("fx_buy")}
@@ -318,6 +346,18 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
                     res["warnings"].append(f"끝난 매매 값이 달라짐 {k} — 기록값 유지")
                 t.update({c: o.get(c) for c in st.TRADE_COLS if o.get(c) is not None})
 
+        # 5-1) 참고 기록: 다음 실적 발표 · 포트폴리오 (docs/prereg/pead_watch_reporting.md, 판정·매매에 안 씀)
+        res["next_ann"] = next_ann_rows(by_ledger["main"], ann_hits, al, bench, days, st.load_next_ann(conn), res["as_of"])
+        pf = {"rows": [], "events": [], "state": None}
+        if todo:
+            try:
+                pf = portfolio_days(cfg, by_ledger["main"], todo, al, bench, days, src,
+                                    json.loads(st.get_meta(conn, st.META_PF_STATE) or "null"), start=start_d)
+            except Exception as exc:  # noqa: BLE001 — 참고 기록 실패는 장부·편지에 영향 없음
+                res["warnings"].append(f"포트폴리오 기록 실패({type(exc).__name__}) — 다음 실행에서 다시")
+            res["warnings"] += pf.get("warnings", [])
+        res["portfolio"] = pf
+
         # 6) 편지 칸 (카드의 "새 추천" 태그는 지난 실행의 판정값도 쓴다 — 읽기만)
         res["signal_hist"] = [x for x in st.load_signals(conn) if x.get("signal")]
         res["letter"] = build_letter(by_ledger, judged, al, raw, bench, days, as_of, names, p, members, src, today_kst,
@@ -335,17 +375,185 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
             st.put_filing(conn, f)
         st.put_signals(conn, judged)
         st.replace_trades(conn, allt)
+        st.put_next_ann(conn, res["next_ann"])
+        if pf["state"] is not None:
+            for r in pf["rows"]:
+                st.put_portfolio_row(conn, r)
+            st.put_pf_events(conn, pf["events"])
+            st.set_meta(conn, st.META_PF_STATE, json.dumps(pf["state"]))
         if not st.get_meta(conn, st.META_START):
             st.set_meta(conn, st.META_START, start_d.date().isoformat())
         if todo:
             st.set_meta(conn, st.META_LAST, res["as_of"])
             st.put_daily(conn, res["as_of"], {"todo": res["todo"], "judged": len(judged),
                                               "signals": [j["ticker"] for j in judged if j["signal"]],
-                                              "counts": res["letter"]["counts"], "warnings": res["warnings"][:10]})
+                                              "counts": res["letter"]["counts"], "warnings": res["warnings"][:10],
+                                              "timing": res["timing"],
+                                              "tag_blanks": {f"{j['ticker']} {j['d0']}": j.get("tag_errors")
+                                                             for j in judged if j["signal"] and j.get("tag_errors")}})
         conn.commit()
         return res
     finally:
         conn.close()
+
+
+# ── 기록 꼬리표 · 참고 기록 (판정·매매에 안 씀) ─────────────────────────────
+
+
+def _cached(cache: dict, key, fn):
+    """실행 안에서 같은 요청은 한 번만(실패도 예외 그대로 기억)."""
+    if key not in cache:
+        try:
+            cache[key] = fn()
+        except Exception as exc:  # noqa: BLE001 — 부르는 쪽이 빈칸·사유로
+            cache[key] = exc
+    if isinstance(cache[key], Exception):
+        raise cache[key]
+    return cache[key]
+
+
+def signal_tags(c: dict, px: pd.DataFrame | None, days: pd.DatetimeIndex, src: Sources, cache: dict) -> dict:
+    """새 신호 하나의 기록 꼬리표(docs/prereg/pead_watch_tags.md). 받기 실패는 빈칸 + tag_errors에 사유(예외 종류만).
+
+    입력: c(후보 {ticker, d0, accn, cik, filing_date}), px(그 종목 일봉, 기준일까지). 출력: {tag_*: 값 또는 None}.
+    """
+    from data import pead_tags_data as tg
+    from data import pead_watch_data as pd_
+
+    d0 = pd.Timestamp(c["d0"])
+    out: dict = {k: None for k in ptag.TAG_COLS}
+    errs: list[str] = []
+    out["tag_weekday"] = ptag.weekday_kr(d0)
+    if px is None:
+        errs.append("가격 없음")
+    else:
+        v, why = ptag.price_tags(px, d0)
+        out.update(v)
+        errs += why
+    i0 = int(days.get_loc(d0))
+    for col, day in (("tag_n202_d0", d0), ("tag_n202_prev", days[i0 - 1])):
+        ds = day.date().isoformat()
+        if src.efts_day is None:
+            errs.append(f"{col}: 출처 없음")
+            continue
+        try:
+            out[col] = ptag.count_8k_202(_cached(cache, ("efts", ds), lambda ds=ds: src.efts_day(ds)))
+        except Exception as exc:  # noqa: BLE001
+            errs.append(f"{col}: {type(exc).__name__}")
+    if src.recent_q is None or src.index_html is None:
+        errs.append("분기 보고서: 출처 없음")
+    else:
+        try:
+            qs = ptag.q_report_candidates(src.recent_q(int(c["cik"])), c["filing_date"], d0)
+            acc = {}
+            for f in qs:
+                if f["filing_date"] == d0.date().isoformat():
+                    try:
+                        a = pd_.parse_index_accepted(src.index_html(int(c["cik"]), f["accn"]))
+                        acc[f["accn"]] = pd.Timestamp(a) if a else None
+                    except Exception:  # noqa: BLE001 — 그 건만 모름
+                        acc[f["accn"]] = None
+            out["tag_q_before_close"] = ptag.q_before_close(qs, d0, acc)
+            if out["tag_q_before_close"] is None:
+                errs.append("분기 보고서: 같은 날 Accepted 없음")
+        except Exception as exc:  # noqa: BLE001
+            errs.append(f"분기 보고서: {type(exc).__name__}")
+    if src.index_html is None or src.fetch_text is None or src.lm_lists is None:
+        errs.append("보도자료: 출처 없음")
+    else:
+        try:
+            docs = tg.parse_index_docs(src.index_html(int(c["cik"]), c["accn"]))
+            ex = ptag.pick_press_release(docs)
+            if ex is None:
+                errs.append("보도자료: EX-99.1 없음")
+            else:
+                tone = ptag.lm_tone(ptag.html_words(src.fetch_text(ex["url"])), _cached(cache, "lm", src.lm_lists))
+                if tone is None:
+                    errs.append("보도자료: 단어 0개")
+                else:
+                    out.update(tag_lm_pos=tone["pos"], tag_lm_neg=tone["neg"], tag_lm_unc=tone["unc"], tag_lm_words=tone["words"])
+        except Exception as exc:  # noqa: BLE001
+            errs.append(f"보도자료: {type(exc).__name__}")
+    out["tag_errors"] = "; ".join(errs) or None
+    return out
+
+
+def next_ann_rows(main: list[dict], ann_hits: list[tuple], al: dict, bench: pt.Aligned, days: pd.DatetimeIndex,
+                  existing: list[dict], as_of: str) -> list[dict]:
+    """주 장부 보유 중(매수일 < 반응일 ≤ 예정 매도일, 이미 판 매매는 매도일까지) 그 종목 다음 실적 발표 반응일이 지났으면
+    날짜와 매수일 시가 → 그날 종가 QQQ 대비 초과(달러, 비용 전). 매매당 첫 번째만(이미 기록된 매매는 건너뜀)."""
+    have = {(r["ledger"], r["ticker"], r["d0"]) for r in existing}
+    out: dict = {}
+    for tk, accn, dn in sorted(ann_hits, key=lambda x: (x[2], x[0])):
+        for t in main:
+            if (t["ticker"] != tk or t["status"] not in ("open", "closed") or not t.get("buy_px")
+                    or not (t["buy_day"] < dn <= t["plan_day"]) or (t["status"] == "closed" and dn > t["sell_day"])):
+                continue
+            key = ("main", tk, t["d0"])
+            a = al.get(tk)
+            if key in have or key in out or a is None:
+                continue
+            ib, i = int(days.get_loc(pd.Timestamp(t["buy_day"]))), int(days.get_loc(pd.Timestamp(dn)))
+            ex = pv.excess_to(a, bench, ib, i, float(t["buy_px"]), float(t.get("q_buy") or bench.open[ib]))
+            out[key] = {"ledger": "main", "ticker": tk, "d0": t["d0"], "next_d0": dn, "next_accn": accn,
+                        "ex_to_next": ex, "recorded_as_of": as_of}
+    return list(out.values())
+
+
+def pf_params(cfg: dict) -> pv.PfParams:
+    """config.yaml pead_watch_portfolio → PfParams (수수료·환전은 장부와 같은 값)."""
+    c = cfg.get("pead_watch_portfolio") or {}
+    return pv.PfParams(start_krw=float(c.get("start_krw", 100_000_000)), min_buy_krw=float(c.get("min_buy_krw", 1_000_000)),
+                       fraction=float(c.get("fraction", 0.1)))
+
+
+def portfolio_days(cfg: dict, main: list[dict], todo: list, al: dict, bench: pt.Aligned, days: pd.DatetimeIndex,
+                   src: Sources, state: dict | None, start=None) -> dict:
+    """포트폴리오 참고 기록을 진행한다. 상태가 없으면 start(장부 시작일)부터 다시 돌려 시작한다.
+
+    출력: {rows[하루 줄 + fx·원화], events[매수·매도·건너뜀], state(새 상태, 시작 못 하면 None), warnings}.
+    """
+    from data.fx import pick_rate_for_date
+
+    p = pf_params(cfg)
+    last = pd.Timestamp(todo[-1])
+    first = pd.Timestamp(start or todo[0]) if state is None else pd.Timestamp(todo[0])
+    run_days = [d for d in days[(days >= first) & (days <= last)] if state is None or d.date().isoformat() > state["last"]]
+    res = {"rows": [], "events": [], "state": state, "warnings": []}
+    if not run_days:
+        return res
+    try:
+        h = src.fx((run_days[0] - pd.Timedelta(days=10)).date(), last.date())
+    except Exception as exc:  # noqa: BLE001 — 원화 칸만 빈칸
+        h = {}
+        res["warnings"].append(f"포트폴리오 환율 실패({type(exc).__name__}) — 원화 칸 빈칸")
+
+    def fx_on(d):
+        r = pick_rate_for_date(h, d.date().isoformat()) if h else None
+        return r[0] if r else None
+
+    if state is None:
+        fx0 = fx_on(run_days[0])
+        if fx0 is None:
+            res["warnings"].append("포트폴리오 시작 환율 없음 — 다음 실행에서 시작")
+            return res
+        i0 = int(days.get_loc(run_days[0]))
+        state = {**pv.pf_init(fx0, float(bench.open[i0]), p), "start": run_days[0].date().isoformat(), "fx_start": fx0}
+    for d in run_days:
+        i = int(days.get_loc(d))
+        ds = d.date().isoformat()
+        want = {h_["ticker"] for h_ in state["pos"].values()} | {t["ticker"] for t in main if t.get("buy_day") == ds}
+        marks = {t: float(al[t].close[al[t].lastv[i]]) for t in want if t in al and al[t].lastv[i] >= 0}
+        qc = float(bench.close[bench.lastv[i]])
+        qo = float(bench.open[i]) if np.isfinite(bench.open[i]) else qc
+        state, ev, row = pv.pf_step(state, d, main, qo, qc, marks, p)
+        state["last"] = ds
+        f = fx_on(d)
+        row.update(fx=f, value_krw=row["value_usd"] * f if f else None, qqq100_krw=row["qqq100_usd"] * f if f else None)
+        res["rows"].append(row)
+        res["events"] += ev
+    res["state"] = state
+    return res
 
 
 def _row_name(t: str, names: dict) -> str:

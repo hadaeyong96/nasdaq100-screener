@@ -497,3 +497,10 @@ research_news:
 pead_watch:
   enabled: true
   start_date: null
+
+# 실적급등 장부 포트폴리오 참고 기록 (2026-11-12, docs/prereg/pead_watch_reporting.md 1절 — 판정·매매에 안 씀)
+# 가상 1억 원, 신호마다 그날 남은 현금(= QQQ로 간주)의 1/10, 예산이 min_buy_krw 미만이거나 1주 값보다 작으면 건너뜀 기록.
+pead_watch_portfolio:
+  start_krw: 100000000
+  min_buy_krw: 1000000 # [가정] 최소 매수 금액(시작일 환율로 달러 고정)
+  fraction: 0.1
