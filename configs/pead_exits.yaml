@@ -1,0 +1,94 @@
+# 실적급등 매도 조건 비교 (pead_exits) 사전 등록 — docs/prereg/pead_exits.md의 수치를 기계가 읽게 옮긴 것.
+# 태그 pead-exits-prereg 뒤 수정 금지. 엔진은 시작할 때 이 파일 해시를 태그 커밋과 대조한다.
+# V1.0(pead-watch-prereg, configs/pead_watch.yaml) 규칙은 바꾸지 않는다 — 신호·매수·비용·세금은 거기서 읽는다.
+
+registered_at: "2026-11-13"
+base: {prereg_tag: pead-watch-prereg, config: configs/pead_watch.yaml, ledger: main, hold: 90}
+start: first_scheduled_run_as_of      # 반응일 >= 시작일인 신호만 A·B
+
+exit_a:
+  ledger: exit_a
+  next_date:
+    source: "yfinance Ticker.get_earnings_dates(limit=12)"
+    min_days_after_d0: 30             # 반응일 + 30달력일 이후 첫 날짜
+    fetch_when: first_record_of_signal
+    freeze: true                      # 처음 받은 값 유지
+  fallback:
+    method: mean_gap_of_8k_202_reaction_days
+    max_gaps: 4
+    min_gaps: 1
+    unit: calendar_days
+  default_hold: 60                    # 둘 다 없으면 매수일부터 60거래일째 종가
+  sell: {offset_trading_days_before: 2, price: close}
+  min_hold: 5
+  max_hold: 90
+
+exit_b:
+  ledger: exit_b
+  target_mult: 1.20
+  judge_on: close                     # 장중 고가 사용 금지
+  hit_window: [0, 89]                 # 매수일(0) ~ 89거래일째 종가
+  sell: {when: next_trading_day_with_open, price: open}
+  max_hold: 90                        # 못 닿으면 90거래일째 종가
+
+compare:
+  primary: [{id: 1, cond: exit_a, vs: main}, {id: 2, cond: exit_b, vs: main}]
+  pair: same_signal_both_closed
+  value: excess_krw_after_cost_pre_tax
+  cluster: same_ticker_or_same_reaction_day_connected
+  test: cluster_sign_flip_two_sided
+  iterations: 10000
+  seed: 20261113
+  correction: holm
+  alpha: 0.05
+
+analysis:
+  sma200_prev_day: {groups: ["전날 종가 < 전날까지 200개 평균", "나머지"], test: label_permutation, correction: none}
+  tags:
+    correction: benjamini_hochberg
+    fdr: 0.10
+    test: bin_vs_rest_label_permutation
+    min_bin_n: 5
+    monotone_required_for_continuous: true
+    bins:
+      tag_sma200_dist: {continuous: true, edges: "x<=-10 | -10<x<=0 | 0<x<=10 | x>10"}
+      tag_hi52: {continuous: true, edges: "-5<x<=0 | -15<x<=-5 | -30<x<=-15 | x<=-30"}
+      tag_close_pos: {continuous: true, edges: "x<0.25 | 0.25<=x<=0.75 | x>0.75"}
+      tag_n202_d0: {continuous: true, edges: "x<=1 | 2<=x<=3 | x>=4"}
+      tag_q_before_close: {continuous: false, edges: "1 | 0"}
+      tag_weekday: {continuous: false, edges: "월 | 화 | 수 | 목 | 금"}
+      tone_net: {continuous: false, edges: "x>median | x<=median", def: "tag_lm_pos - tag_lm_neg"}
+      guid_raise: {continuous: false, edges: "1 | 0"}
+  iterations: 10000
+  seed: 20261113
+
+guidance:
+  verbs: [raise, raises, raised, raising, increase, increases, increased, increasing]
+  rule1: {window: 8, nouns: [guidance, outlook, outlooks, forecast, forecasts]}
+  rule2: {window_period: 4, periods: ["full year", "fiscal year", annual, fy], window_noun: 6,
+          nouns: [guidance, outlook, outlooks, forecast, forecasts, expectations, target, targets, range]}
+  negation: {window: 3, words: [not, no, never, without]}
+  sentence_split: "[.!?;] + whitespace"
+  word: "[a-z]+"
+
+report:
+  metrics: [mean, median, win_rate, mean_excl_top10pct, max_loss, ci95_cluster_bootstrap,
+            b_hit_rate, b_days_to_hit, portfolio_cumulative, pre_tax, after_tax]
+  milestones: {first: 50, final: 120}  # A·B 모두 끝난 매매 수
+  switch_letter_basis: user_decision
+
+portfolio:
+  books: [main, exit_a, exit_b]
+  slots: 15
+  budget: remaining_cash_div_empty_slots
+  start_krw: 100000000
+  min_buy_krw: 1000000
+  full: skip_and_record
+  same_day_order: [open_sells, open_buys, close_sells]
+
+record:
+  db: virtual_books.db
+  tables: [pead_exit_a_trades, pead_exit_b_trades, pead_exits_plan, pead_exits_portfolio, pead_exits_pf_events]
+  meta_start: pead_exits_start
+  write_only: github_actions_schedule
+  letter: unchanged_v1
