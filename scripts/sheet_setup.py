@@ -1135,6 +1135,8 @@ def pead_setup(spreadsheet, apply: bool) -> dict:
             ws.freeze(rows=1)
         for t in plan["create"] + plan["fix"]:
             ws, _ = pead_sheet.open_tab(spreadsheet, t)
+            if getattr(ws, "col_count", 0) and ws.col_count < len(pead_sheet.TABS[t][0]):  # 머리글 칸이 늘었으면 시트 칸도
+                ws.resize(cols=len(pead_sheet.TABS[t][0]))
             ws.batch_update([{"range": "A1", "values": [pead_sheet.TABS[t][0]]}], value_input_option="RAW")
         print("[sheet_setup] 적용함" if plan["create"] or plan["drop_title"] or plan["fix"] else "[sheet_setup] 바꿀 것 없음")
     else:

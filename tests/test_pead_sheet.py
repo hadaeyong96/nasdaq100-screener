@@ -99,7 +99,7 @@ def test_daily_rows_holdings_trades_and_realized():
           {"date": "2026-11-13", "ticker": "AAA", "d0": "2026-11-11", "action": "sell", "shares": 2, "px": 60.0, "amount_usd": 119.9, "note": "손익 +20달러"}]
     rows = ps.daily_rows(pf, ev)
     assert [r[0] for r in rows] == ["2026-11-11", "2026-11-12", "2026-11-13"]
-    assert rows[0] == ["2026-11-11", 1300000, 1300000, 0.0, "100.0%", 0, "없음", "", 0]
+    assert rows[0] == ["2026-11-11", 1300000, 1300000, 0.0, "100.0%", 0, "없음", "", 0] + [""] * 6  # 15칸 칸은 빈칸
     d2 = rows[1]
     assert d2[1] == round(1010 * 1310) and d2[3] == 0.9 and d2[4] == "89.1%" and d2[5] == 1 and d2[6] == "AAA"
     assert d2[7] == "매수 AAA 2주 $50.00 · 건너뜀 BBB(최소 금액 미만)"

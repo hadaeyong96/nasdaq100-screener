@@ -15,10 +15,16 @@ import pandas as pd
 from core import pead_timing as pt
 
 DAILY_HEADER = ["날짜", "평가금액(원)", "QQQ 보유(원)", "QQQ 대비(%p)", "QQQ 비중", "보유 종목 수", "보유 종목", "오늘 매매",
-                "올해 실현 이익(원)"]
+                "올해 실현 이익(원)",
+                # 매도 조건 비교 15칸 포트폴리오(docs/prereg/pead_exits.md 6장, 2026-11-13) — 시작일 전은 빈칸
+                "15칸 V1 평가(원)", "15칸 V1 QQQ 대비(%p)", "15칸 A 평가(원)", "15칸 A QQQ 대비(%p)",
+                "15칸 B 평가(원)", "15칸 B QQQ 대비(%p)"]
+SLOT_BOOKS = ("main", "exit_a", "exit_b")
 TRADE_HEADER = ["반응일", "티커", "회사명", "소속", "반응일 상승률", "QQQ 대비(%p)", "거래량 배수", "매수일", "매수가($)",
                 "중간 점검일(60)", "매도 예정일(90)", "매도일", "매도가($)", "수익률", "같은 기간 QQQ", "QQQ 대비(%p)",
-                "60일 시점 QQQ 대비(%p)", "상태", "꼬리표 요약"]
+                "60일 시점 QQQ 대비(%p)", "상태", "꼬리표 요약",
+                # 매도 조건 비교 A·B(docs/prereg/pead_exits.md, 2026-11-13) — A·B 시작 전 신호는 빈칸
+                "A 매도 예정일", "A 결과", "B 목표가($)", "B 매도일", "B 결과", "B 목표 도달"]
 TRADE_KEY = (1, 7)  # 티커 + 매수일 — 같은 매매는 같은 줄을 갱신
 STATUS = {"pending": "매수 대기", "open": "보유 중", "closed": "끝", "skipped": "건너뜀"}
 ACTION = {"buy": "매수", "sell": "매도", "skip": "건너뜀"}
@@ -50,8 +56,9 @@ def _event_text(e: dict) -> str:
     return s + (f" ({e['note']})" if e["action"] == "sell" and e.get("note") else "")
 
 
-def daily_rows(portfolio: list[dict], events: list[dict]) -> list[list]:
+def daily_rows(portfolio: list[dict], events: list[dict], slots: dict[str, list[dict]] | None = None) -> list[list]:
     """포트폴리오 하루 줄(pead_watch_portfolio, row_json 포함)과 사건(pead_watch_pf_events) → 「일별 성적」 줄(날짜 순).
+    slots = 매도 조건 비교 15칸 포트폴리오 {장부(main·exit_a·exit_b): 하루 줄} — 그날 줄이 없으면 빈칸.
 
     QQQ 비중 = 남은 현금(QQQ로 간주) ÷ 평가금액. 보유 종목은 그날까지 사건으로 되짚는다.
     올해 실현 이익(원) = 그해 매도마다 (받은 돈 × 매도일 환율 − 들어간 돈 × 매수일 환율), 수수료 뒤·세금 전.
@@ -63,6 +70,7 @@ def daily_rows(portfolio: list[dict], events: list[dict]) -> list[list]:
     held: dict[tuple, str] = {}
     cost: dict[tuple, tuple[float, str]] = {}
     realized: dict[int, float] = {}
+    slot_by = {b: {r["date"]: r for r in rows} for b, rows in (slots or {}).items()}
     out = []
     for r in sorted(portfolio, key=lambda r: r["date"]):
         ds = r["date"]
@@ -90,8 +98,17 @@ def daily_rows(portfolio: list[dict], events: list[dict]) -> list[list]:
                     len(held),
                     ", ".join(sorted(set(held.values()))) or "없음",
                     " · ".join(_event_text(e) for e in today),
-                    round(realized.get(int(ds[:4]), 0.0))])
+                    round(realized.get(int(ds[:4]), 0.0))] + _slot_cells(slot_by, ds))
     return out
+
+
+def _slot_cells(slot_by: dict[str, dict[str, dict]], ds: str) -> list:
+    cells = []
+    for b in SLOT_BOOKS:
+        r = slot_by.get(b, {}).get(ds)
+        cells += ["", ""] if r is None else [round(r["value_krw"]) if r.get("value_krw") is not None else "",
+                                             _num(r.get("vs_qqq_pct"))]
+    return cells
 
 
 # ── 「매매이력」 ────────────────────────────────────────────────────────────
@@ -119,16 +136,62 @@ def tag_summary(s: dict | None) -> str:
     return " · ".join(parts) + (f" · 빈칸: {s['tag_errors']}" if s.get("tag_errors") else "")
 
 
+def _exit_result(t: dict | None, a: pt.Aligned | None, bench: pt.Aligned, days: pd.DatetimeIndex, ia: int) -> str:
+    """A·B 매매 → 결과 한 칸: 끝 "+12.34% (QQQ 대비 +3.21%p)" / 보유 중 "보유 중 …"(기준일 종가, 비용 전) / 매수 대기 / 건너뜀."""
+    if t is None:
+        return ""
+    if t["status"] == "pending":
+        return STATUS["pending"]
+    if t["status"] == "skipped":
+        return STATUS["skipped"] + (f"({t['skip']})" if t.get("skip") else "")
+    if t["status"] == "closed" and t.get("buy_px") and t.get("sell_px") and t.get("q_buy") and t.get("q_sell"):
+        r, q = t["sell_px"] / t["buy_px"] - 1, t["q_sell"] / t["q_buy"] - 1
+        return f"{_pct(r)} (QQQ 대비 {(r - q) * 100:+.2f}%p)"
+    if t["status"] == "open" and t.get("buy_px") and t.get("q_buy") and a is not None:
+        ib = int(days.get_loc(pd.Timestamp(t["buy_day"])))
+        if a.lastv[ia] >= ib:
+            r = a.close[a.lastv[ia]] / t["buy_px"] - 1
+            q = bench.close[bench.lastv[ia]] / t["q_buy"] - 1
+            return f"보유 중 {_pct(r)} (QQQ 대비 {(r - q) * 100:+.2f}%p)"
+    return STATUS.get(t["status"], t["status"])
+
+
+def exit_cells(ta: dict | None, tb: dict | None, a: pt.Aligned | None, bench: pt.Aligned, days: pd.DatetimeIndex,
+               ia: int) -> list:
+    """「매매이력」 A·B 칸 6개: A 매도 예정일(출처), A 결과, B 목표가, B 매도일, B 결과, B 목표 도달."""
+    a_plan = ""
+    if ta is not None and ta.get("plan_day"):
+        a_plan = f"{ta['plan_day']} ({ta.get('next_source') or ''})"
+    elif ta is not None:
+        a_plan = f"({ta.get('next_source') or ''})"
+    hit = ""
+    if tb is not None:
+        if tb.get("hit_day"):
+            hit = f"예 ({tb['hit_day']}, {int(tb['hit_days'])}거래일)"
+        elif tb["status"] == "closed":
+            hit = "아니오"
+        elif tb["status"] in ("open", "pending"):
+            hit = "아직"
+    return [a_plan, _exit_result(ta, a, bench, days, ia),
+            _num(tb.get("target_px")) if tb is not None else "",
+            (tb.get("sell_day") or "") if tb is not None and tb["status"] == "closed" else "",
+            _exit_result(tb, a, bench, days, ia), hit]
+
+
 def trade_rows(main: list[dict], signals: list[dict], al: dict[str, pt.Aligned], bench: pt.Aligned,
-               days: pd.DatetimeIndex, as_of, names: dict[str, str], check: int = 60) -> list[list]:
+               days: pd.DatetimeIndex, as_of, names: dict[str, str], check: int = 60,
+               exits: dict[str, list[dict]] | None = None) -> list[list]:
     """주 장부(main) 매매 → 「매매이력」 줄(반응일·티커 순).
 
     입력: main(ledger='main' 매매 dict), signals(pead_watch_signals 행 — 반응일 숫자·꼬리표), al(종목 달력 배열, 보유 중 평가용),
           bench(QQQ), days(달력), as_of(기준일), names(티커 → 회사명).
     끝난 매매는 기록된 매도가·QQQ 매도가로, 보유 중이면 기준일 종가로(같은 시가에 산 QQQ와 차이, 비용 전).
     60일 시점 = 매수일부터 check 거래일째 종가(그날이 기준일 이하일 때만).
+    exits = 매도 조건 비교 {'exit_a': 매매, 'exit_b': 매매} — 같은 (티커, 반응일) 줄 끝에 A·B 칸(없으면 빈칸).
     """
     sig = {(s["ticker"], str(s["d0"])[:10]): s for s in signals}
+    xa = {(t["ticker"], str(t["d0"])[:10]): t for t in (exits or {}).get("exit_a", [])}
+    xb = {(t["ticker"], str(t["d0"])[:10]): t for t in (exits or {}).get("exit_b", [])}
     ia = int(days.get_loc(pd.Timestamp(as_of)))
     out = []
     for t in sorted(main, key=lambda t: (str(t["d0"]), t["ticker"])):
@@ -156,5 +219,7 @@ def trade_rows(main: list[dict], signals: list[dict], al: dict[str, pt.Aligned],
                     (t.get("sell_day") or "") if t["status"] == "closed" else "",
                     _num(t.get("sell_px")) if t["status"] == "closed" else "",
                     _pct(ret), _pct(qret), _pp(ret - qret) if ret is not None and qret is not None else "",
-                    _pp(ex60), status, tag_summary(s)])
+                    _pp(ex60), status, tag_summary(s)]
+                   + exit_cells(xa.get((t["ticker"], str(t["d0"])[:10])), xb.get((t["ticker"], str(t["d0"])[:10])),
+                                a, bench, days, ia))
     return out
