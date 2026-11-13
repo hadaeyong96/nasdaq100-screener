@@ -14,7 +14,6 @@ import pandas as pd
 
 from core import pead_timing as pt
 
-TITLE = "실적급등 다음날 매수·90일 보유 — 가상 1억, 실제 돈 아님 · 투자 권유 아님"
 DAILY_HEADER = ["날짜", "평가금액(원)", "QQQ 보유(원)", "QQQ 대비(%p)", "QQQ 비중", "보유 종목 수", "보유 종목", "오늘 매매",
                 "올해 실현 이익(원)"]
 TRADE_HEADER = ["반응일", "티커", "회사명", "소속", "반응일 상승률", "QQQ 대비(%p)", "거래량 배수", "매수일", "매수가($)",

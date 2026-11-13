@@ -1096,41 +1096,47 @@ def read_sheets_check(sheet_id: str) -> None:
 
 def pead_plan(titles: list[str], grids: dict[str, list[list]]) -> dict:
     """실적급등 탭 점검(순수): titles = 지금 탭 이름, grids = 실적급등 탭 → 값(1·2행이면 충분).
-    출력: {create[없는 탭], fix[제목·머리글이 다른 탭], others[그 밖의 탭 — 손대지 않음]}."""
-    from core import pead_sheet as ps
+    배치 = 1행 머리글, 2행부터 자료(제목 줄 없음, 2026-11-13).
+    출력: {create[없는 탭], drop_title[옛 배치(2행 머리글) — 1행 삭제], fix[1행 머리글이 다른 탭], others[그 밖의 탭 — 손대지 않음]}."""
     from data import pead_sheet
 
+    def trim(row):
+        row = list(row)
+        while row and not str(row[-1]).strip():
+            row.pop()
+        return row
+
     create = [t for t in pead_sheet.TABS if t not in titles]
-    fix = []
+    drop, fix = [], []
     for t, (header, _) in pead_sheet.TABS.items():
         g = grids.get(t)
         if t in titles and g is not None:
-            row1 = (g[0][:1] if g else [""]) or [""]
-            row2 = [x for x in (g[1] if len(g) > 1 else [])]
-            while row2 and not str(row2[-1]).strip():
-                row2.pop()
-            if row1[0] != ps.TITLE or row2 != header:
-                fix.append(t)
-    return {"create": create, "fix": fix, "others": [t for t in titles if t not in pead_sheet.TABS]}
+            if g and trim(g[0]) == header:
+                continue
+            (drop if len(g) > 1 and trim(g[1]) == header else fix).append(t)
+    return {"create": create, "drop_title": drop, "fix": fix, "others": [t for t in titles if t not in pead_sheet.TABS]}
 
 
 def pead_setup(spreadsheet, apply: bool) -> dict:
     """실적급등 탭 두 개만 맞춘다. apply=False면 쓰기 0번. 출력: pead_plan 결과."""
-    from core import pead_sheet as ps
     from data import pead_sheet
 
     titles = [ws.title for ws in spreadsheet.worksheets()]
     grids = {t: spreadsheet.worksheet(t).get_all_values()[:2] for t in pead_sheet.TABS if t in titles}
     plan = pead_plan(titles, grids)
-    print(f"[sheet_setup] 만들 탭: {', '.join(plan['create']) or '없음'} · 제목·머리글 맞출 탭: {', '.join(plan['fix']) or '없음'}")
+    print(f"[sheet_setup] 만들 탭: {', '.join(plan['create']) or '없음'} · 1행(제목 줄) 지울 탭: {', '.join(plan['drop_title']) or '없음'}"
+          f" · 머리글 맞출 탭: {', '.join(plan['fix']) or '없음'}")
     if plan["others"]:
         print(f"[sheet_setup] 그 밖의 탭(손대지 않음): {', '.join(plan['others'])}")
     if apply:
+        for t in plan["drop_title"]:
+            ws, _ = pead_sheet.open_tab(spreadsheet, t)
+            ws.delete_rows(1)  # 옛 1행 제목 줄 — 머리글·자료가 한 줄씩 올라온다
+            ws.freeze(rows=1)
         for t in plan["create"] + plan["fix"]:
             ws, _ = pead_sheet.open_tab(spreadsheet, t)
-            ws.batch_update([{"range": "A1", "values": [[ps.TITLE]]}, {"range": "A2", "values": [pead_sheet.TABS[t][0]]}],
-                            value_input_option="RAW")
-        print("[sheet_setup] 적용함" if plan["create"] or plan["fix"] else "[sheet_setup] 바꿀 것 없음")
+            ws.batch_update([{"range": "A1", "values": [pead_sheet.TABS[t][0]]}], value_input_option="RAW")
+        print("[sheet_setup] 적용함" if plan["create"] or plan["drop_title"] or plan["fix"] else "[sheet_setup] 바꿀 것 없음")
     else:
         print("[sheet_setup] 보기 모드 — 바꾼 것 없음(--apply로 적용)")
     return plan
