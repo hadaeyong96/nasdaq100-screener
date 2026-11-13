@@ -45,20 +45,25 @@ def open_tab(spreadsheet, tab: str, old_tab: str, cols: int):
     return ws, migrated
 
 
-def upsert(ws, rows: list[list], tab: str, title: str, header: list[str]) -> int:
-    """제목·머리글을 맞추고 rows(첫 칸 = 날짜 문자열)를 날짜 줄에 덮어쓰거나 끝에 붙인다. 출력: 쓴 줄 수."""
+def upsert(ws, rows: list[list], tab: str, title: str, header: list[str], key: tuple[int, ...] = (0,)) -> int:
+    """제목·머리글을 맞추고 rows를 같은 키 줄에 덮어쓰거나 끝에 붙인다. 출력: 쓴 줄 수.
+    key = 키로 쓸 칸 번호(기본 첫 칸 = 날짜 문자열, 실적급등 「매매이력」은 티커+매수일 — data/pead_sheet.py)."""
     _assert(ws, tab)
+
+    def k(r) -> tuple:
+        return tuple(str(r[i]) if i < len(r) else "" for i in key)
+
     values = ws.get_all_values()
     data = values[2:] if len(values) > 2 else []
-    where = {r[0]: i + 3 for i, r in enumerate(data) if r and r[0]}
+    where = {k(r): i + 3 for i, r in enumerate(data) if r and any(k(r))}
     nxt = max([3] + [i + 1 for i in where.values()])
     updates = [{"range": "A1", "values": [[title]]}, {"range": "A2", "values": [header]}]
     for row in rows:
-        r = where.get(str(row[0]))
+        r = where.get(k(row))
         if r is None:
             r = nxt
             nxt += 1
-            where[str(row[0])] = r
+            where[k(row)] = r
         updates.append({"range": f"A{r}", "values": [row]})
     need = max(nxt, 3)
     if getattr(ws, "row_count", need) < need:

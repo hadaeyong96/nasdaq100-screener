@@ -76,6 +76,13 @@ def _no_real_telegram(monkeypatch, tmp_path):
     monkeypatch.setattr(dnews, "_get", _no_net_news)
     monkeypatch.setattr(dnews, "PAUSE", 0)
     monkeypatch.setattr(_daily, "_fetch_index_closes", lambda cfg: {})
+    # 전략공장 시트 실적급등 탭(2026-11-13): .env의 GOOGLE_SHEETS_ID가 있어도 실제 시트에 접속하지 않게 — 가짜 클라이언트를 주는 테스트만 쓴다
+    from engine import pead_watch as _pw
+
+    def _no_sheet():
+        raise RuntimeError("테스트 중 실제 구글 시트 접속 금지")
+
+    monkeypatch.setattr(_pw, "_sheet_client", _no_sheet)
 
 
 @pytest.fixture(scope="session")

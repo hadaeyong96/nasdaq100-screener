@@ -42,8 +42,7 @@ def test_defaults_everything_off(cfg):
     from engine import virtual_books as vbooks
 
     assert vbooks.run_safely(cfg) is None  # 장부·장부 시트 쓰기·동전주 알림 모두 안 돈다
-    assert cfg["research_news"]["in_progress"] == ["웅덩이 v3.2(시가총액 상위 10, 가상 기록, 12개월)",
-                                                   "웅덩이 반등 확인 v2(시가총액 상위 10, 가상 기록, 12개월)"]  # 2026-10-27 시총 판으로 재시작
+    assert cfg["research_news"]["in_progress"] == []  # 2026-11-13 웅덩이 v3.2·반등 확인 v2 중단(10-27 시총 판 재시작분)
     assert [x["name"] for x in cfg["research_news"]["finished"]] == ["상승장 RSI 눌림 전략"]  # 끝난 기록만 남김
 
 
@@ -114,7 +113,7 @@ def test_dec_tax_uses_holdings(cfg):
     s = {"as_of": pd.Timestamp("2026-12-01"), "fx_rate": 1400.0}
     h = hd.parse_holdings(SHEET, cfg)
     close = pd.Series([300.0], index=[pd.Timestamp("2026-12-01")])
-    daily._attach_dec_tax(s, cfg, holdings=h, qqqm_fn=lambda: close)
+    daily._attach_dec_tax(s, {**cfg, "dec_tax": {"enabled": True}}, holdings=h, qqqm_fn=lambda: close)  # 2026-11-13부터 config는 끔
     assert s["dec_tax"]["todo"] == letter.DEC_TAX_TODO
     assert "남은 한도 2,000,000원" in " ".join(s["dec_tax"]["lines"])
 
@@ -235,13 +234,18 @@ def test_run_live_does_not_read_plan_or_fills_sheet(cfg, monkeypatch, tmp_path):
     assert summary["plan_by_ticker"] == {}
 
 
-def test_sheet_setup_disabled_by_default(monkeypatch, capsys):
+def test_sheet_setup_default_only_pead_tabs(monkeypatch, capsys):
+    """2026-11-13: 기본 동작 = 실적급등 탭 2개만 맞춘다(예전 재설계안·웅덩이·QQQM 탭은 만들지 않음)."""
     from data import sheets
     from scripts import sheet_setup
+    from tests.test_pead_sheet import FakeClient, FakeSpreadsheet
 
-    monkeypatch.setattr(sheets, "get_client", lambda: (_ for _ in ()).throw(AssertionError("시트 접속")))
+    sp = FakeSpreadsheet(["QQQM 모으기"])
+    monkeypatch.setattr(sheets, "get_client", lambda: FakeClient(sp))
+    monkeypatch.setattr(sheets, "_sheet_id", lambda: "sid")
     assert sheet_setup.main(["--apply"]) == 0
-    assert "비활성" in capsys.readouterr().out
+    assert sp.added == ["일별 성적", "매매이력"] and sp.deleted == [] and sp.tabs["QQQM 모으기"].grid == []
+    assert "그 밖의 탭(손대지 않음): QQQM 모으기" in capsys.readouterr().out
 
 
 def test_research_current_verdict_in_config(cfg):

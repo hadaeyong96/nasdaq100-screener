@@ -248,6 +248,7 @@ def _qqqm_fills():
 def test_dec_tax_attached_only_on_show_days_and_isolated(cfg):
     from engine import daily
 
+    cfg = {**cfg, "dec_tax": {"enabled": True}}  # 2026-11-13부터 config는 끔 — 켰을 때 동작을 본다
     close = pd.Series([160.0], index=[pd.Timestamp("2026-12-01")])
     s = {"as_of": pd.Timestamp("2026-12-01"), "fx_rate": 1000.0}
     daily._attach_dec_tax(s, cfg, fills_fn=_qqqm_fills, qqqm_fn=lambda: close, days_fn=lambda y: _dec_days(y))

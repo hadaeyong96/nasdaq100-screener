@@ -33,9 +33,9 @@ ENV_KEYS = [
     "GOOGLE_DRIVE_STATE_FILE_ID_LIVE", "GOOGLE_DRIVE_STATE_FILE_ID_PAPER",
     "GOOGLE_DRIVE_STATE_FILE_ID_VBOOKS",
 ]
-FORWARD_BOOKS = {  # 앞으로 기록 장부 → 일별 표 (docs/prereg/puddle_v32_forward.md, puddle_rebound_v2_forward.md)
-    "웅덩이 v3.2 (puddle_v32)": "puddle_v32_daily",
-    "반등 v2 (rebound_v2)": "puddle_rebound_v2_daily",
+FORWARD_BOOKS = {  # 앞으로 기록 장부 → 일별 표 (2026-11-13 웅덩이 v3.2·반등 v2 중단 → 실적급등 장부, docs/prereg/pead_watch.md)
+    "실적급등 장부 (pead_watch)": "pead_watch_daily",
+    "실적급등 포트폴리오 (pead_watch_portfolio)": "pead_watch_portfolio",
 }
 DATE_COLS = ("date", "base_date", "as_of_date", "fill_date", "last_date", "run_at", "exit_date")
 

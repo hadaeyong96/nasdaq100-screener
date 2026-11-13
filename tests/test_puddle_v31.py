@@ -384,6 +384,8 @@ def test_sheet_writes_only_its_tab_and_upserts_by_date():
 def test_research_news_in_progress_on_monday(cfg):
     from notify import letter
 
+    cfg = {**cfg, "research_news": {**cfg["research_news"], "in_progress": [  # 2026-11-13부터 config는 빈 목록 — 표시 방식만 본다
+        "웅덩이 v3.2(시가총액 상위 10, 가상 기록, 12개월)", "웅덩이 반등 확인 v2(시가총액 상위 10, 가상 기록, 12개월)"]}}
     lines = letter.research_lines(cfg, pd.Timestamp("2026-10-26"))
     assert lines[-1] == ("연구 중: 웅덩이 v3.2(시가총액 상위 10, 가상 기록, 12개월) · "
                          "웅덩이 반등 확인 v2(시가총액 상위 10, 가상 기록, 12개월)")  # 2026-10-27 시총 판으로 재시작
