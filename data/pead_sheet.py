@@ -46,6 +46,8 @@ def write_tab(spreadsheet, tab: str, rows: list[list]) -> int:
     """한 탭에 rows를 upsert. 출력: 쓴 줄 수."""
     header, key = TABS[tab]
     ws, _ = open_tab(spreadsheet, tab)
+    if getattr(ws, "col_count", len(header)) < len(header):  # 칸을 더한 머리글(2026-11-13 매도 조건 A·B) — 시트 칸 수를 늘린다
+        ws.resize(cols=len(header))
     return _base.upsert(ws, rows, tab, None, header, key=key)
 
 

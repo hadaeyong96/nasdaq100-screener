@@ -2,6 +2,7 @@
 
 순서: 사전 등록 해시 확인 → 달 말 명단 → EDGAR 8-K 2.02(직전 발표 60일 뒤) → 색인 Accepted → 반응일 → 거래일마다
 (매수 체결 → 매도 → 그날 반응일 신호 판정·대기 매수) → 환율 → 보유 평가 → 편지 칸·그래프 자료
+→ 매도 조건 A·B 비교 장부(engine/pead_exits, 사전 등록 pead-exits-prereg — 실패해도 V1 장부·편지 그대로)
 → (예약 실행 저장 뒤) 전략공장 시트 「일별 성적」·「매매이력」(2026-11-13, write_sheet — 실패해도 장부·편지 그대로).
 쓰기는 GitHub Actions 예약 실행만(dry_run·로컬·수동 실행은 미리보기). run_safely는 어떤 예외도 밖으로 내보내지 않는다(편지 보호).
 
@@ -83,6 +84,8 @@ class Sources:
     index_html: Callable[[int, str], str] | None = None
     fetch_text: Callable[[str], str] | None = None
     lm_lists: Callable[[], dict] | None = None
+    # 매도 조건 A(docs/prereg/pead_exits.md 1-1) — 다음 실적 발표 예정일 후보(yfinance earnings_dates)
+    earnings_dates: Callable[[str], list] | None = None
 
 
 def live_sources(cfg: dict) -> Sources:
@@ -90,6 +93,7 @@ def live_sources(cfg: dict) -> Sources:
     from data import edgar
     from data import fx as dfx
     from data import market_calendar as mc
+    from data import pead_exits_data as pxd
     from data import pead_tags_data as tg
     from data import pead_watch_data as pd_
     from data.prices import fetch_one
@@ -125,6 +129,7 @@ def live_sources(cfg: dict) -> Sources:
         index_html=lambda cik, accn: tg.index_html(cik, accn, ua()),
         fetch_text=lambda url: tg.fetch_text(url, ua()),
         lm_lists=tg.load_lm_lists,
+        earnings_dates=pxd.earnings_dates,
     )
 
 
@@ -162,8 +167,9 @@ def _empty_letter() -> dict:
 
 
 def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources | None = None, start: str | None = None,
-        today_kst=None, root: Path = ROOT) -> dict:
+        today_kst=None, root: Path = ROOT, exits_start: str | None = None) -> dict:
     """하루 실행. as_of = 직전 확정 미국 종가일. start = 미리보기 시작일(주면 DB 메타 대신 이 날부터 진행).
+    exits_start = 매도 조건 A·B 미리보기 시작일(주면 DB 메타 대신 — 예약 실행은 첫 실행 기준일을 DB에 고정).
 
     출력: {status('ok'|'preview'|'already'), start_date, as_of, letter{…}, judged[판정 행], warnings, errors, timing}
     """
@@ -217,6 +223,7 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
         trades = st.load_trades(conn)
         todo_set = {d.date().isoformat() for d in todo}
         cands, new_filings, gaps = [], [], {"cik": [], "edgar": [], "accepted": []}
+        lists: dict = {}
         ann_hits = []  # (종목, accn, 반응일) — 진행할 날이 반응일인 실적 발표 전부(명단 무관, 다음 발표 기록용)
         held_now = {t["ticker"] for t in trades if t["status"] in ("pending", "open")}
         if todo:
@@ -360,6 +367,19 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
             res["warnings"] += pf.get("warnings", [])
         res["portfolio"] = pf
 
+        # 5-2) 매도 조건 A·B 비교 장부 (docs/prereg/pead_exits.md — V1·편지에 안 씀, 실패해도 그대로)
+        res["exits"] = None
+        try:
+            from engine import pead_exits as ex_
+
+            res["exits"] = ex_.advance(conn, cfg, judged=judged, cands=cands, todo=todo, days=days, al=al, raw=raw,
+                                       bench=bench, src=src, lists=lists, cache=tag_cache, main=by_ledger["main"],
+                                       as_of=res["as_of"], today_kst=str(today_kst)[:10] if today_kst else None,
+                                       start_override=exits_start, min_gap=p.min_gap_days, root=root)
+            res["warnings"] += res["exits"]["warnings"]
+        except Exception as exc:  # noqa: BLE001 — V1 장부·편지 보호
+            res["warnings"].append(f"매도 조건 A·B 기록 실패({type(exc).__name__}) — 다음 실행에서 다시")
+
         # 6) 편지 칸 (카드의 "새 추천" 태그는 지난 실행의 판정값도 쓴다 — 읽기만)
         res["signal_hist"] = [x for x in st.load_signals(conn) if x.get("signal")]
         res["letter"] = build_letter(by_ledger, judged, al, raw, bench, days, as_of, names, p, members, src, today_kst,
@@ -385,12 +405,25 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
             st.set_meta(conn, st.META_PF_STATE, json.dumps(pf["state"]))
         if not st.get_meta(conn, st.META_START):
             st.set_meta(conn, st.META_START, start_d.date().isoformat())
+        if res["exits"] is not None:
+            conn.execute("SAVEPOINT pead_exits")
+            try:
+                from engine import pead_exits as ex_
+
+                ex_.save(conn, res["exits"])
+                conn.execute("RELEASE pead_exits")
+            except Exception as exc:  # noqa: BLE001 — A·B 저장만 되돌리고 V1은 저장
+                conn.execute("ROLLBACK TO pead_exits")
+                conn.execute("RELEASE pead_exits")
+                res["warnings"].append(f"매도 조건 A·B 저장 실패({type(exc).__name__}: {exc}) — 다음 실행에서 다시")
         if todo:
             st.set_meta(conn, st.META_LAST, res["as_of"])
             st.put_daily(conn, res["as_of"], {"todo": res["todo"], "judged": len(judged),
                                               "signals": [j["ticker"] for j in judged if j["signal"]],
                                               "counts": res["letter"]["counts"], "warnings": res["warnings"][:10],
                                               "timing": res["timing"],
+                                              "exits": ({"start": res["exits"]["start"], "closed": res["exits"]["counts"]}
+                                                        if res["exits"] else None),
                                               "tag_blanks": {f"{j['ticker']} {j['d0']}": j.get("tag_errors")
                                                              for j in judged if j["signal"] and j.get("tag_errors")}})
         conn.commit()
@@ -452,7 +485,8 @@ def signal_tags(c: dict, px: pd.DataFrame | None, days: pd.DatetimeIndex, src: S
             for f in qs:
                 if f["filing_date"] == d0.date().isoformat():
                     try:
-                        a = pd_.parse_index_accepted(src.index_html(int(c["cik"]), f["accn"]))
+                        a = pd_.parse_index_accepted(_cached(cache, ("index", int(c["cik"]), f["accn"]),
+                                                             lambda f=f: src.index_html(int(c["cik"]), f["accn"])))
                         acc[f["accn"]] = pd.Timestamp(a) if a else None
                     except Exception:  # noqa: BLE001 — 그 건만 모름
                         acc[f["accn"]] = None
@@ -465,12 +499,14 @@ def signal_tags(c: dict, px: pd.DataFrame | None, days: pd.DatetimeIndex, src: S
         errs.append("보도자료: 출처 없음")
     else:
         try:
-            docs = tg.parse_index_docs(src.index_html(int(c["cik"]), c["accn"]))
+            docs = tg.parse_index_docs(_cached(cache, ("index", int(c["cik"]), c["accn"]),
+                                               lambda: src.index_html(int(c["cik"]), c["accn"])))
             ex = ptag.pick_press_release(docs)
             if ex is None:
                 errs.append("보도자료: EX-99.1 없음")
             else:
-                tone = ptag.lm_tone(ptag.html_words(src.fetch_text(ex["url"])), _cached(cache, "lm", src.lm_lists))
+                text = _cached(cache, ("text", ex["url"]), lambda: src.fetch_text(ex["url"]))  # 매도 조건 가이던스 꼬리표도 같은 글
+                tone = ptag.lm_tone(ptag.html_words(text), _cached(cache, "lm", src.lm_lists))
                 if tone is None:
                     errs.append("보도자료: 단어 0개")
                 else:
@@ -511,14 +547,16 @@ def pf_params(cfg: dict) -> pv.PfParams:
 
 
 def portfolio_days(cfg: dict, main: list[dict], todo: list, al: dict, bench: pt.Aligned, days: pd.DatetimeIndex,
-                   src: Sources, state: dict | None, start=None) -> dict:
+                   src: Sources, state: dict | None, start=None, step=None, p: pv.PfParams | None = None) -> dict:
     """포트폴리오 참고 기록을 진행한다. 상태가 없으면 start(장부 시작일)부터 다시 돌려 시작한다.
+    step = 하루 진행 함수(기본 pv.pf_step — 현금 1/10, 매도 조건 비교의 15칸은 core/pead_exits.pf_step_slots).
 
     출력: {rows[하루 줄 + fx·원화], events[매수·매도·건너뜀], state(새 상태, 시작 못 하면 None), warnings}.
     """
     from data.fx import pick_rate_for_date
 
-    p = pf_params(cfg)
+    p = p or pf_params(cfg)
+    step = step or pv.pf_step
     last = pd.Timestamp(todo[-1])
     first = pd.Timestamp(start or todo[0]) if state is None else pd.Timestamp(todo[0])
     run_days = [d for d in days[(days >= first) & (days <= last)] if state is None or d.date().isoformat() > state["last"]]
@@ -549,7 +587,7 @@ def portfolio_days(cfg: dict, main: list[dict], todo: list, al: dict, bench: pt.
         marks = {t: float(al[t].close[al[t].lastv[i]]) for t in want if t in al and al[t].lastv[i] >= 0}
         qc = float(bench.close[bench.lastv[i]])
         qo = float(bench.open[i]) if np.isfinite(bench.open[i]) else qc
-        state, ev, row = pv.pf_step(state, d, main, qo, qc, marks, p)
+        state, ev, row = step(state, d, main, qo, qc, marks, p)
         state["last"] = ds
         f = fx_on(d)
         row.update(fx=f, value_krw=row["value_usd"] * f if f else None, qqq100_krw=row["qqq100_usd"] * f if f else None)
@@ -568,9 +606,14 @@ def _sheet_client():
 
 def sheet_rows(conn, al: dict, bench: pt.Aligned, days: pd.DatetimeIndex, as_of, names: dict) -> tuple[list[list], list[list]]:
     """가상 장부 DB 기록(시작일부터 전부) → 전략공장 시트 (「일별 성적」 줄, 「매매이력」 줄). 읽기만."""
+    from store import pead_exits as xst
+
     main = [t for t in st.load_trades(conn) if t["ledger"] == "main"]
-    return (psheet.daily_rows(st.load_portfolio(conn), st.load_pf_events(conn)),
-            psheet.trade_rows(main, st.load_signals(conn), al, bench, days, as_of, names))
+    xst.ensure_schema(conn)
+    slots = {b: xst.load_portfolio(conn, b) for b in xst.BOOKS}
+    exits = {r: xst.load_trades(conn, r) for r in xst.TABLES}
+    return (psheet.daily_rows(st.load_portfolio(conn), st.load_pf_events(conn), slots),
+            psheet.trade_rows(main, st.load_signals(conn), al, bench, days, as_of, names, exits=exits))
 
 
 def write_sheet(conn, al: dict, bench: pt.Aligned, days: pd.DatetimeIndex, as_of, names: dict, res: dict,
