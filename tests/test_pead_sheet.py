@@ -331,3 +331,26 @@ def test_sheet_setup_only_manages_pead_tabs():
     assert sp.added == ["일별 성적"] and sp.tabs["일별 성적"].grid[1] == ps.DAILY_HEADER
     assert sp.tabs["QQQM 모으기"].grid == [] and sp.deleted == []
     assert ss.pead_setup(sp, apply=True) == {"create": [], "fix": [], "others": ["QQQM 모으기"]}
+
+
+def test_savings_day_off_in_config(cfg):
+    """2026-11-13: 저축일 알림(오늘 할 일 맨 앞 QQQM·ISA 문구)도 끔 — 17일이어도 False, 켜면 다시 True."""
+    from data.market_calendar import trading_days_between
+    from notify import letter
+
+    tdays = trading_days_between(pd.Timestamp("2026-11-01").date(), pd.Timestamp("2026-12-31").date())
+    assert cfg["savings_day_enabled"] is False and cfg["savings_day"] == 17
+    assert not letter.is_savings_day(cfg, "2026-11-17", tdays)
+    assert letter.is_savings_day({**cfg, "savings_day_enabled": True}, "2026-11-17", tdays)
+
+
+def test_letter_v3_no_savings_todo_on_17th(cfg):
+    from datetime import datetime
+
+    from engine import daily
+    from notify import letter
+
+    summary = {"as_of": pd.Timestamp("2026-11-16")}
+    daily._attach_letter_v3(summary, cfg, None, now_fn=lambda: datetime(2026, 11, 17, 8, 0, tzinfo=daily.KST))
+    assert summary["savings_day"] is False
+    assert letter.SAVINGS_TODO not in (letter.todo_line(summary, cfg, "personal") or "")

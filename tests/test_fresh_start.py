@@ -300,6 +300,7 @@ def test_savings_day_weekend_holiday_and_blank(cfg):
     from data.market_calendar import trading_days_between
 
     tdays = trading_days_between(pd.Timestamp("2026-09-01").date(), pd.Timestamp("2027-02-28").date())
+    cfg = {**cfg, "savings_day_enabled": True}  # 2026-11-13부터 config는 끔 — 켰을 때 날짜 규칙을 본다
     cfg["savings_day"] = 25
     assert letter.is_savings_day(cfg, "2026-11-25", tdays)  # 수요일
     assert not letter.is_savings_day(cfg, "2026-11-24", tdays)
@@ -326,7 +327,7 @@ def test_savings_todo_personal_only(cfg):
 
 
 def test_attach_v3_sets_savings_flag(cfg):
-    cfg["savings_day"] = 26
+    cfg = {**cfg, "savings_day": 26, "savings_day_enabled": True}  # 2026-11-13부터 config는 끔 — 켰을 때 동작을 본다(세션 cfg는 안 바꿈)
     s = {"as_of": pd.Timestamp("2026-10-23"), "fx_rate": 1400.0}
     daily._attach_letter_v3(s, cfg, None, now_fn=lambda: datetime(2026, 10, 26, 8, 7, tzinfo=KST))
     assert s["savings_day"] is True
