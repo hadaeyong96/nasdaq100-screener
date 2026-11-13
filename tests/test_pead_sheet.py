@@ -43,6 +43,9 @@ class FakeWs:
     def freeze(self, rows):
         self.frozen = rows
 
+    def delete_rows(self, start):
+        del self.grid[start - 1]
+
     def format(self, rng, fmt):
         self.formats.append((rng, fmt))
 
@@ -184,15 +187,15 @@ def test_write_all_creates_two_tabs_and_upserts_by_key():
     n = pead_sheet.write_all(cl, "sid", [["2026-11-11", 1, 2, 0.0, "100.0%", 0, "없음", "", 0]], [trade])
     assert n == {"일별 성적": 1, "매매이력": 1} and sp.added == ["일별 성적", "매매이력"]
     d, t = sp.tabs["일별 성적"], sp.tabs["매매이력"]
-    assert d.grid[0] == [ps.TITLE] and d.grid[1] == ps.DAILY_HEADER and t.grid[1] == ps.TRADE_HEADER
-    assert d.frozen == 2 and t.formats and sp.tabs["다른 탭"].grid == []
+    assert d.grid[0] == ps.DAILY_HEADER and t.grid[0] == ps.TRADE_HEADER  # 제목 줄 없음 — 1행 머리글
+    assert d.frozen == 1 and t.formats[0][0].startswith("A1:") and t.formats and sp.tabs["다른 탭"].grid == []
     # 다음 실행: 같은 티커+매수일 줄은 갱신, 새 날짜는 끝에
     closed = list(trade)
     closed[17] = "끝"
     pead_sheet.write_all(cl, "sid", [["2026-11-11", 1, 2, 0.0, "100.0%", 0, "없음", "", 0],
                                      ["2026-11-12", 3, 4, 0.5, "90.0%", 1, "CRWV", "", 0]], [closed])
-    assert [r[0] for r in d.grid[2:]] == ["2026-11-11", "2026-11-12"]
-    assert len(t.grid) == 3 and t.grid[2][17] == "끝"
+    assert [r[0] for r in d.grid[1:]] == ["2026-11-11", "2026-11-12"]
+    assert len(t.grid) == 2 and t.grid[1][17] == "끝"
     assert sp.added == ["일별 성적", "매매이력"]  # 두 번째엔 만들지 않음
 
 
@@ -228,15 +231,15 @@ def test_schedule_run_writes_sheet_from_db(tmp_path, monkeypatch):
     db = tmp_path / "vb.db"
     r1 = ew.run(CFG, D0, db_path=db, src=_engine_src(), today_kst="2026-10-22")
     assert r1["sheet"]["status"] == "ok"
-    assert sp.tabs["매매이력"].grid[2][1] == "A" and sp.tabs["매매이력"].grid[2][17] == "매수 대기"
+    assert sp.tabs["매매이력"].grid[1][1] == "A" and sp.tabs["매매이력"].grid[1][17] == "매수 대기"
     r2 = ew.run(CFG, pd.Timestamp("2026-10-27"), db_path=db, src=_engine_src(), today_kst="2026-10-28")
     assert r2["sheet"]["status"] == "ok"
     t = sp.tabs["매매이력"].grid
-    assert len(t) == 3 and t[2][17] == "보유 중" and t[2][13] != ""  # 같은 줄 갱신
+    assert len(t) == 2 and t[1][17] == "보유 중" and t[1][13] != ""  # 같은 줄 갱신
     conn = vbstore.connect(db)
     n_pf = len(st.load_portfolio(conn))
     conn.close()
-    assert len(sp.tabs["일별 성적"].grid) - 2 == n_pf
+    assert len(sp.tabs["일별 성적"].grid) - 1 == n_pf
 
 
 def test_sheet_failure_keeps_ledger_and_next_run_fills(tmp_path, monkeypatch):
@@ -253,7 +256,7 @@ def test_sheet_failure_keeps_ledger_and_next_run_fills(tmp_path, monkeypatch):
     sp = FakeSpreadsheet()
     monkeypatch.setattr(ew, "_sheet_client", lambda: FakeClient(sp))
     r2 = ew.run(CFG, pd.Timestamp("2026-10-23"), db_path=db, src=_engine_src(), today_kst="2026-10-24")
-    days = [r[0] for r in sp.tabs["일별 성적"].grid[2:]]
+    days = [r[0] for r in sp.tabs["일별 성적"].grid[1:]]
     assert r2["sheet"]["status"] == "ok" and days[0] == "2026-10-21"  # 빠진 첫날부터 채움
 
 
@@ -324,13 +327,13 @@ def test_sheet_setup_only_manages_pead_tabs():
     from scripts import sheet_setup as ss
 
     sp = FakeSpreadsheet(["QQQM 모으기", "매매이력"])
-    sp.tabs["매매이력"].grid = [[ps.TITLE], ps.TRADE_HEADER]
+    sp.tabs["매매이력"].grid = [ps.TRADE_HEADER]
     plan = ss.pead_setup(sp, apply=False)
-    assert plan == {"create": ["일별 성적"], "fix": [], "others": ["QQQM 모으기"]} and sp.added == []
+    assert plan == {"create": ["일별 성적"], "drop_title": [], "fix": [], "others": ["QQQM 모으기"]} and sp.added == []
     ss.pead_setup(sp, apply=True)
-    assert sp.added == ["일별 성적"] and sp.tabs["일별 성적"].grid[1] == ps.DAILY_HEADER
+    assert sp.added == ["일별 성적"] and sp.tabs["일별 성적"].grid[0] == ps.DAILY_HEADER
     assert sp.tabs["QQQM 모으기"].grid == [] and sp.deleted == []
-    assert ss.pead_setup(sp, apply=True) == {"create": [], "fix": [], "others": ["QQQM 모으기"]}
+    assert ss.pead_setup(sp, apply=True) == {"create": [], "drop_title": [], "fix": [], "others": ["QQQM 모으기"]}
 
 
 def test_savings_day_off_in_config(cfg):
@@ -354,3 +357,25 @@ def test_letter_v3_no_savings_todo_on_17th(cfg):
     daily._attach_letter_v3(summary, cfg, None, now_fn=lambda: datetime(2026, 11, 17, 8, 0, tzinfo=daily.KST))
     assert summary["savings_day"] is False
     assert letter.SAVINGS_TODO not in (letter.todo_line(summary, cfg, "personal") or "")
+
+
+def test_title_row_removed():
+    """2026-11-13 사용자 요청: 두 탭의 1행(제목 줄)을 지운다 — 1행 머리글, 2행부터 자료.
+    옛 배치(1행 제목/빈칸·2행 머리글)는 sheet_setup --apply가 1행 삭제로 옮기고, 그 뒤 upsert는 같은 키 줄을 덮어쓴다."""
+    from scripts import sheet_setup as ss
+
+    assert not hasattr(ps, "TITLE")
+    sp = FakeSpreadsheet(["일별 성적", "매매이력"])
+    sp.tabs["일별 성적"].grid = [[""], ps.DAILY_HEADER, ["2026-11-11", "1"]]
+    sp.tabs["매매이력"].grid = [["실적급등 다음날 매수·90일 보유 — 가상 1억, 실제 돈 아님 · 투자 권유 아님"], ps.TRADE_HEADER]
+    assert ss.pead_plan(list(sp.tabs), {t: w.grid[:2] for t, w in sp.tabs.items()})["drop_title"] == ["일별 성적", "매매이력"]
+    ss.pead_setup(sp, apply=True)
+    d = sp.tabs["일별 성적"]
+    assert d.grid[0] == ps.DAILY_HEADER and d.grid[1][0] == "2026-11-11" and d.frozen == 1
+    assert sp.tabs["매매이력"].grid == [ps.TRADE_HEADER]
+    pead_sheet.write_all(FakeClient(sp), "sid", [["2026-11-11", 5, 2, 0.0, "100.0%", 0, "없음", "", 0],
+                                                 ["2026-11-12", 6, 2, 0.0, "100.0%", 0, "없음", "", 0]], [])
+    assert [r[:2] for r in d.grid[1:]] == [["2026-11-11", "5"], ["2026-11-12", "6"]]  # 같은 날짜 줄 덮어쓰기
+    assert ss.pead_setup(sp, apply=False)["drop_title"] == []
+    # 1·2행 모두 머리글이 아니면 1행에 머리글만 다시 쓴다(줄 삭제 안 함)
+    assert ss.pead_plan(["일별 성적"], {"일별 성적": [["엉뚱"], ["엉뚱"]]})["fix"] == ["일별 성적"]

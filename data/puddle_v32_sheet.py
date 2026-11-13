@@ -45,19 +45,23 @@ def open_tab(spreadsheet, tab: str, old_tab: str, cols: int):
     return ws, migrated
 
 
-def upsert(ws, rows: list[list], tab: str, title: str, header: list[str], key: tuple[int, ...] = (0,)) -> int:
+def upsert(ws, rows: list[list], tab: str, title: str | None, header: list[str], key: tuple[int, ...] = (0,)) -> int:
     """제목·머리글을 맞추고 rows를 같은 키 줄에 덮어쓰거나 끝에 붙인다. 출력: 쓴 줄 수.
-    key = 키로 쓸 칸 번호(기본 첫 칸 = 날짜 문자열, 실적급등 「매매이력」은 티커+매수일 — data/pead_sheet.py)."""
+    key = 키로 쓸 칸 번호(기본 첫 칸 = 날짜 문자열, 실적급등 「매매이력」은 티커+매수일 — data/pead_sheet.py).
+    title=None이면 제목 줄 없이 1행 머리글, 2행부터 자료(실적급등 탭, 2026-11-13 사용자 요청)."""
     _assert(ws, tab)
 
     def k(r) -> tuple:
         return tuple(str(r[i]) if i < len(r) else "" for i in key)
 
+    top = 1 if title is None else 2  # 머리글 행
     values = ws.get_all_values()
-    data = values[2:] if len(values) > 2 else []
-    where = {k(r): i + 3 for i, r in enumerate(data) if r and any(k(r))}
-    nxt = max([3] + [i + 1 for i in where.values()])
-    updates = [{"range": "A1", "values": [[title]]}, {"range": "A2", "values": [header]}]
+    data = values[top:] if len(values) > top else []
+    where = {k(r): i + top + 1 for i, r in enumerate(data) if r and any(k(r))}
+    nxt = max([top + 1] + [i + 1 for i in where.values()])
+    updates = [{"range": f"A{top}", "values": [header]}]
+    if title is not None:
+        updates.insert(0, {"range": "A1", "values": [[title]]})
     for row in rows:
         r = where.get(k(row))
         if r is None:
@@ -65,7 +69,7 @@ def upsert(ws, rows: list[list], tab: str, title: str, header: list[str], key: t
             nxt += 1
             where[k(row)] = r
         updates.append({"range": f"A{r}", "values": [row]})
-    need = max(nxt, 3)
+    need = max(nxt, top + 1)
     if getattr(ws, "row_count", need) < need:
         ws.resize(rows=need + 50)
     ws.batch_update(updates, value_input_option="RAW")
