@@ -1,8 +1,13 @@
-"""구글 시트 정리 — 시트 재설계안 v3.1 (docs/design/sheet_layout.md).
+"""구글 시트 정리.
 
-사용법:
-    python scripts/sheet_setup.py [시트ID]            보기 모드 — 바꿀 내용만 출력 (쓰기 0번)
-    python scripts/sheet_setup.py [시트ID] --apply    적용 (백업 → 적용 → 비교 → read_sheets 점검)
+2026-11-13부터 기본 동작: 전략공장 시트는 실적급등 기록 전용 — 탭 「일별 성적」·「매매이력」(data/pead_sheet.py)만 맞춘다.
+    python scripts/sheet_setup.py [시트ID]            보기 모드 — 두 탭 유무·머리글 차이·그 밖의 탭만 출력 (쓰기 0번)
+    python scripts/sheet_setup.py [시트ID] --apply    없는 탭 만들기·1행 제목·2행 머리글 맞추기(데이터 줄은 건드리지 않음)
+다른 탭(웅덩이·QQQM 등)은 만들지도, 고치지도, 지우지도 않는다(지우기는 scripts/sheet_pead_only.py 1회).
+
+아래는 예전 시트 재설계안 v3.1 (docs/design/sheet_layout.md) — --legacy일 때만:
+    python scripts/sheet_setup.py [시트ID] --legacy            보기 모드 — 바꿀 내용만 출력 (쓰기 0번)
+    python scripts/sheet_setup.py [시트ID] --legacy --apply    적용 (백업 → 적용 → 비교 → read_sheets 점검)
 
 시트ID를 생략하면 .env의 GOOGLE_SHEETS_ID(원본)를 쓴다. 인증은 data/sheets.py의 get_client를
 그대로 쓴다(spreadsheets 쓰기 권한). 인증 정보는 출력하지 않고, 시트 ID는 끝 4자리만 보여 준다.
@@ -1089,22 +1094,64 @@ def read_sheets_check(sheet_id: str) -> None:
               + (f", 경고 {warnings}" if warnings else ""))
 
 
+def pead_plan(titles: list[str], grids: dict[str, list[list]]) -> dict:
+    """실적급등 탭 점검(순수): titles = 지금 탭 이름, grids = 실적급등 탭 → 값(1·2행이면 충분).
+    출력: {create[없는 탭], fix[제목·머리글이 다른 탭], others[그 밖의 탭 — 손대지 않음]}."""
+    from core import pead_sheet as ps
+    from data import pead_sheet
+
+    create = [t for t in pead_sheet.TABS if t not in titles]
+    fix = []
+    for t, (header, _) in pead_sheet.TABS.items():
+        g = grids.get(t)
+        if t in titles and g is not None:
+            row1 = (g[0][:1] if g else [""]) or [""]
+            row2 = [x for x in (g[1] if len(g) > 1 else [])]
+            while row2 and not str(row2[-1]).strip():
+                row2.pop()
+            if row1[0] != ps.TITLE or row2 != header:
+                fix.append(t)
+    return {"create": create, "fix": fix, "others": [t for t in titles if t not in pead_sheet.TABS]}
+
+
+def pead_setup(spreadsheet, apply: bool) -> dict:
+    """실적급등 탭 두 개만 맞춘다. apply=False면 쓰기 0번. 출력: pead_plan 결과."""
+    from core import pead_sheet as ps
+    from data import pead_sheet
+
+    titles = [ws.title for ws in spreadsheet.worksheets()]
+    grids = {t: spreadsheet.worksheet(t).get_all_values()[:2] for t in pead_sheet.TABS if t in titles}
+    plan = pead_plan(titles, grids)
+    print(f"[sheet_setup] 만들 탭: {', '.join(plan['create']) or '없음'} · 제목·머리글 맞출 탭: {', '.join(plan['fix']) or '없음'}")
+    if plan["others"]:
+        print(f"[sheet_setup] 그 밖의 탭(손대지 않음): {', '.join(plan['others'])}")
+    if apply:
+        for t in plan["create"] + plan["fix"]:
+            ws, _ = pead_sheet.open_tab(spreadsheet, t)
+            ws.batch_update([{"range": "A1", "values": [[ps.TITLE]]}, {"range": "A2", "values": [pead_sheet.TABS[t][0]]}],
+                            value_input_option="RAW")
+        print("[sheet_setup] 적용함" if plan["create"] or plan["fix"] else "[sheet_setup] 바꿀 것 없음")
+    else:
+        print("[sheet_setup] 보기 모드 — 바꾼 것 없음(--apply로 적용)")
+    return plan
+
+
 def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="구글 시트 정리 (시트 재설계안 v3.1)")
+    parser = argparse.ArgumentParser(description="구글 시트 정리 (기본: 실적급등 탭 2개, --legacy: 예전 재설계안 v3.1)")
     parser.add_argument("sheet_id", nargs="?", help="시트 ID (생략하면 .env의 GOOGLE_SHEETS_ID)")
     parser.add_argument("--apply", action="store_true", help="실제로 적용 (없으면 보기만)")
     parser.add_argument("--legacy", action="store_true", help="(쓰지 않음) 예전 시트 배치를 다시 만들 때만 — 2026-10-22부터 비활성")
     args = parser.parse_args(argv)
-    if not args.legacy:
-        # 2026-10-22 새 출발: 사용자 시트는 사용자가 직접 관리하는 「QQQM 모으기」 탭 하나(프로그램은 읽기만).
-        # 이 스크립트는 탭을 만들거나 서식·수식을 바꾸므로 기본으로 아무것도 하지 않는다.
-        print("[sheet_setup] 비활성(2026-10-22): 프로그램은 사용자 시트에 아무것도 만들거나 쓰지 않습니다. 아무 작업도 하지 않았습니다.")
-        return 0
-
     from data import sheets
+
+    if not args.legacy:
+        # 2026-11-13: 전략공장 시트는 실적급등 기록 전용 — 「일별 성적」·「매매이력」만 맞춘다(웅덩이·QQQM 탭은 만들지 않음)
+        sheet_id = args.sheet_id or sheets._sheet_id()
+        pead_setup(sheets.get_client().open_by_key(sheet_id), apply=args.apply)
+        return 0
 
     sheet_id = args.sheet_id or sheets._sheet_id()
     setup = SheetSetup(sheets.get_client(), sheet_id, real_list_rows, apply=args.apply)

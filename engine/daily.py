@@ -2331,8 +2331,9 @@ def main() -> None:
             _safe_step(summary, "편지 기본 칸", lambda: _attach_letter_v3(summary, cfg, holdings))
             _safe_step(summary, "웅덩이 v3.2 장부", lambda: _attach_puddle_v31(summary, cfg))
             _safe_step(summary, "웅덩이 반등 확인 v2 장부", lambda: _attach_puddle_rebound(summary, cfg))
-            _safe_step(summary, "그래프", lambda: _attach_curve_chart(summary, cfg))
-            _safe_step(summary, "웅덩이 후보 차트", lambda: _attach_candidate_charts(summary))
+            if _puddle_on(cfg):  # 2026-11-13 웅덩이 실험 중단 — 꺼져 있으면 옛 기록 그래프·후보 차트도 그리지 않는다
+                _safe_step(summary, "그래프", lambda: _attach_curve_chart(summary, cfg))
+                _safe_step(summary, "웅덩이 후보 차트", lambda: _attach_candidate_charts(summary))
             if (cfg.get("pead_watch") or {}).get("enabled", False):  # 2026-11-11: 뉴스 = 실적급등 종목 실적 발표 뉴스
                 _safe_step(summary, "실적급등 추천", lambda: _attach_pead_watch(summary, cfg))
                 _safe_step(summary, "실적 뉴스", lambda: _attach_earnings_news(summary))
@@ -2525,11 +2526,20 @@ def _default_fills(cfg: dict):
     return pd.concat([r.fills.df, r.fills.cash_rows], ignore_index=True)
 
 
+def _puddle_on(cfg: dict) -> bool:
+    """웅덩이 v3.2·반등 확인 v2 중 하나라도 켜져 있는가(2026-11-13 둘 다 끔)."""
+    return any((cfg.get(k) or {}).get("enabled", False) for k in ("puddle_v32", "puddle_rebound_v2"))
+
+
 def _read_holdings(cfg: dict, read_fn=None) -> dict | None:
-    """사용자 시트 「QQQM 모으기」(읽기 전용, data.holdings). 인증 정보가 없거나 읽기에 실패하면 None(그 칸만 빠진다)."""
+    """사용자 시트 「QQQM 모으기」(읽기 전용, data.holdings). 인증 정보가 없거나 읽기에 실패하면 None(그 칸만 빠진다).
+    config holdings.enabled: false면 읽지 않고 None(2026-11-13 QQQM 모으기 추적 중단)."""
     from data import holdings as hd
     from data import sheets
 
+    if not (cfg.get("holdings") or {}).get("enabled", True):
+        print("[daily] QQQM 모으기 추적 꺼짐(holdings.enabled: false) — 탭을 읽지 않습니다.")
+        return None
     try:
         h = (read_fn or (lambda: hd.read_holdings(cfg)))()
     except sheets.SheetsConfigError:
@@ -2794,11 +2804,14 @@ def _attach_dec_tax(summary: dict, cfg: dict, *, fills_fn=None, qqqm_fn=None, da
     summary["dec_tax"] = {todo, lines}. 시트·가격은 읽기만. 어떤 오류든 잡아 안내만 빼고 브리핑은 그대로(예외 격리).
 
     fills_fn() → 체결 행 DataFrame, qqqm_fn() → QQQM 종가 Series, days_fn(year) → 그해 NYSE 거래일 (테스트 주입).
+    config dec_tax.enabled: false면 아무것도 하지 않는다(2026-11-13 끔).
     """
     from core import tax_harvest as th
     from notify import letter
 
     summary.pop("dec_tax", None)
+    if not (cfg.get("dec_tax") or {}).get("enabled", True):
+        return
     try:
         as_of = summary.get("as_of")
         if as_of is None:

@@ -662,9 +662,10 @@ def savings_date(day: int, year: int, month: int, trading_days) -> pd.Timestamp 
 
 def is_savings_day(cfg: dict, today, trading_days) -> bool:
     """config savings_day(숫자)가 있고 오늘(한국 날짜)이 저축일이면 True. 빈칸이면 False.
-    이번 달 저축일과, 달 말 휴장으로 이번 달로 밀려 온 지난달 저축일을 모두 본다."""
+    이번 달 저축일과, 달 말 휴장으로 이번 달로 밀려 온 지난달 저축일을 모두 본다.
+    config savings_day_enabled: false면 늘 False(2026-11-13 끔, 없으면 켜진 것으로 본다)."""
     day = cfg.get("savings_day")
-    if day in (None, "") or today is None:
+    if not cfg.get("savings_day_enabled", True) or day in (None, "") or today is None:
         return False
     t = pd.Timestamp(today).normalize()
     prev = t - pd.offsets.MonthBegin(1)

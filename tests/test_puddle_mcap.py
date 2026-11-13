@@ -109,7 +109,7 @@ def test_fetch_shares_falls_back_to_edgar_and_reports_failures():
 def test_old_ledgers_are_off_and_new_ones_on_in_config(cfg):
     assert cfg["puddle_v31"]["enabled"] is False and cfg["puddle_rebound"]["enabled"] is False
     assert cfg["puddle_v31"]["start_date"] == "2026-10-23"  # 보관본 시작값은 그대로
-    assert cfg["puddle_v32"]["enabled"] is True and cfg["puddle_rebound_v2"]["enabled"] is True
+    assert cfg["puddle_v32"]["enabled"] is False and cfg["puddle_rebound_v2"]["enabled"] is False  # 2026-11-13 실험 중단(기록 보관)
     for k in ("puddle_v32", "puddle_rebound_v2"):  # 첫 정규 실행(2026-10-28) DB 기록에서 고정
         assert cfg[k]["start_date"] == "2026-10-27" and cfg[k]["start_fx"] == 1324.77001953125
     assert e31.run_safely(cfg, "2026-10-27") is None and erb.run_safely(cfg, "2026-10-27") is None
@@ -293,9 +293,7 @@ def test_research_news_in_progress_lists_new_ledgers(cfg):
     from notify import letter
 
     lines = letter.research_lines(cfg, pd.Timestamp("2026-11-02"))
-    assert "연구 중: 웅덩이 v3.2(시가총액 상위 10, 가상 기록, 12개월)" in " ".join(lines) or \
-        any("웅덩이 v3.2(시가총액 상위 10" in x for x in lines)
-    assert not any("v3.1" in x for x in lines)
+    assert not any("웅덩이" in x for x in lines)  # 2026-11-13 웅덩이 v3.2·반등 확인 v2 중단 — 연구 중 줄에서 빠짐
 
 
 # ── 시트 탭 교체 ─────────────────────────────────────────────────────────────

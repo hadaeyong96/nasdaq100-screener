@@ -1,7 +1,8 @@
 """실적급등 추천 장부(pead_watch) 하루 실행 — 앞으로 기록, 실제 돈 없음 (사전 등록: docs/prereg/pead_watch.md, 태그 pead-watch-prereg).
 
 순서: 사전 등록 해시 확인 → 달 말 명단 → EDGAR 8-K 2.02(직전 발표 60일 뒤) → 색인 Accepted → 반응일 → 거래일마다
-(매수 체결 → 매도 → 그날 반응일 신호 판정·대기 매수) → 환율 → 보유 평가 → 편지 칸·그래프 자료.
+(매수 체결 → 매도 → 그날 반응일 신호 판정·대기 매수) → 환율 → 보유 평가 → 편지 칸·그래프 자료
+→ (예약 실행 저장 뒤) 전략공장 시트 「일별 성적」·「매매이력」(2026-11-13, write_sheet — 실패해도 장부·편지 그대로).
 쓰기는 GitHub Actions 예약 실행만(dry_run·로컬·수동 실행은 미리보기). run_safely는 어떤 예외도 밖으로 내보내지 않는다(편지 보호).
 
 미리보기: python -m engine.pead_watch --from 2026-10-01 --as-of 2026-11-10   (DB에 쓰지 않음)
@@ -25,6 +26,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from core import pead_sheet as psheet
 from core import pead_tags as ptag
 from core import pead_timing as pt
 from core import pead_validation as pv
@@ -392,6 +394,7 @@ def run(cfg: dict, as_of, *, db_path=None, dry_run: bool = False, src: Sources |
                                               "tag_blanks": {f"{j['ticker']} {j['d0']}": j.get("tag_errors")
                                                              for j in judged if j["signal"] and j.get("tag_errors")}})
         conn.commit()
+        res["sheet"] = write_sheet(conn, al, bench, days, as_of, names, res)
         return res
     finally:
         conn.close()
@@ -554,6 +557,40 @@ def portfolio_days(cfg: dict, main: list[dict], todo: list, al: dict, bench: pt.
         res["events"] += ev
     res["state"] = state
     return res
+
+
+def _sheet_client():
+    """구글 시트 클라이언트(테스트에서 막는다 — tests/conftest.py)."""
+    from data import sheets
+
+    return sheets.get_client()
+
+
+def sheet_rows(conn, al: dict, bench: pt.Aligned, days: pd.DatetimeIndex, as_of, names: dict) -> tuple[list[list], list[list]]:
+    """가상 장부 DB 기록(시작일부터 전부) → 전략공장 시트 (「일별 성적」 줄, 「매매이력」 줄). 읽기만."""
+    main = [t for t in st.load_trades(conn) if t["ledger"] == "main"]
+    return (psheet.daily_rows(st.load_portfolio(conn), st.load_pf_events(conn)),
+            psheet.trade_rows(main, st.load_signals(conn), al, bench, days, as_of, names))
+
+
+def write_sheet(conn, al: dict, bench: pt.Aligned, days: pd.DatetimeIndex, as_of, names: dict, res: dict,
+                client=None) -> dict:
+    """전략공장 시트(GOOGLE_SHEETS_ID) 실적급등 탭 2개를 DB 기록 전체로 맞춘다(2026-11-13) — 예약 실행의 장부 저장 뒤에만 부른다.
+    매번 시작일부터 다시 쓰므로 실패한 날은 다음 실행이 채운다. 실패해도 장부·편지는 그대로(경고 한 줄).
+    출력: {status('ok'|'skip'|'fail'), rows{탭: 줄 수}}"""
+    sheet_id = (os.environ.get("GOOGLE_SHEETS_ID") or "").strip()
+    if not sheet_id:
+        res["warnings"].append("GOOGLE_SHEETS_ID가 없어 전략공장 시트 기록을 건너뜁니다")
+        return {"status": "skip", "rows": {}}
+    try:
+        from data import pead_sheet
+
+        daily, trades = sheet_rows(conn, al, bench, days, as_of, names)
+        n = pead_sheet.write_all(client or _sheet_client(), sheet_id, daily, trades)
+        return {"status": "ok", "rows": n}
+    except Exception as exc:  # noqa: BLE001 — 장부는 저장됨, 시트만 실패
+        res["warnings"].append(f"전략공장 시트 기록 실패({type(exc).__name__}) — 다음 실행에서 다시")
+        return {"status": "fail", "rows": {}, "error": type(exc).__name__}
 
 
 def _row_name(t: str, names: dict) -> str:
